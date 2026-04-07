@@ -132,15 +132,23 @@ def converter_data_br(data_str, data_referencia=None):
 # ======================
 @st.cache_data(ttl=300)
 def carregar_dados():
-    """Carrega dados do Google Sheets com cabeçalho na linha 2"""
+    """Carrega dados do Google Sheets usando Secrets do Streamlit Cloud"""
     try:
         scope = [
             "https://spreadsheets.google.com/feeds",
             "https://www.googleapis.com/auth/drive"
         ]
 
-        creds = ServiceAccountCredentials.from_json_keyfile_name(CAMINHO_CREDENCIAIS, scope)
-        client = gspread.authorize(creds)
+        # Usar Secrets do Streamlit Cloud
+        if 'gcp_service_account' in st.secrets:
+            creds_dict = dict(st.secrets["gcp_service_account"])
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+            client = gspread.authorize(creds)
+        else:
+            # Fallback para desenvolvimento local
+            CAMINHO_CREDENCIAIS = r'\\srv-luvidarte\dados\DOC\Engenharia_Luvidarte\SGQ - LUVIDARTE - ALTERADAS\4-TRS\dashboard-gerencial-492613-042470f98e27.json'
+            creds = ServiceAccountCredentials.from_json_keyfile_name(CAMINHO_CREDENCIAIS, scope)
+            client = gspread.authorize(creds)
 
         sheet = client.open_by_key(ID_PLANILHA).worksheet(ABA)
         
@@ -161,10 +169,9 @@ def carregar_dados():
         df = pd.DataFrame(valores, columns=cabecalho)
         df.columns = df.columns.str.strip().str.upper()
         
-        # Converter DATA (ignorando datas inválidas e futuras)
+        # Converter DATA
         if 'DATA' in df.columns:
             df['DATA'] = df['DATA'].apply(converter_data_br)
-            # Remover linhas sem data válida
             df = df.dropna(subset=['DATA'])
         
         # Renomear APROVADO FINAL para EMBALADO
