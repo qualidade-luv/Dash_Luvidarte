@@ -428,22 +428,35 @@ if mostrar_defeitos:
     st.subheader("❌ Estratificação de Defeitos")
 
     try:
-        colunas_basicas = ['DATA', 'REFERÊNCIA', 'TURNO', 'PRODUZIDO', 'APROVADO', 
-                          'EMBALADO', 'REFUGADO', 'META LIQUIDA', 'BOQUETA']
-        colunas_basicas = [c for c in colunas_basicas if c in df.columns]
+        # LISTA EXATA DOS DEFEITOS (conforme sua planilha)
+        colunas_defeitos = [
+            'BOLHA', 'PEDRA', 'TRINCA', 'RUGAS', 'CORTE TESOURA', 'DOBRA', 
+            'SUJEIRA', 'QUEBRA', 'ARREADO', 'VIDRO GRUDADO', 'CONTRA-PEÇA', 
+            'FALHAS', 'CHUPADO', 'ÓLEO TESOURA', 'CROMO', 'MACHO', 'BARRO', 
+            'EMPENO', 'OUTROS'
+        ]
         
-        idx_inicio = len(colunas_basicas)
-        idx_fim = min(idx_inicio + 20, len(df.columns))
+        # Verificar quais colunas de defeito realmente existem no DataFrame
+        # (importante: os nomes podem estar em maiúsculas/minúsculas na planilha)
+        defeitos_existentes = []
+        for defeito in colunas_defeitos:
+            # Procurar o defeito no DataFrame (case insensitive)
+            for col in df.columns:
+                if col.upper() == defeito.upper():
+                    defeitos_existentes.append(col)
+                    break
         
-        if idx_inicio < idx_fim:
-            defeitos_cols = df.columns[idx_inicio:idx_fim]
-            df_defeitos = df[defeitos_cols].apply(pd.to_numeric, errors='coerce').fillna(0)
+        if defeitos_existentes:
+            # Criar DataFrame apenas com as colunas de defeito
+            df_defeitos = df[defeitos_existentes].apply(pd.to_numeric, errors='coerce').fillna(0)
             df_defeitos_sum = df_defeitos.sum().sort_values(ascending=False)
             df_defeitos_sum = df_defeitos_sum[df_defeitos_sum > 0]
 
             if not df_defeitos_sum.empty:
+                # Gráfico de barras
                 st.bar_chart(df_defeitos_sum)
                 
+                # Tabela de defeitos
                 df_defeitos_display = df_defeitos_sum.reset_index().rename(
                     columns={'index':'Defeito', 0:'Quantidade'}
                 ).sort_values('Quantidade', ascending=False)
@@ -453,9 +466,15 @@ if mostrar_defeitos:
                 )
                 
                 st.dataframe(df_defeitos_display, use_container_width=True)
+                
+                # Mostrar total de defeitos
+                total_defeitos = df_defeitos_sum.sum()
+                st.metric("Total de Defeitos", f"{int(total_defeitos):,}".replace(",", "."))
             else:
                 st.info("Nenhum defeito encontrado nos filtros aplicados.")
         else:
-            st.info("Colunas de defeitos não identificadas.")
+            st.warning("Nenhuma das colunas de defeito foi encontrada na planilha.")
+            st.info(f"Colunas disponíveis na planilha: {', '.join(df.columns[:20])}...")
+            
     except Exception as e:
-        st.warning(f"Não foi possível calcular defeitos: {e}")
+        st.warning(f"Erro ao processar defeitos: {e}")
