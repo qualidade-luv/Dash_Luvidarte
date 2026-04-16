@@ -11,7 +11,6 @@ import numpy as np
 # ======================
 # CONFIGURAÇÕES
 # ======================
-CAMINHO_CREDENCIAIS = r'\\srv-luvidarte\dados\DOC\Engenharia_Luvidarte\SGQ - LUVIDARTE - ALTERADAS\4-TRS\dashboard-gerencial-492613-042470f98e27.json'
 ID_PLANILHA = '1Hjy4UGtgwIPJgqmcv46LyXNWOrYk_oeJWWV5vlfKF2k'
 
 # Praças que NÃO são SOPRO (devem ser EXCLUÍDAS da aba SOPRO)
@@ -32,36 +31,60 @@ st.sidebar.title("Navegação")
 aba_selecionada = st.sidebar.radio("Selecione o setor:", list(ABAS.keys()))
 
 # ======================
-# FUNÇÃO PARA CARREGAR CREDENCIAIS
+# FUNÇÃO PARA CARREGAR CREDENCIAIS (MÚLTIPLAS TENTATIVAS)
 # ======================
 def get_gspread_client():
-    """Cria cliente gspread tentando primeiro secrets, depois arquivo local"""
+    """Cria cliente gspread tentando múltiplos caminhos de credenciais"""
     scope = [
         "https://spreadsheets.google.com/feeds",
         "https://www.googleapis.com/auth/drive"
     ]
     
+    # Tentativa 1: Usar Streamlit Secrets
     try:
         if 'gcp_service_account' in st.secrets:
+            st.info("🔐 Tentando autenticação via Streamlit Secrets...")
             creds_dict = dict(st.secrets["gcp_service_account"])
             creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
             client = gspread.authorize(creds)
+            st.success("✅ Conectado com sucesso via Streamlit Secrets!")
             return client
     except Exception as e:
-        pass
+        st.warning(f"Streamlit Secrets não disponível: {e}")
     
-    try:
-        if not os.path.exists(CAMINHO_CREDENCIAIS):
-            st.error(f"Arquivo de credenciais não encontrado em: {CAMINHO_CREDENCIAIS}")
-            return None
-        
-        creds = ServiceAccountCredentials.from_json_keyfile_name(CAMINHO_CREDENCIAIS, scope)
-        client = gspread.authorize(creds)
-        return client
-        
-    except Exception as e:
-        st.error(f"Erro ao autenticar com Google Sheets (local): {e}")
-        return None
+    # LISTA DE CAMINHOS PARA TENTAR (em ordem de prioridade)
+    caminhos_credenciais = [
+        r'C:\Users\elton\OneDrive\Documentos\dashboard-gerencial-492613-042470f98e27.json',
+        r'C:\Users\elton\OneDrive\Desktop\dashboard-gerencial-492613-042470f98e27.json',
+        r'C:\Users\elton\Desktop\dashboard-gerencial-492613-042470f98e27.json',
+        r'C:\Users\elton\Downloads\dashboard-gerencial-492613-042470f98e27.json',
+        r'dashboard-gerencial-492613-042470f98e27.json',
+        r'\\srv-luvidarte\dados\DOC\Engenharia_Luvidarte\SGQ - LUVIDARTE - ALTERADAS\4-TRS\dashboard-gerencial-492613-042470f98e27.json',
+    ]
+    
+    for i, caminho in enumerate(caminhos_credenciais, 1):
+        try:
+            if os.path.exists(caminho):
+                st.info(f"📁 Tentativa {i}: Carregando credenciais de: {caminho}")
+                creds = ServiceAccountCredentials.from_json_keyfile_name(caminho, scope)
+                client = gspread.authorize(creds)
+                st.success(f"✅ Conectado com sucesso!")
+                return client
+            else:
+                if i <= 3 or i == len(caminhos_credenciais):
+                    st.warning(f"📁 Arquivo não encontrado em: {caminho}")
+        except Exception as e:
+            st.error(f"❌ Erro ao tentar {caminho}: {e}")
+    
+    st.error("❌ Nenhum arquivo de credenciais encontrado!")
+    st.info("""
+    💡 **SOLUÇÃO:** Baixe o arquivo JSON de credenciais do Google Cloud Console e salve em UM destes locais:
+    
+    1. `C:\\Users\\elton\\OneDrive\\Documentos\\dashboard-gerencial-492613-042470f98e27.json`
+    2. `C:\\Users\\elton\\OneDrive\\Desktop\\dashboard-gerencial-492613-042470f98e27.json`
+    3. Na mesma pasta deste script
+    """)
+    return None
 
 # ======================
 # FUNÇÕES AUXILIARES COMUNS
@@ -205,7 +228,7 @@ def converter_tempo_para_minutos(valor):
     return 0
 
 # ==================================================================================================
-# SE FOR PRENSADOS (MANTIDO EXATAMENTE COMO ESTAVA)
+# SE FOR PRENSADOS
 # ==================================================================================================
 if aba_selecionada == 'PRENSADOS':
     ABA = 'TRS_INDUSTRIAL'
@@ -242,7 +265,6 @@ if aba_selecionada == 'PRENSADOS':
                 if col in df.columns:
                     df[col] = df[col].apply(converter_numero_br)
             
-            # Adicionar colunas auxiliares para gráficos de parada
             df['ANO_MES'] = df['DATA'].dt.to_period('M').astype(str)
             df['DIA_SEMANA'] = df['DATA'].dt.day_name()
             df['SEMANA'] = df['DATA'].dt.isocalendar().week
@@ -401,23 +423,81 @@ if aba_selecionada == 'PRENSADOS':
         
         colunas_exibir = ['DATA', 'REFERÊNCIA', 'TURNO', 'PRODUZIDO', 'APROVADO', 'EMBALADO', 
                           'REFUGADO', 'META LIQUIDA', 'TRS (%)', 'TRS FINAL (%)']
+        
+        # Adicionar coluna ANALISE se existir
+        if 'ANALISE' in df_display.columns:
+            colunas_exibir.append('ANALISE')
+        
         colunas_exibir = [col for col in colunas_exibir if col in df_display.columns]
         
-        def destacar_melhor_trs(row):
-            ref = row['REFERÊNCIA']
-            if ref in melhores_trs_historico:
-                trs_val = row['TRS FINAL (%)']
-                if isinstance(trs_val, str):
-                    trs_val = float(trs_val.replace('%', '').replace(',', '.'))
-                if abs(trs_val - melhores_trs_historico[ref]) < 0.01:
-                    return ['background-color: #FFA500; color: black; font-weight: bold'] * len(row)
+        # ====================== TABELA COM LINHAS DE ANÁLISE EXPANDIDAS ======================
+        # Construir lista de linhas expandida com as análises
+        linhas_expandidas = []
+        
+        for idx, row in df_display.iterrows():
+            # Adicionar linha de produção
+            linha_producao = {col: row[col] for col in colunas_exibir if col != 'ANALISE'}
+            linhas_expandidas.append(linha_producao)
+            
+            # Verificar se tem análise
+            if 'ANALISE' in df_display.columns:
+                analise_valor = row.get('ANALISE', '')
+                if pd.notna(analise_valor) and str(analise_valor).strip() != '':
+                    # Criar linha de análise com a primeira coluna como "📋 ANÁLISE:" e a segunda com o texto
+                    linha_analise = {}
+                    colunas_sem_analise = [col for col in colunas_exibir if col != 'ANALISE']
+                    
+                    for i, col in enumerate(colunas_sem_analise):
+                        if i == 0:
+                            # Primeira coluna: "📋 ANÁLISE:"
+                            linha_analise[col] = '📋 ANÁLISE:'
+                        elif i == 1:
+                            # Segunda coluna: texto da análise (ocupando espaço)
+                            linha_analise[col] = str(analise_valor)
+                        else:
+                            # Demais colunas: vazio
+                            linha_analise[col] = ''
+                    
+                    # Armazenar o texto completo para referência
+                    linha_analise['_ANALISE_TEXTO'] = str(analise_valor)
+                    linha_analise['_EH_ANALISE'] = True
+                    linhas_expandidas.append(linha_analise)
+        
+        # Criar DataFrame expandido
+        df_expandido = pd.DataFrame(linhas_expandidas)
+        
+        # Função para colorir as linhas
+        def destacar_linhas(row):
+            if row.get('_EH_ANALISE', False):
+                # Linha de análise - fundo verde
+                return ['background-color: #1a3a2a; color: #a0ffa0; font-style: italic;'] * len(row)
+            elif row.get('REFERÊNCIA') in melhores_trs_historico:
+                ref = row.get('REFERÊNCIA', '')
+                if ref in melhores_trs_historico:
+                    trs_val = row.get('TRS FINAL (%)', '0')
+                    if isinstance(trs_val, str):
+                        trs_val = float(trs_val.replace('%', '').replace(',', '.'))
+                    if abs(trs_val - melhores_trs_historico[ref]) < 0.01:
+                        return ['background-color: #FFA500; color: black; font-weight: bold;'] * len(row)
             return [''] * len(row)
         
-        styled_df = df_display[colunas_exibir].style.apply(destacar_melhor_trs, axis=1)
+        # Preparar colunas para exibição (remover colunas temporárias)
+        colunas_exibir_final = [col for col in colunas_exibir if col != 'ANALISE']
+        
+        # Remover colunas temporárias se existirem
+        if '_ANALISE_TEXTO' in df_expandido.columns:
+            df_expandido = df_expandido.drop(columns=['_ANALISE_TEXTO'])
+        if '_EH_ANALISE' in df_expandido.columns:
+            # Manter para o estilo, mas não exibir
+            pass
+        
+        # Aplicar estilo e exibir
+        styled_df = df_expandido[colunas_exibir_final].style.apply(destacar_linhas, axis=1)
         st.dataframe(styled_df, use_container_width=True, height=400)
         
         if not filtro_melhores_trs:
             st.caption("🎯 Linhas em laranja: Melhor TRS Final Histórico para cada referência")
+            st.caption("📝 Linhas em verde: Análises registradas (primeira coluna: '📋 ANÁLISE:', segunda coluna: texto completo)")
 
     # Gráfico TRS Diário
     st.subheader("📈 TRS - Evolução Diária")
@@ -686,7 +766,7 @@ if aba_selecionada == 'PRENSADOS':
                 st.metric("Total de Defeitos", f"{int(total_defeitos):,}".replace(",", "."))
 
 # ==================================================================================================
-# SE FOR SOPRO (AGORA COM GRÁFICOS GERENCIAIS INCORPORADOS)
+# SE FOR SOPRO
 # ==================================================================================================
 elif aba_selecionada == 'SOPRO':
     ABA = 'TRS_SOPRO'
@@ -711,7 +791,6 @@ elif aba_selecionada == 'SOPRO':
             df = pd.DataFrame(valores, columns=cabecalho)
             df.columns = df.columns.str.strip().str.upper()
             
-            # FILTRAR PARA EXCLUIR AS PRAÇAS QUE NÃO SÃO SOPRO
             if 'PRAÇA' in df.columns:
                 df['PRAÇA_NORM'] = df['PRAÇA'].fillna('').astype(str).str.upper().str.strip()
                 mascara_sopro = ~df['PRAÇA_NORM'].apply(
@@ -756,7 +835,6 @@ elif aba_selecionada == 'SOPRO':
 
     st.info(f"📊 Dados carregados: {len(df_base)} registros (apenas SOPRO)")
 
-    # Calcular TRS LÍQUIDO
     df_base_calc = df_base.copy()
     if 'TRS_BRUTO' in df_base_calc.columns:
         df_base_calc['TRS LÍQUIDO (%)'] = df_base_calc['TRS_BRUTO'] * 100
@@ -773,7 +851,6 @@ elif aba_selecionada == 'SOPRO':
                 if max_trs > 0:
                     melhores_trs_historico[ref] = max_trs
 
-    # Sidebar filtros
     st.sidebar.title("Filtros - SOPRO")
     filtro_melhores_trs = st.sidebar.checkbox("Apenas Melhores TRS Líquido por Referência", value=False, key="sopro_melhores")
     data_ini = st.sidebar.date_input("Data inicial", value=None, key="sopro_data_ini")
@@ -796,7 +873,6 @@ elif aba_selecionada == 'SOPRO':
     mostrar_defeitos = st.sidebar.checkbox("Exibir Somatório de Defeitos", value=True, key="sopro_defeitos")
     qtd = st.sidebar.number_input("Qtd de linhas na tabela (0 = mostrar todas)", min_value=0, max_value=5000, value=20, step=10, key="sopro_qtd")
 
-    # Aplicar filtros
     df = df_base.copy()
     if data_ini:
         df = df[df['DATA'] >= pd.to_datetime(data_ini)]
@@ -809,7 +885,6 @@ elif aba_selecionada == 'SOPRO':
     if praca != "(Todas)" and 'PRAÇA' in df.columns:
         df = df[df['PRAÇA'].fillna('').str.upper() == praca.upper()]
 
-    # ====================== KPIs PRINCIPAIS ======================
     if not df.empty:
         colunas_para_converter = ['PRODUZIDO', 'REFUGADO', 'APROVADO', 'TRS_BRUTO']
         for col in colunas_para_converter:
@@ -834,8 +909,6 @@ elif aba_selecionada == 'SOPRO':
     col4.metric("TRS Líquido Médio (%)", f"{trs_liquido_medio:.2f}%")
 
     st.markdown("---")
-
-    # ====================== TABELA PRINCIPAL ======================
     st.subheader("📋 Tabela de Produção - SOPRO")
 
     if not df.empty:
@@ -895,8 +968,6 @@ elif aba_selecionada == 'SOPRO':
         st.warning("Nenhum dado encontrado com os filtros selecionados.")
 
     st.markdown("---")
-
-    # ====================== GRÁFICO TRS DIÁRIO ======================
     st.subheader("📈 TRS Líquido - Evolução Diária")
     
     if not df.empty and 'TRS_BRUTO' in df.columns:
@@ -945,7 +1016,6 @@ elif aba_selecionada == 'SOPRO':
     
     st.markdown("---")
 
-    # ====================== TRS POR PRAÇA ======================
     if 'PRAÇA' in df.columns and not df.empty:
         st.subheader("🏭 TRS Líquido por Praça")
         
@@ -987,7 +1057,6 @@ elif aba_selecionada == 'SOPRO':
     
     st.markdown("---")
 
-    # ====================== TRS MENSAL ======================
     st.subheader("📊 TRS Líquido Mensal")
     
     if not df.empty and 'ANO_MES' in df.columns:
@@ -1039,7 +1108,6 @@ elif aba_selecionada == 'SOPRO':
     
     st.markdown("---")
 
-    # ====================== GRÁFICO TRS POR TURNO ======================
     if not df.empty and 'TURNO' in df.columns and 'TRS_BRUTO' in df.columns:
         st.subheader("📊 TRS Líquido por Turno")
         turno_data = []
@@ -1061,7 +1129,6 @@ elif aba_selecionada == 'SOPRO':
                 ax.text(i, v + 1, f"{v:.1f}%", ha='center', va='bottom', fontweight='bold')
             st.pyplot(fig)
 
-    # ====================== DEFEITOS ======================
     if mostrar_defeitos:
         st.subheader("❌ Estratificação de Defeitos - SOPRO")
         colunas_defeitos = [
