@@ -3,6 +3,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from datetime import datetime, timedelta
+import pytz
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import re
@@ -48,7 +49,16 @@ st.set_page_config(
 )
 
 # ======================
-# CSS GLOBAL
+# FUNÇÃO PARA HORÁRIO BRASÍLIA
+# ======================
+def get_horario_brasilia():
+    """Retorna o horário atual de Brasília (GMT-3)"""
+    fuso_brasilia = pytz.timezone('America/Sao_Paulo')
+    agora_brasilia = datetime.now(fuso_brasilia)
+    return agora_brasilia.strftime('%d/%m/%Y %H:%M')
+
+# ======================
+# CSS GLOBAL COM ÊNFASE NOS RADIOBUTTONS BRANCO NEGRITO
 # ======================
 st.markdown(f"""
 <style>
@@ -67,12 +77,59 @@ st.markdown(f"""
       background: linear-gradient(180deg, #0D1018 0%, #0A0C14 100%) !important;
       border-right: 1px solid {THEME['border_bright']} !important;
   }}
+  
+  /* ============================================= */
+  /* FORÇA RADIOBUTTONS (PRENSADOS/SOPRO) BRANCO NEGRITO */
+  /* ============================================= */
+  
+  /* Camada 1 - Seletor direto do label do radio */
   [data-testid="stSidebar"] .stRadio label {{
-      color: {THEME['text_primary']} !important;
+      color: #FFFFFF !important;
+      font-weight: bold !important;
       font-family: 'Rajdhani', sans-serif !important;
       font-size: 15px !important;
-      font-weight: 600 !important;
       letter-spacing: 0.08em;
+      text-shadow: 0 0 2px rgba(0,0,0,0.5) !important;
+  }}
+  
+  /* Camada 2 - Força todos os radios dentro do radiogroup */
+  [data-testid="stSidebar"] div[role="radiogroup"] label {{
+      color: #FFFFFF !important;
+      font-weight: bold !important;
+      font-family: 'Rajdhani', sans-serif !important;
+      font-size: 15px !important;
+  }}
+  
+  /* Camada 3 - Força os span internos do radio */
+  [data-testid="stSidebar"] .stRadio label span {{
+      color: #FFFFFF !important;
+      font-weight: bold !important;
+  }}
+  
+  /* Camada 4 - Força qualquer elemento filho do radio */
+  [data-testid="stSidebar"] .stRadio div {{
+      color: #FFFFFF !important;
+  }}
+  
+  /* Camada 5 - Seletor universal para qualquer texto dentro do radio */
+  [data-testid="stSidebar"] .stRadio * {{
+      color: #FFFFFF !important;
+      font-weight: bold !important;
+  }}
+  
+  /* Camada 6 - Força especificamente os textos PRENSADOS e SOPRO */
+  [data-testid="stSidebar"] div[data-testid="stMarkdownContainer"] + div label,
+  [data-testid="stSidebar"] .stRadio label p,
+  [data-testid="stSidebar"] .stRadio label span {{
+      color: #FFFFFF !important;
+      font-weight: bold !important;
+  }}
+  
+  /* Camada 7 - Hover também mantém branco negrito */
+  [data-testid="stSidebar"] .stRadio label:hover {{
+      color: #FFFFFF !important;
+      font-weight: bold !important;
+      opacity: 0.9;
   }}
   
   /* ── Sidebar Filters - BRANCO NEGRITO (melhor leitura) ── */
@@ -81,7 +138,6 @@ st.markdown(f"""
   [data-testid="stSidebar"] .stDateInput label,
   [data-testid="stSidebar"] .stNumberInput label,
   [data-testid="stSidebar"] .stCheckbox label,
-  [data-testid="stSidebar"] .stRadio label,
   [data-testid="stSidebar"] .stMultiSelect label,
   [data-testid="stSidebar"] .stSlider label,
   [data-testid="stSidebar"] .stTimeInput label,
@@ -705,7 +761,7 @@ if aba_selecionada == 'PRENSADOS':
     # ── Page header ──
     render_page_header(
         "PRENSADOS",
-        f"Industrial · {len(df):,} registros carregados · Atualizado {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+        f"Industrial · {len(df):,} registros carregados · Atualizado {get_horario_brasilia()}",
         THEME['accent_cyan']
     )
 
@@ -766,7 +822,7 @@ if aba_selecionada == 'PRENSADOS':
             colunas_exibir.append('ANALISE')
         colunas_exibir = [col for col in colunas_exibir if col in df_display.columns]
 
-        # FUNÇÃO CORRIGIDA: linha de análise sempre abaixo da linha correspondente
+        # FUNÇÃO: linha de análise sempre abaixo da linha correspondente
         def render_tabela_com_analise(df_display, colunas_exibir, melhores_trs_historico):
             cols_sem_analise = [c for c in colunas_exibir if c != 'ANALISE']
             
@@ -1067,7 +1123,7 @@ if aba_selecionada == 'PRENSADOS':
     <div style="text-align:right;padding:16px 0 8px;
         font-family:'JetBrains Mono',monospace;font-size:10px;
         color:{THEME['text_muted']};letter-spacing:.1em;">
-        TRS DASHBOARD · PRENSADOS · {datetime.now().strftime('%d/%m/%Y %H:%M')}
+        TRS DASHBOARD · PRENSADOS · {get_horario_brasilia()}
     </div>
     """, unsafe_allow_html=True)
 
@@ -1179,7 +1235,7 @@ elif aba_selecionada == 'SOPRO':
     # ── Page header ──
     render_page_header(
         "SOPRO",
-        f"Industrial · {len(df):,} registros carregados · Atualizado {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+        f"Industrial · {len(df):,} registros carregados · Atualizado {get_horario_brasilia()}",
         THEME['accent_lime']
     )
 
@@ -1388,6 +1444,6 @@ elif aba_selecionada == 'SOPRO':
     <div style="text-align:right;padding:16px 0 8px;
         font-family:'JetBrains Mono',monospace;font-size:10px;
         color:{THEME['text_muted']};letter-spacing:.1em;">
-        TRS DASHBOARD · SOPRO · {datetime.now().strftime('%d/%m/%Y %H:%M')}
+        TRS DASHBOARD · SOPRO · {get_horario_brasilia()}
     </div>
     """, unsafe_allow_html=True)
