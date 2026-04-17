@@ -3,7 +3,6 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from datetime import datetime, timedelta
-import pytz
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import re
@@ -23,22 +22,22 @@ ABAS = {
 }
 
 # ======================
-# TEMA VISUAL
+# TEMA VISUAL - CLARO (LIGHT MODE)
 # ======================
 THEME = {
-    'bg_primary':     '#0A0C10',
-    'bg_card':        '#111520',
-    'bg_card2':       '#161B27',
-    'accent_cyan':    '#00D4FF',
-    'accent_lime':    '#39FF14',
-    'accent_orange':  '#FF6B35',
-    'accent_yellow':  '#FFD700',
-    'accent_red':     '#FF3860',
-    'text_primary':   '#E8EAF0',
-    'text_muted':     '#6B7280',
-    'border':         '#1E2535',
-    'border_bright':  '#2A3550',
-    'grid':           '#1A2030',
+    'bg_primary':     '#F5F7FA',
+    'bg_card':        '#FFFFFF',
+    'bg_card2':       '#F8F9FC',
+    'accent_cyan':    '#0078D4',
+    'accent_lime':    '#107C10',
+    'accent_orange':  '#E86C2C',
+    'accent_yellow':  '#FFB900',
+    'accent_red':     '#E81123',
+    'text_primary':   '#1E1E1E',
+    'text_muted':     '#605E5C',
+    'border':         '#D1D1D1',
+    'border_bright':  '#C0C0C0',
+    'grid':           '#E0E0E0',
 }
 
 st.set_page_config(
@@ -53,12 +52,14 @@ st.set_page_config(
 # ======================
 def get_horario_brasilia():
     """Retorna o horário atual de Brasília (GMT-3)"""
-    fuso_brasilia = pytz.timezone('America/Sao_Paulo')
-    agora_brasilia = datetime.now(fuso_brasilia)
+    from datetime import timezone, timedelta
+    utc_now = datetime.now(timezone.utc)
+    brasilia_offset = timezone(timedelta(hours=-3))
+    agora_brasilia = utc_now.astimezone(brasilia_offset)
     return agora_brasilia.strftime('%d/%m/%Y %H:%M')
 
 # ======================
-# CSS GLOBAL COM ÊNFASE NOS RADIOBUTTONS BRANCO NEGRITO
+# CSS GLOBAL - TEMA CLARO
 # ======================
 st.markdown(f"""
 <style>
@@ -74,65 +75,41 @@ st.markdown(f"""
 
   /* ── Sidebar ── */
   [data-testid="stSidebar"] {{
-      background: linear-gradient(180deg, #0D1018 0%, #0A0C14 100%) !important;
+      background: linear-gradient(180deg, #FFFFFF 0%, #F0F2F5 100%) !important;
       border-right: 1px solid {THEME['border_bright']} !important;
   }}
   
-  /* ============================================= */
-  /* FORÇA RADIOBUTTONS (PRENSADOS/SOPRO) BRANCO NEGRITO */
-  /* ============================================= */
-  
-  /* Camada 1 - Seletor direto do label do radio */
+  /* ── RadioButton PRENSADOS e SOPRO em preto negrito ── */
   [data-testid="stSidebar"] .stRadio label {{
-      color: #FFFFFF !important;
+      color: #000000 !important;
       font-weight: bold !important;
       font-family: 'Rajdhani', sans-serif !important;
       font-size: 15px !important;
       letter-spacing: 0.08em;
-      text-shadow: 0 0 2px rgba(0,0,0,0.5) !important;
   }}
   
-  /* Camada 2 - Força todos os radios dentro do radiogroup */
   [data-testid="stSidebar"] div[role="radiogroup"] label {{
-      color: #FFFFFF !important;
+      color: #000000 !important;
       font-weight: bold !important;
-      font-family: 'Rajdhani', sans-serif !important;
-      font-size: 15px !important;
   }}
   
-  /* Camada 3 - Força os span internos do radio */
   [data-testid="stSidebar"] .stRadio label span {{
-      color: #FFFFFF !important;
+      color: #000000 !important;
       font-weight: bold !important;
   }}
   
-  /* Camada 4 - Força qualquer elemento filho do radio */
-  [data-testid="stSidebar"] .stRadio div {{
-      color: #FFFFFF !important;
-  }}
-  
-  /* Camada 5 - Seletor universal para qualquer texto dentro do radio */
   [data-testid="stSidebar"] .stRadio * {{
-      color: #FFFFFF !important;
+      color: #000000 !important;
       font-weight: bold !important;
   }}
   
-  /* Camada 6 - Força especificamente os textos PRENSADOS e SOPRO */
-  [data-testid="stSidebar"] div[data-testid="stMarkdownContainer"] + div label,
-  [data-testid="stSidebar"] .stRadio label p,
-  [data-testid="stSidebar"] .stRadio label span {{
-      color: #FFFFFF !important;
-      font-weight: bold !important;
-  }}
-  
-  /* Camada 7 - Hover também mantém branco negrito */
   [data-testid="stSidebar"] .stRadio label:hover {{
-      color: #FFFFFF !important;
+      color: #000000 !important;
       font-weight: bold !important;
-      opacity: 0.9;
+      opacity: 0.8;
   }}
   
-  /* ── Sidebar Filters - BRANCO NEGRITO (melhor leitura) ── */
+  /* ── Sidebar Filters - preto negrito ── */
   [data-testid="stSidebar"] .stSelectbox label,
   [data-testid="stSidebar"] .stTextInput label,
   [data-testid="stSidebar"] .stDateInput label,
@@ -145,7 +122,7 @@ st.markdown(f"""
   [data-testid="stSidebar"] .stColorPicker label,
   [data-testid="stSidebar"] .stFileUploader label,
   [data-testid="stSidebar"] .stForm label {{
-      color: #FFFFFF !important;
+      color: #000000 !important;
       font-weight: bold !important;
       font-family: 'JetBrains Mono', monospace !important;
       font-size: 11px !important;
@@ -153,9 +130,8 @@ st.markdown(f"""
       letter-spacing: 0.12em;
   }}
   
-  /* Força todos os labels da sidebar */
   [data-testid="stSidebar"] label {{
-      color: #FFFFFF !important;
+      color: #000000 !important;
       font-weight: bold !important;
   }}
   
@@ -176,7 +152,7 @@ st.markdown(f"""
   .stTextInput input,
   .stNumberInput input,
   .stDateInput input {{
-      background-color: {THEME['bg_card2']} !important;
+      background-color: {THEME['bg_card']} !important;
       border: 1px solid {THEME['border_bright']} !important;
       color: {THEME['text_primary']} !important;
       border-radius: 4px !important;
@@ -200,6 +176,7 @@ st.markdown(f"""
       padding: 16px 20px !important;
       position: relative;
       overflow: hidden;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.05);
   }}
   [data-testid="stMetric"]::before {{
       content: '';
@@ -261,12 +238,13 @@ st.markdown(f"""
       border-bottom: 1px solid {THEME['border_bright']} !important;
   }}
   .stDataFrame tbody tr:hover td {{
-      background-color: rgba(0, 212, 255, 0.06) !important;
+      background-color: rgba(0, 120, 212, 0.06) !important;
   }}
   .stDataFrame tbody td {{
       font-family: 'JetBrains Mono', monospace !important;
       font-size: 12px !important;
       border-color: {THEME['border']} !important;
+      color: {THEME['text_primary']} !important;
   }}
 
   /* ── Divider ── */
@@ -277,10 +255,10 @@ st.markdown(f"""
   }}
 
   /* ── Info/Warning/Success banners ── */
-  .stInfo {{ background-color: rgba(0,212,255,0.08) !important; border-left: 3px solid {THEME['accent_cyan']} !important; border-radius: 4px !important; }}
-  .stWarning {{ background-color: rgba(255,107,53,0.08) !important; border-left: 3px solid {THEME['accent_orange']} !important; border-radius: 4px !important; }}
-  .stSuccess {{ background-color: rgba(57,255,20,0.08) !important; border-left: 3px solid {THEME['accent_lime']} !important; border-radius: 4px !important; }}
-  .stError {{ background-color: rgba(255,56,96,0.08) !important; border-left: 3px solid {THEME['accent_red']} !important; border-radius: 4px !important; }}
+  .stInfo {{ background-color: rgba(0,120,212,0.08) !important; border-left: 3px solid {THEME['accent_cyan']} !important; border-radius: 4px !important; }}
+  .stWarning {{ background-color: rgba(232,108,44,0.08) !important; border-left: 3px solid {THEME['accent_orange']} !important; border-radius: 4px !important; }}
+  .stSuccess {{ background-color: rgba(16,124,16,0.08) !important; border-left: 3px solid {THEME['accent_lime']} !important; border-radius: 4px !important; }}
+  .stError {{ background-color: rgba(232,17,35,0.08) !important; border-left: 3px solid {THEME['accent_red']} !important; border-radius: 4px !important; }}
 
   /* ── Spinner ── */
   .stSpinner > div {{ border-top-color: {THEME['accent_cyan']} !important; }}
@@ -304,8 +282,8 @@ st.markdown(f"""
   
   /* ── Estilo para linha de análise ── */
   .analise-row td {{
-      background-color: #0D2A1A !important;
-      color: #5EF08A !important;
+      background-color: #E6F2E6 !important;
+      color: #107C10 !important;
       font-style: italic !important;
       font-family: 'JetBrains Mono', monospace !important;
       font-size: 11px !important;
@@ -314,8 +292,10 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 
-def render_page_header(title: str, subtitle: str, accent: str = THEME['accent_cyan']):
+def render_page_header(title: str, subtitle: str, accent: str = None):
     """Renderiza cabeçalho da página com estilo industrial."""
+    if accent is None:
+        accent = THEME['accent_cyan']
     st.markdown(f"""
     <div style="
         padding: 28px 0 20px 0;
@@ -363,7 +343,9 @@ def render_page_header(title: str, subtitle: str, accent: str = THEME['accent_cy
     """, unsafe_allow_html=True)
 
 
-def render_section_header(title: str, icon: str = "▸", accent: str = THEME['accent_cyan']):
+def render_section_header(title: str, icon: str = "▸", accent: str = None):
+    if accent is None:
+        accent = THEME['accent_cyan']
     st.markdown(f"""
     <div style="
         display: flex;
@@ -386,7 +368,9 @@ def render_section_header(title: str, icon: str = "▸", accent: str = THEME['ac
     """, unsafe_allow_html=True)
 
 
-def render_kpi_card(label: str, value: str, accent: str = THEME['accent_cyan'], icon: str = ""):
+def render_kpi_card(label: str, value: str, accent: str = None, icon: str = ""):
+    if accent is None:
+        accent = THEME['accent_cyan']
     st.markdown(f"""
     <div style="
         background: linear-gradient(135deg, {THEME['bg_card']} 0%, {THEME['bg_card2']} 100%);
@@ -396,6 +380,7 @@ def render_kpi_card(label: str, value: str, accent: str = THEME['accent_cyan'], 
         position: relative;
         overflow: hidden;
         height: 100%;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
     ">
         <div style="
             position: absolute;
@@ -424,8 +409,10 @@ def render_kpi_card(label: str, value: str, accent: str = THEME['accent_cyan'], 
 
 
 def apply_chart_style(ax, fig, title: str, xlabel: str = "", ylabel: str = "",
-                      accent: str = THEME['accent_cyan']):
-    """Aplica estilo dark/industrial consistente em todos os gráficos matplotlib."""
+                      accent: str = None):
+    """Aplica estilo claro/industrial consistente em todos os gráficos matplotlib."""
+    if accent is None:
+        accent = THEME['accent_cyan']
     fig.patch.set_facecolor(THEME['bg_card'])
     ax.set_facecolor(THEME['bg_card'])
 
@@ -438,7 +425,7 @@ def apply_chart_style(ax, fig, title: str, xlabel: str = "", ylabel: str = "",
         ax.set_ylabel(ylabel, fontsize=10, color=THEME['text_muted'], labelpad=8)
 
     ax.tick_params(colors=THEME['text_muted'], labelsize=9)
-    ax.grid(True, alpha=0.15, color=THEME['grid'], linewidth=0.8, linestyle='--')
+    ax.grid(True, alpha=0.3, color=THEME['grid'], linewidth=0.8, linestyle='--')
     ax.set_axisbelow(True)
 
     for spine in ax.spines.values():
@@ -854,14 +841,14 @@ if aba_selecionada == 'PRENSADOS':
             # Função de estilo
             def destacar_linhas(row):
                 if row.get('_tipo') == 'analise':
-                    return [f'background-color: #0D2A1A; color: #5EF08A; font-style: italic; font-family: JetBrains Mono, monospace; font-size: 11px;'] * len(row)
+                    return [f'background-color: #E6F2E6; color: #107C10; font-style: italic; font-family: JetBrains Mono, monospace; font-size: 11px;'] * len(row)
                 ref = row.get('REFERÊNCIA', '')
                 if ref in melhores_trs_historico:
                     trs_v = row.get('TRS FINAL (%)', '0')
                     if isinstance(trs_v, str):
                         trs_v = float(trs_v.replace('%', '').replace(',', '.'))
                     if abs(trs_v - melhores_trs_historico[ref]) < 0.01:
-                        return ['background-color: #2A1A00; color: #FFD700; font-weight: 600;'] * len(row)
+                        return ['background-color: #FFF4E6; color: #D48806; font-weight: 600;'] * len(row)
                 return [''] * len(row)
             
             styled_df = df_final[cols_sem_analise].style.apply(destacar_linhas, axis=1)
@@ -1004,8 +991,8 @@ if aba_selecionada == 'PRENSADOS':
 
             for i, (a, m) in enumerate(zip(acertos_v, manut_v)):
                 total = a + m
-                if a > 0: ax.text(i, a/2, minutos_para_horas_str(a), ha='center', va='center', color='white', fontweight='bold', fontsize=10)
-                if m > 0: ax.text(i, a + m/2, minutos_para_horas_str(m), ha='center', va='center', color='white', fontweight='bold', fontsize=10)
+                if a > 0: ax.text(i, a/2, minutos_para_horas_str(a), ha='center', va='center', color='black', fontweight='bold', fontsize=10)
+                if m > 0: ax.text(i, a + m/2, minutos_para_horas_str(m), ha='center', va='center', color='black', fontweight='bold', fontsize=10)
                 if total > 0:
                     ax.text(i, total * 1.05, minutos_para_horas_str(total),
                             ha='center', va='bottom', color=THEME['text_primary'], fontweight='bold', fontsize=11)
@@ -1037,7 +1024,7 @@ if aba_selecionada == 'PRENSADOS':
                     wedgeprops={'edgecolor': THEME['bg_card'], 'linewidth': 2}
                 )
                 for at in autotexts:
-                    at.set_color('white')
+                    at.set_color('black')
                     at.set_fontweight('bold')
                     at.set_fontsize(10)
 
@@ -1286,7 +1273,7 @@ elif aba_selecionada == 'SOPRO':
                 tv = row.get('TRS LÍQUIDO (%)', '0')
                 if isinstance(tv, str): tv = float(tv.replace('%','').replace(',','.'))
                 if abs(tv - melhores_trs_historico[ref]) < 0.01:
-                    return ['background-color: #2A1A00; color: #FFD700; font-weight: 600;'] * len(row)
+                    return ['background-color: #FFF4E6; color: #D48806; font-weight: 600;'] * len(row)
             return [''] * len(row)
 
         styled = df_display[colunas_exibir].style.apply(destacar_sopro, axis=1)
