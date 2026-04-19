@@ -2013,13 +2013,11 @@ elif aba_selecionada == 'TÊMPERA':
         TRS DASHBOARD · TÊMPERA · {get_horario_brasilia()}
     </div>
     """, unsafe_allow_html=True)
-    
       # ── Ranking de Gancheiras ──
     st.markdown("<hr>", unsafe_allow_html=True)
-    render_section_header("🏭 Ranking de Gancheiras (Pior → Melhor Desempenho)", "▸", THEME['accent_purple'])
+    render_section_header("🏭 Ranking de Gancheiras (Pior → Melhor)", "▸", THEME['accent_purple'])
     
     if not df.empty and 'GANCHEIRA' in df.columns:
-        # Agrupar por gancheira
         ranking_gancheiras = []
         for gancheira in df['GANCHEIRA'].dropna().unique():
             df_g = df[df['GANCHEIRA'] == gancheira]
@@ -2029,7 +2027,6 @@ elif aba_selecionada == 'TÊMPERA':
             total_pecas_g = total_registros_g * 40
             trs_g = (total_aprovado_g / total_pecas_g * 100) if total_pecas_g > 0 else 0
             
-            # Contar defeitos por tipo para esta gancheira
             defeitos_gancheira = {}
             for codigo, nome in MAPEAMENTO_DEFEITOS.items():
                 if codigo in CODIGOS_DEFEITO_REAIS:
@@ -2041,286 +2038,272 @@ elif aba_selecionada == 'TÊMPERA':
                             defeitos_gancheira[nome] = qtd
             
             media_defeitos = total_defeitos_g / total_registros_g if total_registros_g > 0 else 0
+            det_str = ' | '.join([f"{k}: {v}" for k, v in defeitos_gancheira.items()]) if defeitos_gancheira else "-"
             
             ranking_gancheiras.append({
+                'Pos': 0,
                 'Gancheira': str(gancheira),
-                'Registros': total_registros_g,
-                'Aprovados': total_aprovado_g,
+                'Reg': total_registros_g,
                 'Defeitos': total_defeitos_g,
-                'Média Def./Reg.': media_defeitos,
-                'TRS (%)': trs_g,
-                'Defeitos Detalhe': defeitos_gancheira
+                'Média': media_defeitos,
+                'TRS_num': trs_g,
+                'TRS': f"{trs_g:.1f}%",
+                'Detalhamento': det_str
             })
         
         df_ranking = pd.DataFrame(ranking_gancheiras)
         df_ranking = df_ranking.sort_values('Defeitos', ascending=False)
+        df_ranking['Pos'] = range(1, len(df_ranking) + 1)
         
         if not df_ranking.empty:
-            st.markdown("#### 📊 Ranking por Quantidade de Defeitos")
-            
             piores = df_ranking.head(3)
-            if len(piores) > 0:
-                st.warning(f"⚠️ **Atenção para as gancheiras com mais defeitos:** {', '.join(piores['Gancheira'].tolist())}")
+            st.warning(f"⚠️ **Piores gancheiras:** {', '.join(piores['Gancheira'].tolist())}")
             
-            col1, col2, col3, col4, col5, col6 = st.columns(6)
-            with col1:
-                st.markdown(f"<div style='font-weight:bold;color:{THEME['accent_cyan']};'>Posição</div>", unsafe_allow_html=True)
-            with col2:
-                st.markdown(f"<div style='font-weight:bold;color:{THEME['accent_cyan']};'>Gancheira</div>", unsafe_allow_html=True)
-            with col3:
-                st.markdown(f"<div style='font-weight:bold;color:{THEME['accent_cyan']};'>Registros</div>", unsafe_allow_html=True)
-            with col4:
-                st.markdown(f"<div style='font-weight:bold;color:{THEME['accent_cyan']};'>Defeitos</div>", unsafe_allow_html=True)
-            with col5:
-                st.markdown(f"<div style='font-weight:bold;color:{THEME['accent_cyan']};'>Média/Reg.</div>", unsafe_allow_html=True)
-            with col6:
-                st.markdown(f"<div style='font-weight:bold;color:{THEME['accent_cyan']};'>TRS</div>", unsafe_allow_html=True)
+            df_tabela = df_ranking[['Pos', 'Gancheira', 'Reg', 'Defeitos', 'Média', 'TRS']].copy()
+            df_tabela['Média'] = df_tabela['Média'].round(1)
             
-            for i, (_, row) in enumerate(df_ranking.iterrows(), 1):
-                col1, col2, col3, col4, col5, col6 = st.columns(6)
-                with col1:
-                    if i <= 3:
-                        st.markdown(f"🔴 **{i}º**")
-                    elif i > len(df_ranking) - 3:
-                        st.markdown(f"🟢 **{i}º**")
-                    else:
-                        st.markdown(f"{i}º")
-                with col2:
-                    st.markdown(f"**{row['Gancheira']}**")
-                with col3:
-                    st.markdown(f"{row['Registros']}")
-                with col4:
-                    st.markdown(f"❌ {row['Defeitos']}")
-                with col5:
-                    media = row['Média Def./Reg.']
-                    cor = THEME['accent_red'] if media > 5 else THEME['accent_orange'] if media > 2 else THEME['text_primary']
-                    st.markdown(f"<span style='color:{cor};'>{media:.1f}</span>", unsafe_allow_html=True)
-                with col6:
-                    trs_val = row['TRS (%)']
-                    cor = THEME['accent_lime'] if trs_val >= 80 else THEME['accent_orange'] if trs_val >= 70 else THEME['accent_red']
-                    st.markdown(f"<span style='color:{cor};font-weight:bold;'>{trs_val:.1f}%</span>", unsafe_allow_html=True)
+            def estilo_ranking(row):
+                styles = [''] * len(row)
+                pos = row['Pos']
+                if pos <= 3:
+                    styles[0] = 'color: #E81123; font-weight: bold;'
+                elif pos > len(df_ranking) - 3:
+                    styles[0] = 'color: #107C10; font-weight: bold;'
+                styles[3] = 'color: #E81123; font-weight: bold;'
+                try:
+                    trs_val = float(row['TRS'].replace('%', ''))
+                    if trs_val >= 80:
+                        styles[5] = 'color: #107C10; font-weight: bold;'
+                    elif trs_val >= 70:
+                        styles[5] = 'color: #E86C2C; font-weight: bold;'
+                except:
+                    pass
+                return styles
             
-            st.markdown("<br>", unsafe_allow_html=True)
+            styled = df_tabela.style.apply(estilo_ranking, axis=1)
+            st.dataframe(styled, use_container_width=True, height=250)
             
-            # Gráfico de barras do ranking
-            fig, ax = plt.subplots(figsize=(12, 5), facecolor=THEME['bg_card'])
-            apply_chart_style(ax, fig, "Defeitos por Gancheira (Top 15 piores)", ylabel="Quantidade de Defeitos", accent=THEME['accent_purple'])
+            with st.expander("🔍 Detalhamento das 5 Piores Gancheiras", expanded=False):
+                for i, (_, row) in enumerate(df_ranking.head(5).iterrows(), 1):
+                    st.markdown(f"""
+                    **{i}º - Gancheira {row['Gancheira']}** | ❌ {row['Defeitos']} defeitos | TRS: {row['TRS']}  
+                    📋 {row['Detalhamento']}
+                    """)
             
-            top_piores = df_ranking.head(15)
-            colors = [THEME['accent_red'] if i < 3 else THEME['accent_orange'] if i < 6 else THEME['accent_cyan'] 
-                      for i in range(len(top_piores))]
-            
-            bars = ax.bar(range(len(top_piores)), top_piores['Defeitos'], color=colors, alpha=0.8)
-            ax.set_xticks(range(len(top_piores)))
-            ax.set_xticklabels(top_piores['Gancheira'], rotation=45, ha='right', fontsize=9)
-            
-            for bar, val in zip(bars, top_piores['Defeitos']):
-                if val > 0:
-                    ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1, str(val), 
-                            ha='center', va='bottom', fontsize=9, fontweight='bold')
-            
+            fig, ax = plt.subplots(figsize=(10, 3), facecolor=THEME['bg_card'])
+            apply_chart_style(ax, fig, "Top 10 Piores Gancheiras", accent=THEME['accent_purple'])
+            top10 = df_ranking.head(10)
+            colors = [THEME['accent_red'] if i < 3 else THEME['accent_orange'] for i in range(len(top10))]
+            ax.barh(range(len(top10)), top10['Defeitos'], color=colors, alpha=0.8)
+            ax.set_yticks(range(len(top10)))
+            ax.set_yticklabels(top10['Gancheira'])
+            ax.invert_yaxis()
+            ax.set_xlabel('Defeitos')
             fig.tight_layout()
             st.pyplot(fig)
             plt.close(fig)
-            
-            # Detalhamento das piores gancheiras
-            st.markdown("#### 🔍 Detalhamento das 5 Piores Gancheiras")
-            
-            for i, (_, row) in enumerate(df_ranking.head(5).iterrows(), 1):
-                defeitos_det = row['Defeitos Detalhe']
-                if defeitos_det:
-                    det_str = ' | '.join([f"{k}: {v}" for k, v in defeitos_det.items()])
-                else:
-                    det_str = "Nenhum defeito real registrado"
-                
-                st.markdown(f"""
-                <div style="background: {THEME['bg_card2']}; padding: 10px 15px; margin: 5px 0; border-radius: 6px; border-left: 3px solid {THEME['accent_red']};">
-                    <span style="font-weight:bold;">{i}º - Gancheira {row['Gancheira']}</span> | 
-                    <span style="color:{THEME['accent_red']};">{row['Defeitos']} defeitos</span> em {row['Registros']} registros | 
-                    TRS: {row['TRS (%)']:.1f}%<br>
-                    <span style="font-size:12px; color:{THEME['text_muted']};">📋 {det_str}</span>
-                </div>
-                """, unsafe_allow_html=True)
         else:
             st.info("Sem dados de gancheiras disponíveis.")
     else:
         st.info("Coluna GANCHEIRA não encontrada.")
 
-    # ── Análise de Posições da Pior Gancheira (Manutenção Preventiva) ──
+    # ── Análise de Posições da Pior Gancheira ──
     st.markdown("<hr>", unsafe_allow_html=True)
     render_section_header("🔧 Análise de Posições - Pior Gancheira", "▸", THEME['accent_purple'])
     
     if not df.empty and 'GANCHEIRA' in df.columns:
-        # Encontrar a pior gancheira (mais defeitos)
-        ranking_gancheiras = []
-        for gancheira in df['GANCHEIRA'].dropna().unique():
-            df_g = df[df['GANCHEIRA'] == gancheira]
-            total_defeitos_g = int(df_g['TOTAL_DEFEITOS'].sum())
-            total_registros_g = len(df_g)
-            
-            ranking_gancheiras.append({
-                'Gancheira': str(gancheira),
-                'Defeitos': total_defeitos_g,
-                'Registros': total_registros_g
-            })
+        ranking = []
+        for g in df['GANCHEIRA'].dropna().unique():
+            df_g = df[df['GANCHEIRA'] == g]
+            ranking.append({'Gancheira': str(g), 'Defeitos': int(df_g['TOTAL_DEFEITOS'].sum()), 'Reg': len(df_g)})
         
-        if ranking_gancheiras:
-            df_rank = pd.DataFrame(ranking_gancheiras)
-            df_rank = df_rank.sort_values('Defeitos', ascending=False)
-            
-            pior_gancheira = df_rank.iloc[0]['Gancheira']
-            defeitos_pior = df_rank.iloc[0]['Defeitos']
-            registros_pior = df_rank.iloc[0]['Registros']
+        if ranking:
+            df_rank = pd.DataFrame(ranking).sort_values('Defeitos', ascending=False)
+            pior = df_rank.iloc[0]
             
             st.markdown(f"""
-            <div style="background: {THEME['bg_card2']}; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid {THEME['accent_red']};">
-                <span style="font-size: 16px; font-weight: bold; color: {THEME['accent_red']};">🔴 PIOR GANCHEIRA: {pior_gancheira}</span><br>
-                <span style="color: {THEME['text_primary']};">Total de <strong>{defeitos_pior} defeitos</strong> em <strong>{registros_pior} registros</strong></span>
+            <div style="background: {THEME['bg_card2']}; padding: 10px 15px; border-radius: 6px; margin-bottom: 15px; border-left: 4px solid {THEME['accent_red']};">
+                <span style="font-weight: bold; color: {THEME['accent_red']};">🔴 PIOR GANCHEIRA: {pior['Gancheira']}</span> | 
+                {pior['Defeitos']} defeitos em {pior['Reg']} registros
             </div>
             """, unsafe_allow_html=True)
             
-            # Filtrar apenas os registros da pior gancheira
-            df_pior = df[df['GANCHEIRA'] == pior_gancheira].copy()
-            
-            # Identificar todas as colunas de posições (11 a 78)
-            colunas_posicoes_todas = []
+            df_pior = df[df['GANCHEIRA'] == pior['Gancheira']]
+            posicoes_dados = []
             for col in df_base.columns:
                 try:
                     num = int(str(col).strip())
-                    if 11 <= num <= 78:
-                        colunas_posicoes_todas.append((num, col))
+                    if 11 <= num <= 78 and col in df_pior.columns:
+                        contagem = {c: 0 for c in CODIGOS_DEFEITO_REAIS}
+                        total = 0
+                        for val in df_pior[col].dropna():
+                            try:
+                                cod = int(float(str(val).strip()))
+                                if cod in CODIGOS_DEFEITO_REAIS:
+                                    contagem[cod] += 1
+                                    total += 1
+                            except:
+                                pass
+                        if total > 0:
+                            principal_cod = max(contagem, key=contagem.get)
+                            principal_nome = MAPEAMENTO_DEFEITOS.get(principal_cod, '?')
+                            posicoes_dados.append({
+                                'Posição': num,
+                                'Defeitos': total,
+                                'Principal': f"{principal_nome[:20]} ({contagem[principal_cod]})"
+                            })
                 except:
                     pass
             
-            if colunas_posicoes_todas:
-                colunas_posicoes_todas = sorted(colunas_posicoes_todas, key=lambda x: x[0])
+            if posicoes_dados:
+                df_pos = pd.DataFrame(posicoes_dados).sort_values('Defeitos', ascending=False)
+                total_def = df_pos['Defeitos'].sum()
+                df_pos['%'] = (df_pos['Defeitos'] / total_def * 100).round(1)
                 
-                # Contar defeitos por posição APENAS para a pior gancheira
-                defeitos_por_posicao = {}
-                defeitos_por_posicao_detalhe = {}
+                st.metric("Posições afetadas", len(df_pos))
                 
-                for num, col in colunas_posicoes_todas:
-                    if col in df_pior.columns:
-                        contagem = {codigo: 0 for codigo in CODIGOS_DEFEITO_REAIS}
-                        total_defeitos_pos = 0
-                        
-                        for val in df_pior[col].dropna():
-                            try:
-                                val_str = str(val).strip()
-                                if val_str and val_str != '':
-                                    codigo = int(float(val_str))
-                                    if codigo in CODIGOS_DEFEITO_REAIS:
-                                        contagem[codigo] += 1
-                                        total_defeitos_pos += 1
-                            except:
-                                pass
-                        
-                        if total_defeitos_pos > 0:
-                            defeitos_por_posicao[num] = total_defeitos_pos
-                            defeitos_por_posicao_detalhe[num] = contagem
+                df_tabela_pos = df_pos[['Posição', 'Defeitos', '%', 'Principal']].head(15).copy()
+                df_tabela_pos['%'] = df_tabela_pos['%'].astype(str) + '%'
                 
-                if defeitos_por_posicao:
-                    posicoes_ordenadas = sorted(defeitos_por_posicao.items(), key=lambda x: x[1], reverse=True)
-                    total_defeitos_gancheira = sum(defeitos_por_posicao.values())
-                    
-                    st.markdown(f"#### 📍 Posições com Defeitos na Gancheira {pior_gancheira}")
-                    st.info(f"💡 Esta gancheira apresentou defeitos em {len(defeitos_por_posicao)} posições diferentes")
-                    
-                    # Tabela das posições com defeito
-                    col1, col2, col3, col4 = st.columns(4)
-                    with col1:
-                        st.markdown(f"<div style='font-weight:bold;color:{THEME['accent_cyan']};'>Posição</div>", unsafe_allow_html=True)
-                    with col2:
-                        st.markdown(f"<div style='font-weight:bold;color:{THEME['accent_cyan']};'>Defeitos</div>", unsafe_allow_html=True)
-                    with col3:
-                        st.markdown(f"<div style='font-weight:bold;color:{THEME['accent_cyan']};'>% na Gancheira</div>", unsafe_allow_html=True)
-                    with col4:
-                        st.markdown(f"<div style='font-weight:bold;color:{THEME['accent_cyan']};'>Principal Defeito</div>", unsafe_allow_html=True)
-                    
-                    for num, qtd in posicoes_ordenadas[:20]:
-                        col1, col2, col3, col4 = st.columns(4)
-                        
-                        detalhe = defeitos_por_posicao_detalhe.get(num, {})
-                        if detalhe:
-                            codigo_principal = max(detalhe, key=detalhe.get)
-                            nome_principal = MAPEAMENTO_DEFEITOS.get(codigo_principal, 'Desconhecido')
-                            qtd_principal = detalhe[codigo_principal]
-                        else:
-                            nome_principal = '-'
-                            qtd_principal = 0
-                        
-                        with col1:
-                            st.markdown(f"**Posição {num}**")
-                        with col2:
-                            cor = THEME['accent_red'] if qtd > 5 else THEME['accent_orange'] if qtd > 2 else THEME['text_primary']
-                            st.markdown(f"<span style='color:{cor};font-weight:bold;'>{qtd}</span>", unsafe_allow_html=True)
-                        with col3:
-                            pct = (qtd / total_defeitos_gancheira * 100) if total_defeitos_gancheira > 0 else 0
-                            st.markdown(f"{pct:.1f}%")
-                        with col4:
-                            st.markdown(f"{nome_principal[:25]} ({qtd_principal})")
-                    
-                    st.markdown("<br>", unsafe_allow_html=True)
-                    
-                    # Gráfico de barras
-                    fig, ax = plt.subplots(figsize=(14, 5), facecolor=THEME['bg_card'])
-                    apply_chart_style(ax, fig, f"Posições com Defeitos - Gancheira {pior_gancheira}", 
-                                      ylabel="Quantidade de Defeitos", accent=THEME['accent_red'])
-                    
-                    top_posicoes = posicoes_ordenadas[:25] if len(posicoes_ordenadas) > 25 else posicoes_ordenadas
-                    nums = [str(p[0]) for p in top_posicoes]
-                    qtds = [p[1] for p in top_posicoes]
-                    
-                    colors = []
-                    for q in qtds:
-                        if q > 5:
-                            colors.append(THEME['accent_red'])
-                        elif q > 2:
-                            colors.append(THEME['accent_orange'])
-                        else:
-                            colors.append(THEME['accent_yellow'])
-                    
-                    bars = ax.bar(range(len(nums)), qtds, color=colors, alpha=0.8)
-                    ax.set_xticks(range(len(nums)))
-                    ax.set_xticklabels(nums, rotation=90, ha='center', fontsize=8)
-                    
-                    for bar, val in zip(bars, qtds):
-                        if val > 0:
-                            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.3, str(val), 
-                                    ha='center', va='bottom', fontsize=8, fontweight='bold')
-                    
-                    ax.axhline(y=2, color=THEME['accent_orange'], linestyle='--', alpha=0.5, linewidth=1, label='Alerta (2 defeitos)')
-                    ax.axhline(y=5, color=THEME['accent_red'], linestyle='--', alpha=0.5, linewidth=1, label='Crítico (5 defeitos)')
-                    ax.legend(loc='upper right', fontsize=8)
-                    
+                def estilo_pos(row):
+                    styles = [''] * len(row)
+                    defeitos = row['Defeitos']
+                    if defeitos > 5:
+                        styles[1] = 'color: #E81123; font-weight: bold;'
+                    elif defeitos > 2:
+                        styles[1] = 'color: #E86C2C; font-weight: bold;'
+                    return styles
+                
+                styled_pos = df_tabela_pos.style.apply(estilo_pos, axis=1)
+                st.dataframe(styled_pos, use_container_width=True, height=300)
+                
+                criticas = df_pos[df_pos['Defeitos'] > 5]['Posição'].tolist()
+                alerta = df_pos[(df_pos['Defeitos'] >= 2) & (df_pos['Defeitos'] <= 5)]['Posição'].tolist()
+                
+                if criticas:
+                    st.error(f"🚨 **Críticas (>5):** {', '.join(map(str, criticas))}")
+                if alerta:
+                    st.warning(f"⚠️ **Alerta (2-5):** {', '.join(map(str, alerta))}")
+                if not criticas and not alerta:
+                    st.success("✅ Nenhuma posição crítica ou em alerta")
+                
+                if len(df_pos) > 0:
+                    fig, ax = plt.subplots(figsize=(10, 3), facecolor=THEME['bg_card'])
+                    apply_chart_style(ax, fig, f"Posições com defeitos - Gancheira {pior['Gancheira']}", accent=THEME['accent_red'])
+                    top = df_pos.head(20)
+                    colors = [THEME['accent_red'] if d > 5 else THEME['accent_orange'] if d > 2 else THEME['accent_yellow'] for d in top['Defeitos']]
+                    ax.barh(range(len(top)), top['Defeitos'], color=colors, alpha=0.8)
+                    ax.set_yticks(range(len(top)))
+                    ax.set_yticklabels(top['Posição'].astype(str))
+                    ax.invert_yaxis()
+                    ax.set_xlabel('Defeitos')
                     fig.tight_layout()
                     st.pyplot(fig)
                     plt.close(fig)
-                    
-                    # Recomendações de manutenção
-                    st.markdown("#### 🛠️ Recomendações de Manutenção")
-                    
-                    posicoes_criticas = [num for num, qtd in posicoes_ordenadas if qtd > 5]
-                    posicoes_alerta = [num for num, qtd in posicoes_ordenadas if 2 <= qtd <= 5]
-                    
-                    if posicoes_criticas:
-                        st.error(f"🚨 **POSIÇÕES CRÍTICAS (>5 defeitos):** {', '.join(map(str, posicoes_criticas))}")
-                        st.markdown("> ⚡ Ação imediata recomendada: Verificar estas posições na gancheira para manutenção corretiva.")
-                    
-                    if posicoes_alerta:
-                        st.warning(f"⚠️ **POSIÇÕES EM ALERTA (2-5 defeitos):** {', '.join(map(str, posicoes_alerta))}")
-                        st.markdown("> 🔧 Programar verificação destas posições no próximo ciclo de manutenção.")
-                    
-                    if not posicoes_criticas and not posicoes_alerta:
-                        st.success("✅ Nenhuma posição crítica ou em alerta detectada nesta gancheira.")
-                else:
-                    st.info(f"Nenhum defeito registrado nas posições da gancheira {pior_gancheira}.")
             else:
-                st.info("Colunas de posições (11-78) não encontradas.")
+                st.info(f"Nenhum defeito nas posições da gancheira {pior['Gancheira']}.")
         else:
-            st.info("Sem dados de gancheiras disponíveis.")
+            st.info("Sem dados de gancheiras.")
     else:
-        st.info("Coluna GANCHEIRA não encontrada ou sem dados.")
+        st.info("Coluna GANCHEIRA não encontrada.")
+
+    # ── Comparativo por Turnos ──
+    st.markdown("<hr>", unsafe_allow_html=True)
+    render_section_header("📊 Comparativo por Turno", "▸", THEME['accent_purple'])
+    
+    if not df.empty and 'TURNO' in df.columns:
+        turnos = df['TURNO'].dropna().unique()
+        
+        if len(turnos) > 0:
+            dados_turnos = []
+            for t in turnos:
+                df_t = df[df['TURNO'] == t]
+                total_gancheiras = len(df_t)
+                total_aprovado = int(df_t['APROVADO'].sum())
+                total_defeitos = int(df_t['TOTAL_DEFEITOS'].sum())
+                trs_medio_t = (total_aprovado / (total_gancheiras * 40) * 100) if total_gancheiras > 0 else 0
+                
+                dados_turnos.append({
+                    'Turno': str(t),
+                    'Gancheiras': total_gancheiras,
+                    'Aprovados': total_aprovado,
+                    'Defeitos': total_defeitos,
+                    'TRS_num': trs_medio_t,
+                    'TRS': f"{trs_medio_t:.1f}%"
+                })
+            
+            df_turnos = pd.DataFrame(dados_turnos)
+            df_turnos = df_turnos.sort_values('TRS_num', ascending=False)
+            
+            df_tabela_turno = df_turnos[['Turno', 'Gancheiras', 'Aprovados', 'Defeitos', 'TRS']].copy()
+            
+            def estilo_turno(row):
+                styles = [''] * len(row)
+                try:
+                    trs_val = float(row['TRS'].replace('%', ''))
+                    if trs_val >= 80:
+                        styles[4] = 'color: #107C10; font-weight: bold;'
+                    elif trs_val >= 70:
+                        styles[4] = 'color: #E86C2C; font-weight: bold;'
+                    else:
+                        styles[4] = 'color: #E81123; font-weight: bold;'
+                except:
+                    pass
+                styles[2] = 'color: #107C10;'
+                styles[3] = 'color: #E81123;'
+                return styles
+            
+            styled_turno = df_tabela_turno.style.apply(estilo_turno, axis=1)
+            st.dataframe(styled_turno, use_container_width=True, height=150)
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                fig, ax = plt.subplots(figsize=(5, 3.5), facecolor=THEME['bg_card'])
+                apply_chart_style(ax, fig, "Aprovados vs Defeitos", accent=THEME['accent_purple'])
+                x = range(len(df_turnos))
+                width = 0.35
+                bars1 = ax.bar([i - width/2 for i in x], df_turnos['Aprovados'], width, label='Aprovados', color=THEME['accent_lime'], alpha=0.8)
+                bars2 = ax.bar([i + width/2 for i in x], df_turnos['Defeitos'], width, label='Defeitos', color=THEME['accent_red'], alpha=0.8)
+                ax.set_xticks(x)
+                ax.set_xticklabels(df_turnos['Turno'], fontsize=9)
+                ax.legend(loc='upper right', fontsize=8)
+                for bar in bars1:
+                    h = bar.get_height()
+                    if h > 0:
+                        ax.text(bar.get_x() + bar.get_width()/2, h + 5, f'{int(h)}', ha='center', va='bottom', fontsize=7, color=THEME['accent_lime'])
+                for bar in bars2:
+                    h = bar.get_height()
+                    if h > 0:
+                        ax.text(bar.get_x() + bar.get_width()/2, h + 2, f'{int(h)}', ha='center', va='bottom', fontsize=7, color=THEME['accent_red'])
+                fig.tight_layout()
+                st.pyplot(fig)
+                plt.close(fig)
+            
+            with col2:
+                fig2, ax2 = plt.subplots(figsize=(5, 3.5), facecolor=THEME['bg_card'])
+                apply_chart_style(ax2, fig2, "TRS por Turno", ylabel="TRS (%)", accent=THEME['accent_purple'])
+                cores_turno = {'M': THEME['accent_cyan'], 'T': THEME['accent_orange'], 'N': THEME['accent_lime']}
+                bar_colors = [cores_turno.get(str(t), THEME['accent_purple']) for t in df_turnos['Turno']]
+                bars = ax2.bar(range(len(df_turnos)), df_turnos['TRS_num'], color=bar_colors, alpha=0.88, edgecolor=THEME['bg_card'], linewidth=1.5, width=0.55)
+                ax2.axhline(y=80, color=THEME['accent_red'], linestyle='--', alpha=0.5, linewidth=1.5, label='Meta 80%')
+                for i, (_, row) in enumerate(df_turnos.iterrows()):
+                    ax2.text(i, row['TRS_num'] + 1, f"{row['TRS_num']:.1f}%", ha='center', va='bottom', fontweight='bold', fontsize=9, color=THEME['text_primary'])
+                ax2.set_xticks(range(len(df_turnos)))
+                ax2.set_xticklabels(df_turnos['Turno'], fontsize=10)
+                ax2.set_ylim(0, 105)
+                ax2.legend(loc='upper right', fontsize=8)
+                fig2.tight_layout()
+                st.pyplot(fig2)
+                plt.close(fig2)
+            
+            melhor_turno = df_turnos.iloc[0]
+            pior_turno = df_turnos.iloc[-1]
+            st.info(f"🏆 **Melhor turno:** {melhor_turno['Turno']} ({melhor_turno['TRS']}) | ⚠️ **Pior turno:** {pior_turno['Turno']} ({pior_turno['TRS']})")
+        else:
+            st.info("Sem dados de turno disponíveis.")
+    else:
+        st.info("Coluna TURNO não encontrada.")
 
     # ── Defeitos por Tipo ──
     st.markdown("<hr>", unsafe_allow_html=True)
@@ -2336,25 +2319,24 @@ elif aba_selecionada == 'TÊMPERA':
                 defeitos_totais[nome] = total
     
     if defeitos_totais:
-        df_def = pd.DataFrame(list(defeitos_totais.items()), columns=['Defeito', 'Quantidade'])
-        df_def = df_def.sort_values('Quantidade', ascending=False)
+        df_def = pd.DataFrame(list(defeitos_totais.items()), columns=['Defeito', 'Qtd']).sort_values('Qtd', ascending=False)
         
-        fig, ax = plt.subplots(figsize=(10, 4), facecolor=THEME['bg_card'])
-        apply_chart_style(ax, fig, "Quantidade por Tipo", accent=THEME['accent_purple'])
+        fig, ax = plt.subplots(figsize=(10, 3), facecolor=THEME['bg_card'])
+        apply_chart_style(ax, fig, "", accent=THEME['accent_purple'])
         
         colors = [THEME['accent_lime'] if 'Estourou' in d else THEME['accent_red'] for d in df_def['Defeito']]
-        ax.bar(range(len(df_def)), df_def['Quantidade'], color=colors, alpha=0.8)
+        bars = ax.bar(range(len(df_def)), df_def['Qtd'], color=colors, alpha=0.8)
         ax.set_xticks(range(len(df_def)))
-        ax.set_xticklabels(df_def['Defeito'], rotation=40, ha='right', fontsize=8)
+        ax.set_xticklabels(df_def['Defeito'], rotation=30, ha='right', fontsize=8)
         
-        for i, v in enumerate(df_def['Quantidade']):
-            ax.text(i, v + 0.5, str(v), ha='center', fontsize=9)
+        for bar, v in zip(bars, df_def['Qtd']):
+            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5, str(v), ha='center', fontsize=9)
         
         fig.tight_layout()
         st.pyplot(fig)
         plt.close(fig)
     else:
-        st.info("Nenhum defeito registrado no período.")
+        st.info("Nenhum defeito registrado.")
 
     st.markdown(f"""
     <div style="text-align:right;padding:16px 0 8px;
@@ -2363,3 +2345,173 @@ elif aba_selecionada == 'TÊMPERA':
         TRS DASHBOARD · TÊMPERA · {get_horario_brasilia()}
     </div>
     """, unsafe_allow_html=True)
+        # ── Defeitos x Parâmetros ──
+    st.markdown("<hr>", unsafe_allow_html=True)
+    render_section_header("📈 Defeitos x Parâmetros", "▸", THEME['accent_purple'])
+    
+    if not df.empty and 'DATA' in df.columns:
+        # Agrupar por data
+        df_diario = df.groupby(df['DATA'].dt.date).agg({
+            'APROVADO': 'sum',
+            'TOTAL_DEFEITOS': 'sum',
+            'TEMP_MEIO': 'mean',
+            'HUMIDADE_C': 'mean',
+            'TEMPO_SEG_C': 'mean'
+        }).reset_index()
+        df_diario['DATA'] = pd.to_datetime(df_diario['DATA'])
+        df_diario = df_diario.sort_values('DATA')
+        
+        # Adicionar contagem de cada defeito por dia
+        for codigo in CODIGOS_DEFEITO_REAIS:
+            nome = MAPEAMENTO_DEFEITOS[codigo]
+            nome_clean = nome.upper().replace(' ', '_').replace('Ç', 'C').replace('Ã', 'A').replace('Á', 'A').replace('Ó', 'O')
+            col_nome = f'QTD_{nome_clean}'
+            if col_nome in df.columns:
+                df_diario[col_nome] = df.groupby(df['DATA'].dt.date)[col_nome].sum().values
+        
+        if len(df_diario) >= 2:
+            # Opções de defeitos que possuem dados
+            opcoes_defeitos = []
+            for codigo in CODIGOS_DEFEITO_REAIS:
+                nome = MAPEAMENTO_DEFEITOS[codigo]
+                nome_clean = nome.upper().replace(' ', '_').replace('Ç', 'C').replace('Ã', 'A').replace('Á', 'A').replace('Ó', 'O')
+                col_nome = f'QTD_{nome_clean}'
+                if col_nome in df_diario.columns and df_diario[col_nome].sum() > 0:
+                    opcoes_defeitos.append((nome, col_nome))
+            
+            # Adicionar opção "Todos os Defeitos"
+            opcoes_defeitos.insert(0, ("📊 TODOS OS DEFEITOS", "TOTAL_DEFEITOS"))
+            
+            if opcoes_defeitos:
+                defeito_selecionado = st.selectbox(
+                    "Selecione o defeito para análise:",
+                    options=[n for n, _ in opcoes_defeitos],
+                    key="defeito_param"
+                )
+                
+                # Encontrar a coluna do defeito selecionado
+                col_defeito = next(c for n, c in opcoes_defeitos if n == defeito_selecionado)
+                
+                # Criar gráfico
+                fig, ax1 = plt.subplots(figsize=(14, 6), facecolor=THEME['bg_card'])
+                apply_chart_style(ax1, fig, f"{defeito_selecionado} vs Parâmetros de Processo", 
+                                  xlabel="Data", ylabel="Quantidade de Defeitos", accent=THEME['accent_red'])
+                
+                # Barras - defeitos
+                bars = ax1.bar(df_diario['DATA'], df_diario[col_defeito], 
+                               color=THEME['accent_red'], alpha=0.5, width=0.8, label=defeito_selecionado)
+                
+                # Adicionar valores nas barras
+                for bar, val in zip(bars, df_diario[col_defeito]):
+                    if val > 0:
+                        ax1.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.3, 
+                                str(int(val)), ha='center', va='bottom', fontsize=7, color=THEME['accent_red'])
+                
+                ax1.set_ylabel('Quantidade de Defeitos', color=THEME['accent_red'])
+                ax1.tick_params(axis='y', labelcolor=THEME['accent_red'])
+                
+                # Eixo secundário - TODOS os parâmetros
+                ax2 = ax1.twinx()
+                
+                # Linha 1: Temperatura Meio
+                if 'TEMP_MEIO' in df_diario.columns:
+                    ax2.plot(df_diario['DATA'], df_diario['TEMP_MEIO'], 
+                            color=THEME['accent_orange'], marker='o', markersize=4, linewidth=2, 
+                            linestyle='-', label='🌡️ Temp. Meio (°C)')
+                
+                # Linha 2: Humidade C4
+                if 'HUMIDADE_C' in df_diario.columns:
+                    ax2.plot(df_diario['DATA'], df_diario['HUMIDADE_C'], 
+                            color=THEME['accent_cyan'], marker='s', markersize=4, linewidth=2, 
+                            linestyle='--', label='💧 Humidade C4 (%)')
+                
+                # Linha 3: Tempo C2
+                if 'TEMPO_SEG_C' in df_diario.columns:
+                    ax2.plot(df_diario['DATA'], df_diario['TEMPO_SEG_C'], 
+                            color=THEME['accent_lime'], marker='^', markersize=4, linewidth=2, 
+                            linestyle='-.', label='⏱️ Tempo C2 (s)')
+                
+                ax2.set_ylabel('Valores dos Parâmetros', color=THEME['text_primary'])
+                ax2.tick_params(axis='y', labelcolor=THEME['text_primary'])
+                
+                # Legendas combinadas
+                lines1, labels1 = ax1.get_legend_handles_labels()
+                lines2, labels2 = ax2.get_legend_handles_labels()
+                ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left', fontsize=8, 
+                          framealpha=0.9, facecolor=THEME['bg_card'])
+                
+                plt.setp(ax1.xaxis.get_majorticklabels(), rotation=35, ha='right', fontsize=8)
+                fig.tight_layout()
+                st.pyplot(fig)
+                plt.close(fig)
+                
+                # Estatísticas de correlação
+                st.markdown("#### 📊 Correlações")
+                
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    if 'TEMP_MEIO' in df_diario.columns:
+                        corr_temp = df_diario[col_defeito].corr(df_diario['TEMP_MEIO'])
+                        cor_temp = corr_temp if pd.notna(corr_temp) else 0
+                        delta_temp = "📈" if cor_temp > 0 else "📉"
+                        st.metric(f"🌡️ vs Temp. Meio", f"{cor_temp:.2f}", delta_temp)
+                
+                with col2:
+                    if 'HUMIDADE_C' in df_diario.columns:
+                        corr_hum = df_diario[col_defeito].corr(df_diario['HUMIDADE_C'])
+                        cor_hum = corr_hum if pd.notna(corr_hum) else 0
+                        delta_hum = "📈" if cor_hum > 0 else "📉"
+                        st.metric(f"💧 vs Humidade", f"{cor_hum:.2f}", delta_hum)
+                
+                with col3:
+                    if 'TEMPO_SEG_C' in df_diario.columns:
+                        corr_tempo = df_diario[col_defeito].corr(df_diario['TEMPO_SEG_C'])
+                        cor_tempo = corr_tempo if pd.notna(corr_tempo) else 0
+                        delta_tempo = "📈" if cor_tempo > 0 else "📉"
+                        st.metric(f"⏱️ vs Tempo", f"{cor_tempo:.2f}", delta_tempo)
+                
+                # Total do defeito selecionado
+                total_defeito = int(df_diario[col_defeito].sum())
+                st.info(f"📋 **Total de '{defeito_selecionado}' no período:** {total_defeito} ocorrências")
+                
+                # Análise rápida
+                st.markdown("#### 🔍 Análise Rápida")
+                
+                analises = []
+                
+                if 'TEMP_MEIO' in df_diario.columns:
+                    corr_temp = df_diario[col_defeito].corr(df_diario['TEMP_MEIO'])
+                    if pd.notna(corr_temp):
+                        if corr_temp > 0.5:
+                            analises.append(f"⚠️ **Temperatura Meio** tem correlação positiva forte ({corr_temp:.2f}) com este defeito.")
+                        elif corr_temp < -0.5:
+                            analises.append(f"✅ **Temperatura Meio** tem correlação negativa forte ({corr_temp:.2f}) - temperaturas mais altas reduzem o defeito.")
+                
+                if 'HUMIDADE_C' in df_diario.columns:
+                    corr_hum = df_diario[col_defeito].corr(df_diario['HUMIDADE_C'])
+                    if pd.notna(corr_hum):
+                        if corr_hum > 0.5:
+                            analises.append(f"⚠️ **Humidade C4** tem correlação positiva forte ({corr_hum:.2f}) com este defeito.")
+                        elif corr_hum < -0.5:
+                            analises.append(f"✅ **Humidade C4** tem correlação negativa forte ({corr_hum:.2f}) - maior humidade reduz o defeito.")
+                
+                if 'TEMPO_SEG_C' in df_diario.columns:
+                    corr_tempo = df_diario[col_defeito].corr(df_diario['TEMPO_SEG_C'])
+                    if pd.notna(corr_tempo):
+                        if corr_tempo > 0.5:
+                            analises.append(f"⚠️ **Tempo C2** tem correlação positiva forte ({corr_tempo:.2f}) com este defeito.")
+                        elif corr_tempo < -0.5:
+                            analises.append(f"✅ **Tempo C2** tem correlação negativa forte ({corr_tempo:.2f}) - tempos maiores reduzem o defeito.")
+                
+                if analises:
+                    for a in analises:
+                        st.markdown(a)
+                else:
+                    st.markdown("🔸 Nenhuma correlação forte identificada entre os parâmetros e este defeito.")
+            else:
+                st.info("Nenhum defeito com dados suficientes para análise.")
+        else:
+            st.info("Dados insuficientes para análise diária (mínimo 2 dias).")
+    else:
+        st.info("Sem dados disponíveis para análise.")
