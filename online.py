@@ -1486,84 +1486,68 @@ elif aba_selecionada == 'TÊMPERA':
             df = pd.DataFrame(valores, columns=cabecalho)
             colunas = list(df.columns)
             
-            # Mapear colunas por posição
+            # Mapear colunas por posição (baseado nos nomes reais)
             if len(colunas) >= 5:
                 df = df.rename(columns={
-                    colunas[0]: 'DATA_PRODUCAO',
-                    colunas[1]: 'DATA_TEMPERA',
-                    colunas[2]: 'TURNO',
+                    colunas[0]: 'PRODUCAO',
+                    colunas[1]: 'DATA_TEMP',
+                    colunas[2]: 'TURNO_TEMP',
                     colunas[3]: 'PRODUTO',
                     colunas[4]: 'GANCHEIRA'
                 })
             
             if len(colunas) >= 8:
                 df = df.rename(columns={
-                    colunas[5]: 'TEMP_SUPERIOR',
-                    colunas[6]: 'TEMP_MEIO',
-                    colunas[7]: 'TEMP_INFERIOR'
+                    colunas[5]: 'SUPERIOR',
+                    colunas[6]: 'MEIO',
+                    colunas[7]: 'INFERIOR'
                 })
             
             if len(colunas) >= 11:
                 df = df.rename(columns={
-                    colunas[8]: 'TEMP_ENTRADA_A',
-                    colunas[9]: 'TEMP_ENTRADA_B',
-                    colunas[10]: 'TEMP_ENTRADA_C'
+                    colunas[8]: 'A1',
+                    colunas[9]: 'C1',
+                    colunas[10]: 'A2'
                 })
             
             if len(colunas) >= 14:
                 df = df.rename(columns={
-                    colunas[11]: 'TEMPO_SEG_A',
-                    colunas[12]: 'TEMPO_SEG_B',
-                    colunas[13]: 'TEMPO_SEG_C'
+                    colunas[11]: 'C2',
+                    colunas[12]: 'A3',
+                    colunas[13]: 'C3'
                 })
             
             if len(colunas) >= 17:
                 df = df.rename(columns={
-                    colunas[14]: 'TEMP_AMB_A',
-                    colunas[15]: 'TEMP_AMB_B',
-                    colunas[16]: 'TEMP_AMB_C'
+                    colunas[14]: 'A4',
+                    colunas[15]: 'C4',      # HUMIDADE
+                    colunas[16]: 'A5'
                 })
             
             if len(colunas) >= 20:
                 df = df.rename(columns={
-                    colunas[17]: 'HUMIDADE_A',
-                    colunas[18]: 'HUMIDADE_B',
-                    colunas[19]: 'HUMIDADE_C'
+                    colunas[17]: 'C5',
+                    colunas[18]: 'A e B'    # PRESSÃO AR
                 })
-            
-            if len(colunas) >= 23:
-                df = df.rename(columns={
-                    colunas[20]: 'COIFA_A',
-                    colunas[21]: 'COIFA_B',
-                    colunas[22]: 'COIFA_C'
-                })
-            
-            if len(colunas) >= 24:
-                df = df.rename(columns={colunas[23]: 'PRESSAO_AR'})
             
             # Converter datas
-            if 'DATA_TEMPERA' in df.columns:
-                df['DATA'] = df['DATA_TEMPERA'].apply(converter_data_br)
-            elif 'DATA_PRODUCAO' in df.columns:
-                df['DATA'] = df['DATA_PRODUCAO'].apply(converter_data_br)
+            if 'DATA_TEMP' in df.columns:
+                df['DATA'] = df['DATA_TEMP'].apply(converter_data_br)
+            elif 'PRODUCAO' in df.columns:
+                df['DATA'] = df['PRODUCAO'].apply(converter_data_br)
             
             if 'DATA' in df.columns:
                 df = df.dropna(subset=['DATA'])
             
             # Converter colunas numéricas
-            colunas_numericas = ['TEMP_SUPERIOR', 'TEMP_MEIO', 'TEMP_INFERIOR',
-                                 'TEMP_ENTRADA_A', 'TEMP_ENTRADA_B', 'TEMP_ENTRADA_C',
-                                 'TEMPO_SEG_A', 'TEMPO_SEG_B', 'TEMPO_SEG_C',
-                                 'TEMP_AMB_A', 'TEMP_AMB_B', 'TEMP_AMB_C',
-                                 'HUMIDADE_A', 'HUMIDADE_B', 'HUMIDADE_C',
-                                 'COIFA_A', 'COIFA_B', 'COIFA_C', 'PRESSAO_AR']
+            colunas_numericas = ['SUPERIOR', 'MEIO', 'INFERIOR', 'A1', 'C1', 'A2', 'C2', 'A3', 'C3', 'A4', 'C4', 'A5', 'C5', 'A e B']
             
             for col in colunas_numericas:
                 if col in df.columns:
                     df[col] = df[col].apply(safe_float)
             
             # CORREÇÃO: Tempo C2 - converter para segundos
-            if 'TEMPO_SEG_C' in df.columns:
+            if 'C2' in df.columns:
                 def converter_tempo_c2(val):
                     if pd.isna(val) or val == 0:
                         return 0
@@ -1573,7 +1557,7 @@ elif aba_selecionada == 'TÊMPERA':
                         return val * 10
                     else:
                         return val
-                df['TEMPO_SEG_C'] = df['TEMPO_SEG_C'].apply(converter_tempo_c2)
+                df['C2'] = df['C2'].apply(converter_tempo_c2)
             
             # Identificar colunas de posições (19 a 70)
             colunas_posicoes_validas = []
@@ -1648,8 +1632,8 @@ elif aba_selecionada == 'TÊMPERA':
         data_ini = st.date_input("Data inicial", value=None, key="tempera_data_ini")
         data_fim = st.date_input("Data final", value=None, key="tempera_data_fim")
         
-        if 'TURNO' in df_base.columns:
-            turnos_disp = ["(Todos)"] + sorted([str(t) for t in df_base['TURNO'].dropna().unique()])
+        if 'TURNO_TEMP' in df_base.columns:
+            turnos_disp = ["(Todos)"] + sorted([str(t) for t in df_base['TURNO_TEMP'].dropna().unique()])
             turno = st.selectbox("Turno", options=turnos_disp, key="tempera_turno")
         else:
             turno = "(Todos)"
@@ -1670,8 +1654,8 @@ elif aba_selecionada == 'TÊMPERA':
         df = df[df['DATA'] >= pd.to_datetime(data_ini)]
     if data_fim:
         df = df[df['DATA'] <= pd.to_datetime(data_fim)]
-    if turno != "(Todos)" and 'TURNO' in df.columns:
-        df = df[df['TURNO'].astype(str).str.upper() == turno.upper()]
+    if turno != "(Todos)" and 'TURNO_TEMP' in df.columns:
+        df = df[df['TURNO_TEMP'].astype(str).str.upper() == turno.upper()]
     if produto != "(Todos)" and 'PRODUTO' in df.columns:
         df = df[df['PRODUTO'].astype(str) == produto]
     
@@ -1698,13 +1682,13 @@ elif aba_selecionada == 'TÊMPERA':
     total_defeitos = int(df['TOTAL_DEFEITOS'].sum())
     trs_medio = (total_aprovado / total_pecas * 100) if total_pecas > 0 else 0
     
-    temp_sup = safe_mean('TEMP_SUPERIOR')
-    temp_meio = safe_mean('TEMP_MEIO')
-    temp_inf = safe_mean('TEMP_INFERIOR')
-    temp_ent_A = safe_mean('TEMP_ENTRADA_A')
-    tempo_C = safe_mean('TEMPO_SEG_C')
-    hum_C = safe_mean('HUMIDADE_C')
-    pressao = safe_mean('PRESSAO_AR')
+    temp_sup = safe_mean('SUPERIOR')
+    temp_meio = safe_mean('MEIO')
+    temp_inf = safe_mean('INFERIOR')
+    temp_entrada = safe_mean('A1')
+    tempo_c2 = safe_mean('C2')
+    humidade = safe_mean('C4')
+    pressao_ar = safe_mean('A e B')
 
     # ── Page header ──
     render_page_header(
@@ -1739,13 +1723,13 @@ elif aba_selecionada == 'TÊMPERA':
     st.markdown(f"<div style='font-family:JetBrains Mono,monospace;font-size:10px;color:{THEME['accent_purple']}';>▸ PROCESSO - MÉDIAS DO PERÍODO (ignorando zeros)</div>", unsafe_allow_html=True)
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        render_kpi_card("Temp. Entrada (A1)", f"{temp_ent_A:.0f}°C" if temp_ent_A > 0 else "N/A", THEME['accent_cyan'])
+        render_kpi_card("Temp. Entrada (A1)", f"{temp_entrada:.0f}°C" if temp_entrada > 0 else "N/A", THEME['accent_cyan'])
     with c2:
-        render_kpi_card("Tempo (C2)", f"{tempo_C:.0f}s" if tempo_C > 0 else "N/A", THEME['accent_lime'])
+        render_kpi_card("Tempo (C2)", f"{tempo_c2:.0f}s" if tempo_c2 > 0 else "N/A", THEME['accent_lime'])
     with c3:
-        render_kpi_card("Humidade (C4)", f"{hum_C:.1f}%" if hum_C > 0 else "N/A", THEME['accent_orange'])
+        render_kpi_card("Humidade (C4)", f"{humidade:.1f}%" if humidade > 0 else "N/A", THEME['accent_orange'])
     with c4:
-        render_kpi_card("Pressão Ar", f"{pressao:.1f}" if pressao > 0 else "N/A", THEME['accent_purple'])
+        render_kpi_card("Pressão Ar (A e B)", f"{pressao_ar:.1f}" if pressao_ar > 0 else "N/A", THEME['accent_purple'])
 
     st.markdown("<hr>", unsafe_allow_html=True)
 
@@ -1756,7 +1740,7 @@ elif aba_selecionada == 'TÊMPERA':
     df_display['DATA'] = pd.to_datetime(df_display['DATA']).dt.strftime('%d/%m/%Y')
     df_display['TRS (%)'] = df_display['TRS (%)'].round(1).astype(str) + '%'
     
-    colunas = ['DATA', 'TURNO', 'PRODUTO', 'GANCHEIRA', 'APROVADO', 'TOTAL_DEFEITOS', 'TRS (%)']
+    colunas = ['DATA', 'TURNO_TEMP', 'PRODUTO', 'GANCHEIRA', 'APROVADO', 'TOTAL_DEFEITOS', 'TRS (%)']
     colunas = [c for c in colunas if c in df_display.columns]
     
     st.dataframe(df_display[colunas], use_container_width=True, height=400)
@@ -1784,12 +1768,12 @@ elif aba_selecionada == 'TÊMPERA':
         st.pyplot(fig)
         plt.close(fig)
 
-    # ── Melhor Padrão (ignora Pressão Ar = 0) ──
+    # ── Melhor Padrão Identificado ──
     st.markdown("<hr>", unsafe_allow_html=True)
     render_section_header("🏆 Melhor Padrão Identificado", "▸", THEME['accent_purple'])
     
-    if 'PRESSAO_AR' in df.columns:
-        df_validos = df[df['PRESSAO_AR'] > 0].copy()
+    if 'A e B' in df.columns:
+        df_validos = df[df['A e B'] > 0].copy()
     else:
         df_validos = df.copy()
     
@@ -1807,7 +1791,7 @@ elif aba_selecionada == 'TÊMPERA':
             data_str = pd.to_datetime(melhor['DATA']).strftime('%d/%m/%Y') if pd.notna(melhor['DATA']) else 'N/A'
             st.metric("📅 Data", data_str)
         with col2:
-            st.metric("⏰ Turno", str(melhor.get('TURNO', 'N/A')))
+            st.metric("⏰ Turno", str(melhor.get('TURNO_TEMP', 'N/A')))
         with col3:
             st.metric("📦 Produto", str(melhor.get('PRODUTO', 'N/A'))[:15])
         with col4:
@@ -1829,191 +1813,35 @@ elif aba_selecionada == 'TÊMPERA':
         st.markdown("#### 🔥 Temperaturas do Forno")
         col1, col2, col3 = st.columns(3)
         with col1:
-            val = melhor.get('TEMP_SUPERIOR', 0)
+            val = melhor.get('SUPERIOR', 0)
             st.metric("Superior", f"{val:.0f}°C" if pd.notna(val) and val > 0 else "N/A")
         with col2:
-            val = melhor.get('TEMP_MEIO', 0)
+            val = melhor.get('MEIO', 0)
             st.metric("Meio", f"{val:.0f}°C" if pd.notna(val) and val > 0 else "N/A")
         with col3:
-            val = melhor.get('TEMP_INFERIOR', 0)
+            val = melhor.get('INFERIOR', 0)
             st.metric("Inferior", f"{val:.0f}°C" if pd.notna(val) and val > 0 else "N/A")
         
         st.markdown("#### 📍 Principais Indicadores")
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            val = melhor.get('TEMP_ENTRADA_A', 0)
+            val = melhor.get('A1', 0)
             st.metric("Temp. Entrada (A1)", f"{val:.0f}°C" if pd.notna(val) and val > 0 else "N/A")
         with col2:
-            val = melhor.get('TEMPO_SEG_C', 0)
+            val = melhor.get('C2', 0)
             st.metric("Tempo (C2)", f"{val:.0f}s" if pd.notna(val) and val > 0 else "N/A")
         with col3:
-            val = melhor.get('HUMIDADE_C', 0)
+            val = melhor.get('C4', 0)
             st.metric("Humidade (C4)", f"{val:.1f}%" if pd.notna(val) and val > 0 else "N/A")
         with col4:
-            val = melhor.get('PRESSAO_AR', 0)
-            st.metric("Pressão Ar", f"{val:.1f}" if pd.notna(val) and val > 0 else "N/A")
+            val = melhor.get('A e B', 0)
+            st.metric("Pressão Ar (A e B)", f"{val:.1f}" if pd.notna(val) and val > 0 else "N/A")
         
         st.markdown("</div>", unsafe_allow_html=True)
     else:
         st.info("Nenhum registro válido encontrado (Pressão Ar > 0).")
 
-    # ── Comparativo por Turnos ──
-    st.markdown("<hr>", unsafe_allow_html=True)
-    render_section_header("📊 Comparativo por Turno", "▸", THEME['accent_purple'])
-    
-    if not df.empty and 'TURNO' in df.columns:
-        turnos = df['TURNO'].dropna().unique()
-        
-        if len(turnos) > 0:
-            dados_turnos = []
-            for t in turnos:
-                df_t = df[df['TURNO'] == t]
-                total_gancheiras = len(df_t)
-                total_aprovado = int(df_t['APROVADO'].sum())
-                total_defeitos = int(df_t['TOTAL_DEFEITOS'].sum())
-                trs_medio_t = (total_aprovado / (total_gancheiras * 40) * 100) if total_gancheiras > 0 else 0
-                
-                dados_turnos.append({
-                    'Turno': str(t),
-                    'Gancheiras': total_gancheiras,
-                    'Aprovados': total_aprovado,
-                    'Defeitos': total_defeitos,
-                    'TRS (%)': trs_medio_t
-                })
-            
-            df_turnos = pd.DataFrame(dados_turnos)
-            df_turnos = df_turnos.sort_values('TRS (%)', ascending=False)
-            
-            # Tabela resumo
-            st.markdown("#### 📋 Resumo por Turno")
-            col1, col2, col3, col4, col5 = st.columns(5)
-            with col1:
-                st.markdown(f"<div style='font-weight:bold;color:{THEME['accent_cyan']};'>Turno</div>", unsafe_allow_html=True)
-            with col2:
-                st.markdown(f"<div style='font-weight:bold;color:{THEME['accent_cyan']};'>Gancheiras</div>", unsafe_allow_html=True)
-            with col3:
-                st.markdown(f"<div style='font-weight:bold;color:{THEME['accent_cyan']};'>Aprovados</div>", unsafe_allow_html=True)
-            with col4:
-                st.markdown(f"<div style='font-weight:bold;color:{THEME['accent_cyan']};'>Defeitos</div>", unsafe_allow_html=True)
-            with col5:
-                st.markdown(f"<div style='font-weight:bold;color:{THEME['accent_cyan']};'>TRS</div>", unsafe_allow_html=True)
-            
-            for _, row in df_turnos.iterrows():
-                col1, col2, col3, col4, col5 = st.columns(5)
-                with col1:
-                    st.markdown(f"**{row['Turno']}**")
-                with col2:
-                    st.markdown(f"{row['Gancheiras']}")
-                with col3:
-                    st.markdown(f"✅ {row['Aprovados']}")
-                with col4:
-                    st.markdown(f"❌ {row['Defeitos']}")
-                with col5:
-                    trs_val = row['TRS (%)']
-                    cor = THEME['accent_lime'] if trs_val >= 80 else THEME['accent_orange'] if trs_val >= 70 else THEME['accent_red']
-                    st.markdown(f"<span style='color:{cor};font-weight:bold;'>{trs_val:.1f}%</span>", unsafe_allow_html=True)
-            
-            st.markdown("<br>", unsafe_allow_html=True)
-            
-            # Gráfico Aprovados vs Defeitos
-            fig, ax = plt.subplots(figsize=(10, 5), facecolor=THEME['bg_card'])
-            apply_chart_style(ax, fig, "Aprovados vs Defeitos por Turno", accent=THEME['accent_purple'])
-            
-            x = range(len(df_turnos))
-            width = 0.35
-            
-            bars1 = ax.bar([i - width/2 for i in x], df_turnos['Aprovados'], width, label='Aprovados', color=THEME['accent_lime'], alpha=0.8)
-            bars2 = ax.bar([i + width/2 for i in x], df_turnos['Defeitos'], width, label='Defeitos', color=THEME['accent_red'], alpha=0.8)
-            
-            ax.set_xlabel('Turno')
-            ax.set_ylabel('Quantidade')
-            ax.set_xticks(x)
-            ax.set_xticklabels(df_turnos['Turno'])
-            ax.legend(loc='upper right')
-            
-            for bar in bars1:
-                height = bar.get_height()
-                if height > 0:
-                    ax.text(bar.get_x() + bar.get_width()/2, height + 2, f'{int(height)}', ha='center', va='bottom', fontsize=9, color=THEME['accent_lime'])
-            
-            for bar in bars2:
-                height = bar.get_height()
-                if height > 0:
-                    ax.text(bar.get_x() + bar.get_width()/2, height + 2, f'{int(height)}', ha='center', va='bottom', fontsize=9, color=THEME['accent_red'])
-            
-            fig.tight_layout()
-            st.pyplot(fig)
-            plt.close(fig)
-            
-            # Gráfico TRS por Turno
-            fig2, ax2 = plt.subplots(figsize=(8, 4), facecolor=THEME['bg_card'])
-            apply_chart_style(ax2, fig2, "TRS por Turno", ylabel="TRS (%)", accent=THEME['accent_purple'])
-            
-            cores_turno = {'M': THEME['accent_cyan'], 'T': THEME['accent_orange'], 'N': THEME['accent_lime'],
-                           'A': THEME['accent_cyan'], 'B': THEME['accent_orange'], 'C': THEME['accent_lime']}
-            bar_colors = [cores_turno.get(str(t), THEME['accent_purple']) for t in df_turnos['Turno']]
-            
-            bars = ax2.bar(range(len(df_turnos)), df_turnos['TRS (%)'], color=bar_colors, alpha=0.88, edgecolor=THEME['bg_card'], linewidth=1.5, width=0.55)
-            ax2.axhline(y=80, color=THEME['accent_red'], linestyle='--', alpha=0.5, linewidth=1.5, label='Meta 80%')
-            
-            for i, (_, row) in enumerate(df_turnos.iterrows()):
-                trs_val = row['TRS (%)']
-                ax2.text(i, trs_val + 1, f"{trs_val:.1f}%", ha='center', va='bottom', fontweight='bold', fontsize=11, color=THEME['text_primary'])
-            
-            ax2.set_xticks(range(len(df_turnos)))
-            ax2.set_xticklabels(df_turnos['Turno'], fontsize=11)
-            ax2.set_ylim(0, 105)
-            ax2.legend(loc='upper right', fontsize=9)
-            fig2.tight_layout()
-            st.pyplot(fig2)
-            plt.close(fig2)
-        else:
-            st.info("Sem dados de turno disponíveis.")
-    else:
-        st.info("Coluna TURNO não encontrada.")
-
-    # ── Defeitos por Tipo ──
-    st.markdown("<hr>", unsafe_allow_html=True)
-    render_section_header("Defeitos por Tipo", "▸", THEME['accent_purple'])
-    
-    defeitos_totais = {}
-    for codigo, nome in MAPEAMENTO_DEFEITOS.items():
-        nome_clean = nome.upper().replace(' ', '_').replace('Ç', 'C').replace('Ã', 'A').replace('Á', 'A').replace('Ó', 'O')
-        col = f'QTD_{nome_clean}'
-        if col in df.columns:
-            total = int(df[col].sum())
-            if total > 0:
-                defeitos_totais[nome] = total
-    
-    if defeitos_totais:
-        df_def = pd.DataFrame(list(defeitos_totais.items()), columns=['Defeito', 'Quantidade'])
-        df_def = df_def.sort_values('Quantidade', ascending=False)
-        
-        fig, ax = plt.subplots(figsize=(10, 4), facecolor=THEME['bg_card'])
-        apply_chart_style(ax, fig, "Quantidade por Tipo", accent=THEME['accent_purple'])
-        
-        colors = [THEME['accent_lime'] if 'Estourou' in d else THEME['accent_red'] for d in df_def['Defeito']]
-        ax.bar(range(len(df_def)), df_def['Quantidade'], color=colors, alpha=0.8)
-        ax.set_xticks(range(len(df_def)))
-        ax.set_xticklabels(df_def['Defeito'], rotation=40, ha='right', fontsize=8)
-        
-        for i, v in enumerate(df_def['Quantidade']):
-            ax.text(i, v + 0.5, str(v), ha='center', fontsize=9)
-        
-        fig.tight_layout()
-        st.pyplot(fig)
-        plt.close(fig)
-    else:
-        st.info("Nenhum defeito registrado no período.")
-
-    st.markdown(f"""
-    <div style="text-align:right;padding:16px 0 8px;
-        font-family:'JetBrains Mono',monospace;font-size:10px;
-        color:{THEME['text_muted']};letter-spacing:.1em;">
-        TRS DASHBOARD · TÊMPERA · {get_horario_brasilia()}
-    </div>
-    """, unsafe_allow_html=True)
-      # ── Ranking de Gancheiras ──
+    # ── Ranking de Gancheiras ──
     st.markdown("<hr>", unsafe_allow_html=True)
     render_section_header("🏭 Ranking de Gancheiras (Pior → Melhor)", "▸", THEME['accent_purple'])
     
@@ -2211,13 +2039,13 @@ elif aba_selecionada == 'TÊMPERA':
     st.markdown("<hr>", unsafe_allow_html=True)
     render_section_header("📊 Comparativo por Turno", "▸", THEME['accent_purple'])
     
-    if not df.empty and 'TURNO' in df.columns:
-        turnos = df['TURNO'].dropna().unique()
+    if not df.empty and 'TURNO_TEMP' in df.columns:
+        turnos = df['TURNO_TEMP'].dropna().unique()
         
         if len(turnos) > 0:
             dados_turnos = []
             for t in turnos:
-                df_t = df[df['TURNO'] == t]
+                df_t = df[df['TURNO_TEMP'] == t]
                 total_gancheiras = len(df_t)
                 total_aprovado = int(df_t['APROVADO'].sum())
                 total_defeitos = int(df_t['TOTAL_DEFEITOS'].sum())
@@ -2303,7 +2131,7 @@ elif aba_selecionada == 'TÊMPERA':
         else:
             st.info("Sem dados de turno disponíveis.")
     else:
-        st.info("Coluna TURNO não encontrada.")
+        st.info("Coluna TURNO_TEMP não encontrada.")
 
     # ── Defeitos por Tipo ──
     st.markdown("<hr>", unsafe_allow_html=True)
@@ -2338,14 +2166,7 @@ elif aba_selecionada == 'TÊMPERA':
     else:
         st.info("Nenhum defeito registrado.")
 
-    st.markdown(f"""
-    <div style="text-align:right;padding:16px 0 8px;
-        font-family:'JetBrains Mono',monospace;font-size:10px;
-        color:{THEME['text_muted']};letter-spacing:.1em;">
-        TRS DASHBOARD · TÊMPERA · {get_horario_brasilia()}
-    </div>
-    """, unsafe_allow_html=True)
-        # ── Defeitos x Parâmetros ──
+    # ── Defeitos x Parâmetros ──
     st.markdown("<hr>", unsafe_allow_html=True)
     render_section_header("📈 Defeitos x Parâmetros", "▸", THEME['accent_purple'])
     
@@ -2354,10 +2175,11 @@ elif aba_selecionada == 'TÊMPERA':
         df_diario = df.groupby(df['DATA'].dt.date).agg({
             'APROVADO': 'sum',
             'TOTAL_DEFEITOS': 'sum',
-            'TEMP_MEIO': 'mean',
-            'HUMIDADE_C': 'mean',
-            'TEMPO_SEG_C': 'mean'
+            'MEIO': 'mean',
+            'C4': 'mean',
+            'C2': 'mean'
         }).reset_index()
+        
         df_diario['DATA'] = pd.to_datetime(df_diario['DATA'])
         df_diario = df_diario.sort_values('DATA')
         
@@ -2410,24 +2232,24 @@ elif aba_selecionada == 'TÊMPERA':
                 ax1.set_ylabel('Quantidade de Defeitos', color=THEME['accent_red'])
                 ax1.tick_params(axis='y', labelcolor=THEME['accent_red'])
                 
-                # Eixo secundário - TODOS os parâmetros
+                # Eixo secundário - parâmetros
                 ax2 = ax1.twinx()
                 
                 # Linha 1: Temperatura Meio
-                if 'TEMP_MEIO' in df_diario.columns:
-                    ax2.plot(df_diario['DATA'], df_diario['TEMP_MEIO'], 
+                if 'MEIO' in df_diario.columns:
+                    ax2.plot(df_diario['DATA'], df_diario['MEIO'], 
                             color=THEME['accent_orange'], marker='o', markersize=4, linewidth=2, 
                             linestyle='-', label='🌡️ Temp. Meio (°C)')
                 
                 # Linha 2: Humidade C4
-                if 'HUMIDADE_C' in df_diario.columns:
-                    ax2.plot(df_diario['DATA'], df_diario['HUMIDADE_C'], 
+                if 'C4' in df_diario.columns:
+                    ax2.plot(df_diario['DATA'], df_diario['C4'], 
                             color=THEME['accent_cyan'], marker='s', markersize=4, linewidth=2, 
                             linestyle='--', label='💧 Humidade C4 (%)')
                 
                 # Linha 3: Tempo C2
-                if 'TEMPO_SEG_C' in df_diario.columns:
-                    ax2.plot(df_diario['DATA'], df_diario['TEMPO_SEG_C'], 
+                if 'C2' in df_diario.columns:
+                    ax2.plot(df_diario['DATA'], df_diario['C2'], 
                             color=THEME['accent_lime'], marker='^', markersize=4, linewidth=2, 
                             linestyle='-.', label='⏱️ Tempo C2 (s)')
                 
@@ -2451,25 +2273,25 @@ elif aba_selecionada == 'TÊMPERA':
                 col1, col2, col3 = st.columns(3)
                 
                 with col1:
-                    if 'TEMP_MEIO' in df_diario.columns:
-                        corr_temp = df_diario[col_defeito].corr(df_diario['TEMP_MEIO'])
+                    if 'MEIO' in df_diario.columns:
+                        corr_temp = df_diario[col_defeito].corr(df_diario['MEIO'])
                         cor_temp = corr_temp if pd.notna(corr_temp) else 0
                         delta_temp = "📈" if cor_temp > 0 else "📉"
                         st.metric(f"🌡️ vs Temp. Meio", f"{cor_temp:.2f}", delta_temp)
                 
                 with col2:
-                    if 'HUMIDADE_C' in df_diario.columns:
-                        corr_hum = df_diario[col_defeito].corr(df_diario['HUMIDADE_C'])
+                    if 'C4' in df_diario.columns:
+                        corr_hum = df_diario[col_defeito].corr(df_diario['C4'])
                         cor_hum = corr_hum if pd.notna(corr_hum) else 0
                         delta_hum = "📈" if cor_hum > 0 else "📉"
-                        st.metric(f"💧 vs Humidade", f"{cor_hum:.2f}", delta_hum)
+                        st.metric(f"💧 vs Humidade C4", f"{cor_hum:.2f}", delta_hum)
                 
                 with col3:
-                    if 'TEMPO_SEG_C' in df_diario.columns:
-                        corr_tempo = df_diario[col_defeito].corr(df_diario['TEMPO_SEG_C'])
+                    if 'C2' in df_diario.columns:
+                        corr_tempo = df_diario[col_defeito].corr(df_diario['C2'])
                         cor_tempo = corr_tempo if pd.notna(corr_tempo) else 0
                         delta_tempo = "📈" if cor_tempo > 0 else "📉"
-                        st.metric(f"⏱️ vs Tempo", f"{cor_tempo:.2f}", delta_tempo)
+                        st.metric(f"⏱️ vs Tempo C2", f"{cor_tempo:.2f}", delta_tempo)
                 
                 # Total do defeito selecionado
                 total_defeito = int(df_diario[col_defeito].sum())
@@ -2480,24 +2302,24 @@ elif aba_selecionada == 'TÊMPERA':
                 
                 analises = []
                 
-                if 'TEMP_MEIO' in df_diario.columns:
-                    corr_temp = df_diario[col_defeito].corr(df_diario['TEMP_MEIO'])
+                if 'MEIO' in df_diario.columns:
+                    corr_temp = df_diario[col_defeito].corr(df_diario['MEIO'])
                     if pd.notna(corr_temp):
                         if corr_temp > 0.5:
                             analises.append(f"⚠️ **Temperatura Meio** tem correlação positiva forte ({corr_temp:.2f}) com este defeito.")
                         elif corr_temp < -0.5:
                             analises.append(f"✅ **Temperatura Meio** tem correlação negativa forte ({corr_temp:.2f}) - temperaturas mais altas reduzem o defeito.")
                 
-                if 'HUMIDADE_C' in df_diario.columns:
-                    corr_hum = df_diario[col_defeito].corr(df_diario['HUMIDADE_C'])
+                if 'C4' in df_diario.columns:
+                    corr_hum = df_diario[col_defeito].corr(df_diario['C4'])
                     if pd.notna(corr_hum):
                         if corr_hum > 0.5:
                             analises.append(f"⚠️ **Humidade C4** tem correlação positiva forte ({corr_hum:.2f}) com este defeito.")
                         elif corr_hum < -0.5:
                             analises.append(f"✅ **Humidade C4** tem correlação negativa forte ({corr_hum:.2f}) - maior humidade reduz o defeito.")
                 
-                if 'TEMPO_SEG_C' in df_diario.columns:
-                    corr_tempo = df_diario[col_defeito].corr(df_diario['TEMPO_SEG_C'])
+                if 'C2' in df_diario.columns:
+                    corr_tempo = df_diario[col_defeito].corr(df_diario['C2'])
                     if pd.notna(corr_tempo):
                         if corr_tempo > 0.5:
                             analises.append(f"⚠️ **Tempo C2** tem correlação positiva forte ({corr_tempo:.2f}) com este defeito.")
@@ -2515,3 +2337,11 @@ elif aba_selecionada == 'TÊMPERA':
             st.info("Dados insuficientes para análise diária (mínimo 2 dias).")
     else:
         st.info("Sem dados disponíveis para análise.")
+
+    st.markdown(f"""
+    <div style="text-align:right;padding:16px 0 8px;
+        font-family:'JetBrains Mono',monospace;font-size:10px;
+        color:{THEME['text_muted']};letter-spacing:.1em;">
+        TRS DASHBOARD · TÊMPERA · {get_horario_brasilia()}
+    </div>
+    """, unsafe_allow_html=True)
