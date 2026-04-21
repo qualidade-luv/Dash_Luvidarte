@@ -653,7 +653,7 @@ if aba_selecionada == 'PRENSADOS':
                 df = df.dropna(subset=['DATA'])
             if 'APROVADO FINAL' in df.columns:
                 df = df.rename(columns={'APROVADO FINAL': 'EMBALADO'})
-            colunas_numericas = ['PRODUZIDO', 'APROVADO', 'EMBALADO', 'META LIQUIDA', 'REFUGADO', 'BOQUETA']
+            colunas_numericas = ['PRODUZIDO', 'APROVADO', 'EMBALADO', 'TRS 100%', 'REFUGADO', 'BOQUETA']
             for col in colunas_numericas:
                 if col in df.columns:
                     df[col] = df[col].apply(converter_numero_br)
@@ -685,17 +685,21 @@ if aba_selecionada == 'PRENSADOS':
         st.stop()
 
     df_base_calc = df_base.copy()
-    colunas_numericas = ['PRODUZIDO', 'APROVADO', 'EMBALADO', 'META LIQUIDA', 'REFUGADO']
+    colunas_numericas = ['PRODUZIDO', 'APROVADO', 'EMBALADO', 'TRS 100%', 'REFUGADO']
     for col in colunas_numericas:
         if col in df_base_calc.columns:
             df_base_calc[col] = pd.to_numeric(df_base_calc[col], errors='coerce').fillna(0)
 
-    if 'EMBALADO' in df_base_calc.columns and 'META LIQUIDA' in df_base_calc.columns:
-        df_base_calc['TRS FINAL (%)'] = df_base_calc.apply(
-            lambda row: (row['EMBALADO'] / row['META LIQUIDA'] * 100) if row['META LIQUIDA'] != 0 else 0, axis=1
+    # Calcular TRS 1ª Escolha e TRS Final
+    if 'TRS 100%' in df_base_calc.columns:
+        df_base_calc['TRS 1ª ESCOLHA (%)'] = df_base_calc.apply(
+            lambda row: (row['APROVADO'] / row['TRS 100%'] * 100) if row['TRS 100%'] != 0 else 0, axis=1
         )
-        df_base_calc['TRS FINAL (%)'] = df_base_calc['TRS FINAL (%)'].round(2)
+        df_base_calc['TRS FINAL (%)'] = df_base_calc.apply(
+            lambda row: (row['EMBALADO'] / row['TRS 100%'] * 100) if row['TRS 100%'] != 0 else 0, axis=1
+        )
     else:
+        df_base_calc['TRS 1ª ESCOLHA (%)'] = 0
         df_base_calc['TRS FINAL (%)'] = 0
 
     melhores_trs_historico = {}
@@ -737,16 +741,19 @@ if aba_selecionada == 'PRENSADOS':
 
     # ── KPIs ──
     if not df.empty:
-        for col in ['PRODUZIDO', 'APROVADO', 'EMBALADO', 'META LIQUIDA', 'REFUGADO']:
+        for col in ['PRODUZIDO', 'APROVADO', 'EMBALADO', 'TRS 100%', 'REFUGADO']:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-        total_prod  = int(df['PRODUZIDO'].sum())
-        total_apro  = int(df['APROVADO'].sum())
+        
+        total_prod = int(df['PRODUZIDO'].sum())
+        total_apro = int(df['APROVADO'].sum())
         total_embal = int(df['EMBALADO'].sum()) if 'EMBALADO' in df.columns else 0
-        total_meta  = int(df['META LIQUIDA'].sum())
+        total_meta = int(df['TRS 100%'].sum()) if 'TRS 100%' in df.columns else 0
+        
+        trs_primeira_escolha = (total_apro / total_meta * 100) if total_meta else 0
         trs_final_total = (total_embal / total_meta * 100) if total_meta else 0
     else:
-        total_prod = total_apro = total_embal = total_meta = trs_final_total = 0
+        total_prod = total_apro = total_embal = total_meta = trs_primeira_escolha = trs_final_total = 0
 
     # ── Page header ──
     render_page_header(
@@ -755,28 +762,46 @@ if aba_selecionada == 'PRENSADOS':
         THEME['accent_cyan']
     )
 
-    c1, c2, c3, c4 = st.columns(4)
-    with c1: render_kpi_card("Produzido", f"{total_prod:,}".replace(",","."), THEME['accent_cyan'], "◈")
-    with c2: render_kpi_card("Aprovado",  f"{total_apro:,}".replace(",","."), THEME['accent_lime'], "◈")
-    with c3: render_kpi_card("Embalado",  f"{total_embal:,}".replace(",","."), THEME['accent_yellow'], "◈")
-    with c4:
-        trs_color = THEME['accent_lime'] if trs_final_total >= 85 else THEME['accent_orange'] if trs_final_total >= 70 else THEME['accent_red']
-        render_kpi_card("TRS Final", f"{trs_final_total:.1f}%", trs_color, "◎")
+    # ── KPIs (6 cards) ──
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+
+    with c1: 
+        render_kpi_card("Produzido", f"{total_prod:,}".replace(",","."), THEME['accent_cyan'], "◈")
+
+    with c2: 
+        render_kpi_card("Aprovado", f"{total_apro:,}".replace(",","."), THEME['accent_lime'], "◈")
+
+    with c3: 
+        render_kpi_card("Meta Líquida", f"{total_meta:,}".replace(",","."), THEME['accent_purple'], "◈")
+
+    with c4: 
+        render_kpi_card("Embalado", f"{total_embal:,}".replace(",","."), THEME['accent_yellow'], "◈")
+
+    with c5:
+        trs_primeira_cor = THEME['accent_lime'] if trs_primeira_escolha >= 85 else THEME['accent_orange'] if trs_primeira_escolha >= 70 else THEME['accent_red']
+        render_kpi_card("TRS 1ª Escolha", f"{trs_primeira_escolha:.1f}%", trs_primeira_cor, "◎")
+
+    with c6:
+        trs_final_cor = THEME['accent_lime'] if trs_final_total >= 85 else THEME['accent_orange'] if trs_final_total >= 70 else THEME['accent_red']
+        render_kpi_card("TRS Final", f"{trs_final_total:.1f}%", trs_final_cor, "◎")
 
     # ── Tabela de produção ──
     render_section_header("Tabela de Produção", "▸")
 
     if not df.empty:
-        df['TRS (%)'] = df.apply(
-            lambda r: (r['APROVADO'] / r['META LIQUIDA'] * 100) if r['META LIQUIDA'] != 0 else 0, axis=1
-        )
-        if 'EMBALADO' in df.columns:
+        # Calcular TRS para cada linha
+        if 'TRS 100%' in df.columns:
+            df['TRS 1ª ESCOLHA (%)'] = df.apply(
+                lambda r: (r['APROVADO'] / r['TRS 100%'] * 100) if r['TRS 100%'] != 0 else 0, axis=1
+            )
             df['TRS FINAL (%)'] = df.apply(
-                lambda r: (r['EMBALADO'] / r['META LIQUIDA'] * 100) if r['META LIQUIDA'] != 0 else 0, axis=1
+                lambda r: (r['EMBALADO'] / r['TRS 100%'] * 100) if r['TRS 100%'] != 0 else 0, axis=1
             )
         else:
+            df['TRS 1ª ESCOLHA (%)'] = 0
             df['TRS FINAL (%)'] = 0
-        df['TRS (%)'] = df['TRS (%)'].round(2)
+        
+        df['TRS 1ª ESCOLHA (%)'] = df['TRS 1ª ESCOLHA (%)'].round(2)
         df['TRS FINAL (%)'] = df['TRS FINAL (%)'].round(2)
 
     df_sorted = df.sort_values(by="DATA", ascending=False).reset_index(drop=True)
@@ -797,17 +822,18 @@ if aba_selecionada == 'PRENSADOS':
         df_display = df_view.copy()
         df_display['DATA'] = pd.to_datetime(df_display['DATA']).dt.strftime('%d/%m/%Y')
 
-        for col in ['PRODUZIDO', 'APROVADO', 'EMBALADO', 'REFUGADO', 'META LIQUIDA']:
+        for col in ['PRODUZIDO', 'APROVADO', 'EMBALADO', 'REFUGADO', 'TRS 100%']:
             if col in df_display.columns:
                 df_display[col] = df_display[col].apply(lambda x: int(round(x)) if pd.notnull(x) else 0)
                 df_display[col] = df_display[col].apply(lambda x: f"{x:,}".replace(",", "."))
-        if 'TRS (%)' in df_display.columns:
-            df_display['TRS (%)'] = df_display['TRS (%)'].apply(lambda x: f"{x:.2f}%")
+        
+        if 'TRS 1ª ESCOLHA (%)' in df_display.columns:
+            df_display['TRS 1ª ESCOLHA (%)'] = df_display['TRS 1ª ESCOLHA (%)'].apply(lambda x: f"{x:.2f}%")
         if 'TRS FINAL (%)' in df_display.columns:
             df_display['TRS FINAL (%)'] = df_display['TRS FINAL (%)'].apply(lambda x: f"{x:.2f}%")
 
-        colunas_exibir = ['DATA', 'REFERÊNCIA', 'TURNO', 'PRODUZIDO', 'APROVADO', 'EMBALADO',
-                          'REFUGADO', 'META LIQUIDA', 'TRS (%)', 'TRS FINAL (%)']
+        colunas_exibir = ['DATA', 'REFERÊNCIA', 'TURNO', 'PRODUZIDO', 'APROVADO', 'TRS 100%', 
+                          'EMBALADO', 'REFUGADO', 'TRS 1ª ESCOLHA (%)', 'TRS FINAL (%)']
         if 'ANALISE' in df_display.columns:
             colunas_exibir.append('ANALISE')
         colunas_exibir = [col for col in colunas_exibir if col in df_display.columns]
@@ -865,33 +891,35 @@ if aba_selecionada == 'PRENSADOS':
     # ── Gráfico TRS Diário ──
     render_section_header("Evolução Diária do TRS", "▸")
 
-    if not df.empty:
-        resumo_dia = df.groupby(df['DATA'].dt.date).agg(
-            PRODUZIDO=('PRODUZIDO','sum'),
-            APROVADO=('APROVADO','sum'),
-            META_LIQUIDA=('META LIQUIDA','sum')
-        ).reset_index()
+    if not df.empty and 'TRS 100%' in df.columns:
+        resumo_dia = df.groupby(df['DATA'].dt.date).agg({
+            'PRODUZIDO': 'sum',
+            'APROVADO': 'sum',
+            'EMBALADO': 'sum',
+            'TRS 100%': 'sum'
+        }).reset_index()
         resumo_dia['DATA'] = pd.to_datetime(resumo_dia['DATA'])
-        resumo_dia['TRS (%)'] = (resumo_dia['APROVADO'] / resumo_dia['META_LIQUIDA'].replace(0,1) * 100).fillna(0)
+        resumo_dia['TRS 1ª ESCOLHA (%)'] = (resumo_dia['APROVADO'] / resumo_dia['TRS 100%'].replace(0, 1) * 100).fillna(0)
+        resumo_dia['TRS FINAL (%)'] = (resumo_dia['EMBALADO'] / resumo_dia['TRS 100%'].replace(0, 1) * 100).fillna(0)
         resumo_dia = resumo_dia.sort_values('DATA')
 
         if not resumo_dia.empty:
             fig, ax = plt.subplots(figsize=(14, 5), facecolor=THEME['bg_card'])
             apply_chart_style(ax, fig, "TRS Diário — Período Selecionado", ylabel="TRS (%)")
 
-            ax.fill_between(resumo_dia['DATA'], 0, resumo_dia['TRS (%)'],
-                            alpha=0.12, color=THEME['accent_cyan'])
-
-            ax.plot(resumo_dia['DATA'], resumo_dia['TRS (%)'],
+            # Linha TRS 1ª Escolha
+            ax.plot(resumo_dia['DATA'], resumo_dia['TRS 1ª ESCOLHA (%)'],
                     marker='o', markersize=6, linewidth=2.5,
-                    color=THEME['accent_cyan'], alpha=0.95, label='TRS Diário',
+                    color=THEME['accent_cyan'], alpha=0.95, label='TRS 1ª Escolha',
                     markerfacecolor=THEME['bg_card'], markeredgecolor=THEME['accent_cyan'], markeredgewidth=2)
 
-            if len(resumo_dia) > 1:
-                mm = resumo_dia['TRS (%)'].rolling(window=min(3,len(resumo_dia)), min_periods=1).mean()
-                ax.plot(resumo_dia['DATA'], mm, color=THEME['accent_yellow'],
-                        alpha=0.8, linewidth=1.8, linestyle='--', label='Média 3 dias')
+            # Linha TRS Final
+            ax.plot(resumo_dia['DATA'], resumo_dia['TRS FINAL (%)'],
+                    marker='s', markersize=6, linewidth=2.5,
+                    color=THEME['accent_orange'], alpha=0.95, label='TRS Final',
+                    markerfacecolor=THEME['bg_card'], markeredgecolor=THEME['accent_orange'], markeredgewidth=2)
 
+            # Meta
             ax.axhline(y=85, color=THEME['accent_red'], linestyle=':', alpha=0.7, linewidth=1.5, label='Meta 85%')
 
             ax.legend(framealpha=0.15, facecolor=THEME['bg_card'], edgecolor=THEME['border_bright'],
@@ -916,12 +944,15 @@ if aba_selecionada == 'PRENSADOS':
             df_manual = df[df['BOQUETA'] == 1]
             if not df_manual.empty:
                 t_ap_m = df_manual['APROVADO'].sum()
-                t_mt_m = df_manual['META LIQUIDA'].replace(0,1).sum()
-                med_m  = (t_ap_m / t_mt_m * 100) if t_mt_m > 0 else 0
+                t_emb_m = df_manual['EMBALADO'].sum()
+                t_mt_m = df_manual['TRS 100%'].sum() if 'TRS 100%' in df_manual.columns else 1
+                trs1_m = (t_ap_m / t_mt_m * 100) if t_mt_m > 0 else 0
+                trs_final_m = (t_emb_m / t_mt_m * 100) if t_mt_m > 0 else 0
                 prod_m = df_manual['PRODUZIDO'].sum()
-                trs_color_m = THEME['accent_lime'] if med_m >= 85 else THEME['accent_orange'] if med_m >= 70 else THEME['accent_red']
-                render_kpi_card("TRS Médio — Manual", f"{med_m:.1f}%", trs_color_m)
-                st.caption(f"Produção: {prod_m:,.0f} un".replace(",","."))
+                
+                trs_color_m = THEME['accent_lime'] if trs1_m >= 85 else THEME['accent_orange'] if trs1_m >= 70 else THEME['accent_red']
+                render_kpi_card("TRS 1ª Escolha — Manual", f"{trs1_m:.1f}%", trs_color_m)
+                st.caption(f"TRS Final: {trs_final_m:.1f}% | Produção: {prod_m:,.0f} un".replace(",","."))
             else:
                 st.info("Sem dados para Prensa Manual")
 
@@ -933,12 +964,15 @@ if aba_selecionada == 'PRENSADOS':
             df_auto = df[df['BOQUETA'] == 2]
             if not df_auto.empty:
                 t_ap_a = df_auto['APROVADO'].sum()
-                t_mt_a = df_auto['META LIQUIDA'].replace(0,1).sum()
-                med_a  = (t_ap_a / t_mt_a * 100) if t_mt_a > 0 else 0
+                t_emb_a = df_auto['EMBALADO'].sum()
+                t_mt_a = df_auto['TRS 100%'].sum() if 'TRS 100%' in df_auto.columns else 1
+                trs1_a = (t_ap_a / t_mt_a * 100) if t_mt_a > 0 else 0
+                trs_final_a = (t_emb_a / t_mt_a * 100) if t_mt_a > 0 else 0
                 prod_a = df_auto['PRODUZIDO'].sum()
-                trs_color_a = THEME['accent_lime'] if med_a >= 85 else THEME['accent_orange'] if med_a >= 70 else THEME['accent_red']
-                render_kpi_card("TRS Médio — Automática", f"{med_a:.1f}%", trs_color_a)
-                st.caption(f"Produção: {prod_a:,.0f} un".replace(",","."))
+                
+                trs_color_a = THEME['accent_lime'] if trs1_a >= 85 else THEME['accent_orange'] if trs1_a >= 70 else THEME['accent_red']
+                render_kpi_card("TRS 1ª Escolha — Automática", f"{trs1_a:.1f}%", trs_color_a)
+                st.caption(f"TRS Final: {trs_final_a:.1f}% | Produção: {prod_a:,.0f} un".replace(",","."))
             else:
                 st.info("Sem dados para Prensa Automática")
 
@@ -954,43 +988,43 @@ if aba_selecionada == 'PRENSADOS':
     if 'HORAS_TOTAIS_MIN' in df.columns:
         horas_trabalhadas = df['HORAS_TOTAIS_MIN'].sum()
     else:
-        dias_uteis  = df[~df['IS_SABADO']]['DATA'].nunique() if 'IS_SABADO' in df.columns else 0
-        dias_sabado = df[df['IS_SABADO']]['DATA'].nunique()  if 'IS_SABADO' in df.columns else 0
+        dias_uteis = df[~df['IS_SABADO']]['DATA'].nunique() if 'IS_SABADO' in df.columns else 0
+        dias_sabado = df[df['IS_SABADO']]['DATA'].nunique() if 'IS_SABADO' in df.columns else 0
         horas_trabalhadas = (dias_uteis * 8 * 60) + (dias_sabado * 6 * 60)
 
     total_acertos = df['ACERTOS_MIN_AJUSTADO'].sum() if 'ACERTOS_MIN_AJUSTADO' in df.columns else 0
-    total_manut   = df['MANUT_MIN'].sum()            if 'MANUT_MIN'            in df.columns else 0
+    total_manut = df['MANUT_MIN'].sum() if 'MANUT_MIN' in df.columns else 0
     total_paradas = total_acertos + total_manut
     horas_produtivas = max(0, horas_trabalhadas - total_paradas)
 
     p1, p2, p3, p4 = st.columns(4)
-    with p1: render_kpi_card("Horas Trabalhadas",  minutos_para_horas_str(horas_trabalhadas),  THEME['accent_cyan'])
-    with p2: render_kpi_card("Acertos",             minutos_para_horas_str(total_acertos),       THEME['accent_yellow'])
-    with p3: render_kpi_card("Manutenção",          minutos_para_horas_str(total_manut),          THEME['accent_red'])
-    with p4: render_kpi_card("Horas Produtivas",   minutos_para_horas_str(horas_produtivas),    THEME['accent_lime'])
+    with p1: render_kpi_card("Horas Trabalhadas", minutos_para_horas_str(horas_trabalhadas), THEME['accent_cyan'])
+    with p2: render_kpi_card("Acertos", minutos_para_horas_str(total_acertos), THEME['accent_yellow'])
+    with p3: render_kpi_card("Manutenção", minutos_para_horas_str(total_manut), THEME['accent_red'])
+    with p4: render_kpi_card("Horas Produtivas", minutos_para_horas_str(horas_produtivas), THEME['accent_lime'])
 
     col1, col2 = st.columns(2)
 
     with col1:
         if 'BOQUETA' in df.columns:
             df_manual_p = df[df['BOQUETA'] == 1]
-            df_auto_p   = df[df['BOQUETA'] == 2]
+            df_auto_p = df[df['BOQUETA'] == 2]
             acertos_m = df_manual_p['ACERTOS_MIN_AJUSTADO'].sum() if 'ACERTOS_MIN_AJUSTADO' in df.columns else 0
-            manut_m   = df_manual_p['MANUT_MIN'].sum()            if 'MANUT_MIN'            in df.columns else 0
-            acertos_a = df_auto_p['ACERTOS_MIN_AJUSTADO'].sum()   if 'ACERTOS_MIN_AJUSTADO' in df.columns else 0
-            manut_a   = df_auto_p['MANUT_MIN'].sum()              if 'MANUT_MIN'            in df.columns else 0
+            manut_m = df_manual_p['MANUT_MIN'].sum() if 'MANUT_MIN' in df.columns else 0
+            acertos_a = df_auto_p['ACERTOS_MIN_AJUSTADO'].sum() if 'ACERTOS_MIN_AJUSTADO' in df.columns else 0
+            manut_a = df_auto_p['MANUT_MIN'].sum() if 'MANUT_MIN' in df.columns else 0
 
             categorias = ['Manual', 'Automática']
-            acertos_v  = [acertos_m, acertos_a]
-            manut_v    = [manut_m, manut_a]
+            acertos_v = [acertos_m, acertos_a]
+            manut_v = [manut_m, manut_a]
 
             fig, ax = plt.subplots(figsize=(7, 5), facecolor=THEME['bg_card'])
             apply_chart_style(ax, fig, "Composição das Paradas", ylabel="Minutos")
 
             x = np.arange(len(categorias))
             w = 0.55
-            ax.bar(x, acertos_v, w, label='Acertos',    color=THEME['accent_yellow'], alpha=0.88, edgecolor=THEME['bg_card'], linewidth=1.5)
-            ax.bar(x, manut_v,   w, bottom=acertos_v, label='Manutenção', color=THEME['accent_red'],    alpha=0.88, edgecolor=THEME['bg_card'], linewidth=1.5)
+            ax.bar(x, acertos_v, w, label='Acertos', color=THEME['accent_yellow'], alpha=0.88, edgecolor=THEME['bg_card'], linewidth=1.5)
+            ax.bar(x, manut_v, w, bottom=acertos_v, label='Manutenção', color=THEME['accent_red'], alpha=0.88, edgecolor=THEME['bg_card'], linewidth=1.5)
 
             for i, (a, m) in enumerate(zip(acertos_v, manut_v)):
                 total = a + m
@@ -1011,8 +1045,8 @@ if aba_selecionada == 'PRENSADOS':
     with col2:
         if horas_trabalhadas > 0:
             labels_p = ['Produtivas', 'Acertos', 'Manutenção']
-            vals_p   = [horas_produtivas, total_acertos, total_manut]
-            cores_p  = [THEME['accent_lime'], THEME['accent_yellow'], THEME['accent_red']]
+            vals_p = [horas_produtivas, total_acertos, total_manut]
+            cores_p = [THEME['accent_lime'], THEME['accent_yellow'], THEME['accent_red']]
             lf, vf, cf = zip(*[(l, v, c) for l, v, c in zip(labels_p, vals_p, cores_p) if v > 0]) if any(v > 0 for v in vals_p) else ([], [], [])
 
             if vf:
@@ -1044,29 +1078,45 @@ if aba_selecionada == 'PRENSADOS':
     st.markdown("<hr>", unsafe_allow_html=True)
 
     # ── TRS por Turno ──
-    if not df.empty and 'TURNO' in df.columns and 'EMBALADO' in df.columns:
-        render_section_header("TRS Final por Turno", "▸")
+    if not df.empty and 'TURNO' in df.columns and 'TRS 100%' in df.columns:
+        render_section_header("TRS por Turno", "▸")
         turno_data = []
         for t in df['TURNO'].unique():
             df_t = df[df['TURNO'] == t]
             te = df_t['EMBALADO'].sum()
-            tm = df_t['META LIQUIDA'].sum()
-            turno_data.append({'Turno': t, 'TRS Final': (te/tm*100) if tm > 0 else 0})
+            ta = df_t['APROVADO'].sum()
+            tm = df_t['TRS 100%'].sum()
+            turno_data.append({
+                'Turno': t, 
+                'TRS 1ª Escolha': (ta/tm*100) if tm > 0 else 0,
+                'TRS Final': (te/tm*100) if tm > 0 else 0
+            })
         df_tt = pd.DataFrame(turno_data)
         if not df_tt.empty:
-            fig, ax = plt.subplots(figsize=(8, 4), facecolor=THEME['bg_card'])
-            apply_chart_style(ax, fig, "TRS Final por Turno", ylabel="TRS Final (%)")
-            cores_turno = {'M': THEME['accent_cyan'], 'T': THEME['accent_orange'], 'N': THEME['accent_lime']}
-            bar_colors  = [cores_turno.get(t, THEME['text_muted']) for t in df_tt['Turno']]
-            bars = ax.bar(range(len(df_tt)), df_tt['TRS Final'], color=bar_colors,
-                          alpha=0.88, edgecolor=THEME['bg_card'], linewidth=1.5, width=0.55)
-            ax.axhline(y=85, color=THEME['accent_red'], linestyle='--', alpha=0.5, linewidth=1.5)
-            for i, v in enumerate(df_tt['TRS Final']):
-                ax.text(i, v + 1, f"{v:.1f}%", ha='center', va='bottom',
-                        fontweight='bold', fontsize=11, color=THEME['text_primary'])
-            ax.set_xticks(range(len(df_tt)))
+            fig, ax = plt.subplots(figsize=(10, 5), facecolor=THEME['bg_card'])
+            apply_chart_style(ax, fig, "TRS por Turno", ylabel="TRS (%)")
+            
+            x = np.arange(len(df_tt))
+            width = 0.35
+            
+            bars1 = ax.bar(x - width/2, df_tt['TRS 1ª Escolha'], width, label='TRS 1ª Escolha', color=THEME['accent_cyan'], alpha=0.88, edgecolor=THEME['bg_card'], linewidth=1.5)
+            bars2 = ax.bar(x + width/2, df_tt['TRS Final'], width, label='TRS Final', color=THEME['accent_orange'], alpha=0.88, edgecolor=THEME['bg_card'], linewidth=1.5)
+            
+            ax.axhline(y=85, color=THEME['accent_red'], linestyle='--', alpha=0.5, linewidth=1.5, label='Meta 85%')
+            
+            for bar in bars1:
+                h = bar.get_height()
+                ax.text(bar.get_x() + bar.get_width()/2, h + 1, f'{h:.1f}%', ha='center', va='bottom', fontsize=8, color=THEME['accent_cyan'])
+            
+            for bar in bars2:
+                h = bar.get_height()
+                ax.text(bar.get_x() + bar.get_width()/2, h + 1, f'{h:.1f}%', ha='center', va='bottom', fontsize=8, color=THEME['accent_orange'])
+            
+            ax.set_xticks(x)
             ax.set_xticklabels(df_tt['Turno'], fontsize=11)
-            ax.set_ylim(0, 115)
+            ax.legend(loc='upper right', fontsize=9)
+            ax.set_ylim(0, 105)
+            
             fig.tight_layout(pad=1.5)
             st.pyplot(fig)
             plt.close(fig)
@@ -1170,8 +1220,13 @@ elif aba_selecionada == 'SOPRO':
     df_base_calc = df_base.copy()
     if 'TRS_BRUTO' in df_base_calc.columns:
         df_base_calc['TRS LÍQUIDO (%)'] = (df_base_calc['TRS_BRUTO'] * 100).round(2)
+        # Calcular META (TRS 100%) = APROVADO / (TRS_LIQUIDO / 100)
+        df_base_calc['META'] = df_base_calc.apply(
+            lambda row: (row['APROVADO'] / (row['TRS LÍQUIDO (%)'] / 100)) if row['TRS LÍQUIDO (%)'] > 0 else row['APROVADO'], axis=1
+        ).round(0)
     else:
         df_base_calc['TRS LÍQUIDO (%)'] = 0
+        df_base_calc['META'] = 0
 
     melhores_trs_historico = {}
     if 'REFERÊNCIA' in df_base_calc.columns:
@@ -1221,6 +1276,17 @@ elif aba_selecionada == 'SOPRO':
     total_refugo = int(df['REFUGADO'].sum())  if 'REFUGADO'  in df.columns else 0
     total_apro   = int(df['APROVADO'].sum())  if 'APROVADO'  in df.columns else 0
     trs_liq_med  = df['TRS_BRUTO'].mean() * 100 if 'TRS_BRUTO' in df.columns and not df.empty else 0
+    
+    # Calcular META total usando a fórmula: META = APROVADO / (TRS_LIQUIDO / 100)
+    if not df.empty and 'TRS_BRUTO' in df.columns and 'APROVADO' in df.columns:
+        # Média ponderada da META
+        df['TRS_LIQUIDO_PCT'] = df['TRS_BRUTO'] * 100
+        df['META_CALC'] = df.apply(
+            lambda row: (row['APROVADO'] / (row['TRS_LIQUIDO_PCT'] / 100)) if row['TRS_LIQUIDO_PCT'] > 0 else row['APROVADO'], axis=1
+        )
+        total_meta = int(df['META_CALC'].sum())
+    else:
+        total_meta = 0
 
     # ── Page header ──
     render_page_header(
@@ -1229,11 +1295,22 @@ elif aba_selecionada == 'SOPRO':
         THEME['accent_lime']
     )
 
-    c1, c2, c3, c4 = st.columns(4)
-    with c1: render_kpi_card("Produzido",         f"{total_prod:,}".replace(",","."), THEME['accent_cyan'],   "◈")
-    with c2: render_kpi_card("Aprovado",           f"{total_apro:,}".replace(",","."), THEME['accent_lime'],   "◈")
-    with c3: render_kpi_card("Refugo",             f"{total_refugo:,}".replace(",","."), THEME['accent_orange'], "◈")
-    with c4:
+    # ── KPIs (5 cards) ──
+    c1, c2, c3, c4, c5 = st.columns(5)
+
+    with c1: 
+        render_kpi_card("Produzido", f"{total_prod:,}".replace(",","."), THEME['accent_cyan'], "◈")
+
+    with c2: 
+        render_kpi_card("Aprovado", f"{total_apro:,}".replace(",","."), THEME['accent_lime'], "◈")
+
+    with c3: 
+        render_kpi_card("Meta (TRS 100%)", f"{total_meta:,}".replace(",","."), THEME['accent_purple'], "◈")
+
+    with c4: 
+        render_kpi_card("Refugo", f"{total_refugo:,}".replace(",","."), THEME['accent_orange'], "◈")
+
+    with c5:
         trs_c = THEME['accent_lime'] if trs_liq_med >= 85 else THEME['accent_orange'] if trs_liq_med >= 70 else THEME['accent_red']
         render_kpi_card("TRS Líquido Médio", f"{trs_liq_med:.1f}%", trs_c, "◎")
 
@@ -1242,6 +1319,10 @@ elif aba_selecionada == 'SOPRO':
 
     if not df.empty and 'TRS_BRUTO' in df.columns:
         df['TRS LÍQUIDO (%)'] = (df['TRS_BRUTO'] * 100).round(2)
+        # Calcular META para cada linha
+        df['META'] = df.apply(
+            lambda row: int(round(row['APROVADO'] / (row['TRS LÍQUIDO (%)'] / 100))) if row['TRS LÍQUIDO (%)'] > 0 else int(row['APROVADO']), axis=1
+        )
 
     df_sorted = df.sort_values(by="DATA", ascending=False).reset_index(drop=True)
 
@@ -1260,21 +1341,24 @@ elif aba_selecionada == 'SOPRO':
     if not df_view.empty:
         df_display = df_view.copy()
         df_display['DATA'] = pd.to_datetime(df_display['DATA']).dt.strftime('%d/%m/%Y')
-        for col in ['PRODUZIDO', 'APROVADO', 'REFUGADO']:
+        
+        for col in ['PRODUZIDO', 'APROVADO', 'REFUGADO', 'META']:
             if col in df_display.columns:
                 df_display[col] = df_display[col].apply(lambda x: int(round(x)) if pd.notnull(x) else 0)
                 df_display[col] = df_display[col].apply(lambda x: f"{x:,}".replace(",","."))
+        
         if 'TRS LÍQUIDO (%)' in df_display.columns:
             df_display['TRS LÍQUIDO (%)'] = df_display['TRS LÍQUIDO (%)'].apply(lambda x: f"{x:.2f}%")
 
-        colunas_exibir = ['DATA','TURNO','PRAÇA','REFERÊNCIA','PRODUZIDO','REFUGADO','APROVADO','TRS LÍQUIDO (%)']
+        colunas_exibir = ['DATA','TURNO','PRAÇA','REFERÊNCIA','PRODUZIDO','META','APROVADO','REFUGADO','TRS LÍQUIDO (%)']
         colunas_exibir = [c for c in colunas_exibir if c in df_display.columns]
 
         def destacar_sopro(row):
             ref = row.get('REFERÊNCIA', '')
             if ref in melhores_trs_historico:
                 tv = row.get('TRS LÍQUIDO (%)', '0')
-                if isinstance(tv, str): tv = float(tv.replace('%','').replace(',','.'))
+                if isinstance(tv, str): 
+                    tv = float(tv.replace('%','').replace(',','.'))
                 if abs(tv - melhores_trs_historico[ref]) < 0.01:
                     return ['background-color: #FFF4E6; color: #D48806; font-weight: 600;'] * len(row)
             return [''] * len(row)
@@ -1289,10 +1373,15 @@ elif aba_selecionada == 'SOPRO':
     # ── TRS Líquido Diário ──
     render_section_header("Evolução Diária do TRS Líquido", "▸", THEME['accent_lime'])
     if not df.empty and 'TRS_BRUTO' in df.columns:
-        res_dia = df.groupby(df['DATA'].dt.date).agg(TRS_BRUTO=('TRS_BRUTO','mean'), PRODUZIDO=('PRODUZIDO','sum'), APROVADO=('APROVADO','sum')).reset_index()
+        res_dia = df.groupby(df['DATA'].dt.date).agg({
+            'TRS_BRUTO': 'mean', 
+            'PRODUZIDO': 'sum', 
+            'APROVADO': 'sum'
+        }).reset_index()
         res_dia['DATA'] = pd.to_datetime(res_dia['DATA'])
         res_dia['TRS Líquido (%)'] = res_dia['TRS_BRUTO'] * 100
         res_dia = res_dia.sort_values('DATA')
+        
         if not res_dia.empty:
             fig, ax = plt.subplots(figsize=(14, 5), facecolor=THEME['bg_card'])
             apply_chart_style(ax, fig, "TRS Líquido Diário — Período Selecionado", ylabel="TRS Líquido (%)")
@@ -1318,9 +1407,14 @@ elif aba_selecionada == 'SOPRO':
     # ── Por Praça ──
     if 'PRAÇA' in df.columns and not df.empty and 'TRS_BRUTO' in df.columns:
         render_section_header("TRS Líquido por Praça", "▸", THEME['accent_lime'])
-        res_praca = df.groupby('PRAÇA').agg(TRS_BRUTO=('TRS_BRUTO','mean'), PRODUZIDO=('PRODUZIDO','sum')).reset_index()
+        res_praca = df.groupby('PRAÇA').agg({
+            'TRS_BRUTO': 'mean', 
+            'PRODUZIDO': 'sum',
+            'APROVADO': 'sum'
+        }).reset_index()
         res_praca['TRS Líquido (%)'] = res_praca['TRS_BRUTO'] * 100
         res_praca = res_praca.sort_values('TRS Líquido (%)', ascending=False)
+        
         if not res_praca.empty:
             fig, ax = plt.subplots(figsize=(10, 5), facecolor=THEME['bg_card'])
             apply_chart_style(ax, fig, "TRS Líquido Médio por Praça", ylabel="TRS Líquido (%)")
@@ -1344,9 +1438,14 @@ elif aba_selecionada == 'SOPRO':
     # ── Mensal ──
     render_section_header("TRS Líquido Mensal", "▸", THEME['accent_lime'])
     if not df.empty and 'ANO_MES' in df.columns and 'TRS_BRUTO' in df.columns:
-        res_mes = df.groupby('ANO_MES').agg(TRS_BRUTO=('TRS_BRUTO','mean'), PRODUZIDO=('PRODUZIDO','sum'), APROVADO=('APROVADO','sum')).reset_index()
+        res_mes = df.groupby('ANO_MES').agg({
+            'TRS_BRUTO': 'mean', 
+            'PRODUZIDO': 'sum', 
+            'APROVADO': 'sum'
+        }).reset_index()
         res_mes['TRS Líquido (%)'] = res_mes['TRS_BRUTO'] * 100
         res_mes = res_mes.sort_values('ANO_MES')
+        
         if not res_mes.empty:
             fig, ax = plt.subplots(figsize=(12, 5), facecolor=THEME['bg_card'])
             apply_chart_style(ax, fig, "TRS Líquido Mensal", ylabel="TRS Líquido (%)")
