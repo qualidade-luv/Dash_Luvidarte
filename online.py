@@ -1867,22 +1867,107 @@ elif aba_selecionada == 'TÊMPERA':
         st.pyplot(fig)
         plt.close(fig)
 
-    # ── Melhor Padrão Identificado ──
+    # ── PADRÃO DE EXCELÊNCIA (Média das TOP 15) ──
     st.markdown("<hr>", unsafe_allow_html=True)
-    render_section_header("🏆 Melhor Padrão Identificado", "▸", THEME['accent_purple'])
+    render_section_header("🏆 PADRÃO DE EXCELÊNCIA (Média Top 15)", "▸", THEME['accent_purple'])
     
+    TOP_N = 15
+    
+    # Filtra produções válidas (com dados de pressão, se disponível)
     if 'A e B' in df.columns:
         df_validos = df[df['A e B'] > 0].copy()
     else:
         df_validos = df.copy()
     
-    if len(df_validos) > 0:
+    if len(df_validos) >= TOP_N:
+        # Seleciona as TOP N produções com base no maior número de peças aprovadas
+        df_top = df_validos.nlargest(TOP_N, ['APROVADO', 'TRS (%)'])
+        
+        # Calcula as médias
+        media_aprovadas = df_top['APROVADO'].mean()
+        media_trs = df_top['TRS (%)'].mean()
+        media_defeitos = df_top['TOTAL_DEFEITOS'].mean()
+        
+        # Médias dos parâmetros de processo
+        media_temp_sup = df_top['SUPERIOR'].mean()
+        media_temp_meio = df_top['MEIO'].mean()
+        media_temp_inf = df_top['INFERIOR'].mean()
+        media_temp_entrada = df_top['A1'].mean()
+        media_tempo_c2 = df_top['C2'].mean()
+        media_humidade = df_top['C4'].mean()
+        media_pressao_ar = df_top['A e B'].mean()
+        
+        # Desvio padrão para noção de estabilidade
+        std_trs = df_top['TRS (%)'].std()
+        criticas_top = df_top['IS_CRITICO'].sum()
+        
+        st.markdown(f"""
+        <div style="background: {THEME['bg_card2']}; padding: 20px; border-radius: 10px; border-left: 4px solid {THEME['accent_lime']};">
+            <h4 style="margin:0 0 5px 0; color:{THEME['accent_lime']};">🎯 Referência de Excelência</h4>
+            <p style="margin:0 0 15px 0; font-size:12px; color:{THEME['text_muted']};">Média calculada com base nas {TOP_N} melhores produções do período</p>
+        """, unsafe_allow_html=True)
+        
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("📊 TRS Médio (Top 15)", f"{media_trs:.1f}%", f"±{std_trs:.1f}%" if std_trs > 0 else "estável")
+        with col2:
+            st.metric("✅ Aprovadas (Média)", f"{media_aprovadas:.1f}/40")
+        with col3:
+            st.metric("❌ Defeitos (Média)", f"{media_defeitos:.1f}")
+        with col4:
+            st.metric("⚠️ Produções Críticas", f"{criticas_top}/{TOP_N}")
+        
+        st.markdown("<hr style='margin:15px 0; opacity:0.3;'>", unsafe_allow_html=True)
+        
+        st.markdown("#### 🔥 Temperaturas do Forno (Média)")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Superior", f"{media_temp_sup:.0f}°C" if pd.notna(media_temp_sup) else "N/A")
+        with col2:
+            st.metric("Meio", f"{media_temp_meio:.0f}°C" if pd.notna(media_temp_meio) else "N/A")
+        with col3:
+            st.metric("Inferior", f"{media_temp_inf:.0f}°C" if pd.notna(media_temp_inf) else "N/A")
+        
+        st.markdown("#### 📍 Principais Indicadores (Média)")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Temp. Entrada (A1)", f"{media_temp_entrada:.0f}°C" if pd.notna(media_temp_entrada) else "N/A")
+        with col2:
+            st.metric("Tempo (C2)", f"{media_tempo_c2:.0f}s" if pd.notna(media_tempo_c2) else "N/A")
+        with col3:
+            st.metric("Humidade (C4)", f"{media_humidade:.1f}%" if pd.notna(media_humidade) else "N/A")
+        with col4:
+            st.metric("Pressão Ar (A e B)", f"{media_pressao_ar:.1f}" if pd.notna(media_pressao_ar) else "N/A")
+        
+        st.markdown("</div>", unsafe_allow_html=True)
+        
+        # Expander com detalhes das Top 15
+        with st.expander(f"🔍 Ver detalhes das {TOP_N} melhores produções"):
+            st.markdown(f"**As {TOP_N} produções que definem o padrão de excelência:**")
+            df_top_display = df_top[['DATA', 'TURNO_TEMP', 'PRODUTO', 'GANCHEIRA', 'APROVADO', 'TRS (%)', 'TOTAL_DEFEITOS']].copy()
+            df_top_display['DATA'] = pd.to_datetime(df_top_display['DATA']).dt.strftime('%d/%m/%Y')
+            df_top_display['TRS (%)'] = df_top_display['TRS (%)'].round(1).astype(str) + '%'
+            st.dataframe(df_top_display, use_container_width=True, height=300)
+            
+            st.markdown("**📊 Estatísticas das Top 15 vs. Média Geral:**")
+            media_geral_trs = (df_validos['APROVADO'].sum() / (len(df_validos) * 40) * 100) if len(df_validos) > 0 else 0
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Média Geral TRS", f"{media_geral_trs:.1f}%")
+            with col2:
+                ganho = media_trs - media_geral_trs
+                st.metric("Ganho Potencial", f"+{ganho:.1f}%", delta_color="normal")
+                
+    elif len(df_validos) > 0:
+        st.warning(f"Dados insuficientes para calcular a média das {TOP_N} melhores produções. Apenas {len(df_validos)} registros encontrados. Exibindo a melhor produção individual:")
+        
+        # Fallback: mostra a melhor produção individual
         idx_melhor = df_validos['APROVADO'].idxmax()
         melhor = df_validos.loc[idx_melhor]
         
         st.markdown(f"""
         <div style="background: {THEME['bg_card2']}; padding: 20px; border-radius: 10px; border-left: 4px solid {THEME['accent_lime']};">
-            <h4 style="margin:0 0 15px 0; color:{THEME['accent_lime']};">🎯 Melhor Resultado</h4>
+            <h4 style="margin:0 0 15px 0; color:{THEME['accent_lime']};">🎯 Melhor Resultado Individual</h4>
         """, unsafe_allow_html=True)
         
         col1, col2, col3, col4 = st.columns(4)
@@ -1940,7 +2025,7 @@ elif aba_selecionada == 'TÊMPERA':
     else:
         st.info("Nenhum registro válido encontrado (Pressão Ar > 0).")
 
-    # ── Ranking de Gancheiras ──
+    # ── Ranking de Gancheiras (Pior → Melhor) ──
     st.markdown("<hr>", unsafe_allow_html=True)
     render_section_header("🏭 Ranking de Gancheiras (Pior → Melhor)", "▸", THEME['accent_purple'])
     
@@ -2049,7 +2134,7 @@ elif aba_selecionada == 'TÊMPERA':
             pior = df_rank.iloc[0]
             
             st.markdown(f"""
-            <div style="background: {THEME['bg_card2']}; padding: 10px 15px; border-radius: 6px; margin-bottom: 15px; border-left: 4px solid {THEME['accent_red']};">
+            <div style="background: {THEME['bg_card2']}; padding: 10px 15px; margin-bottom: 15px; border-left: 4px solid {THEME['accent_red']};">
                 <span style="font-weight: bold; color: {THEME['accent_red']};">🔴 PIOR GANCHEIRA: {pior['Gancheira']}</span> | 
                 {pior['Defeitos']} defeitos em {pior['Reg']} registros
             </div>
@@ -2266,181 +2351,288 @@ elif aba_selecionada == 'TÊMPERA':
         st.info("Nenhum defeito registrado.")
 
     # ── Defeitos x Parâmetros ──
-    st.markdown("<hr>", unsafe_allow_html=True)
-    render_section_header("📈 Defeitos x Parâmetros", "▸", THEME['accent_purple'])
+st.markdown("<hr>", unsafe_allow_html=True)
+render_section_header("📈 Defeitos x Parâmetros", "▸", THEME['accent_purple'])
+
+if not df.empty and 'DATA' in df.columns:
+    # Agrupar por data
+    df_diario = df.groupby(df['DATA'].dt.date).agg({
+        'APROVADO': 'sum',
+        'TOTAL_DEFEITOS': 'sum',
+        'MEIO': 'mean',
+        'C4': 'mean',
+        'C2': 'mean'
+    }).reset_index()
     
-    if not df.empty and 'DATA' in df.columns:
-        # Agrupar por data
-        df_diario = df.groupby(df['DATA'].dt.date).agg({
-            'APROVADO': 'sum',
-            'TOTAL_DEFEITOS': 'sum',
-            'MEIO': 'mean',
-            'C4': 'mean',
-            'C2': 'mean'
-        }).reset_index()
-        
-        df_diario['DATA'] = pd.to_datetime(df_diario['DATA'])
-        df_diario = df_diario.sort_values('DATA')
-        
-        # Adicionar contagem de cada defeito por dia
+    df_diario['DATA'] = pd.to_datetime(df_diario['DATA'])
+    df_diario = df_diario.sort_values('DATA')
+    
+    # Adicionar contagem de cada defeito por dia
+    for codigo in CODIGOS_DEFEITO_REAIS:
+        nome = MAPEAMENTO_DEFEITOS[codigo]
+        nome_clean = nome.upper().replace(' ', '_').replace('Ç', 'C').replace('Ã', 'A').replace('Á', 'A').replace('Ó', 'O')
+        col_nome = f'QTD_{nome_clean}'
+        if col_nome in df.columns:
+            df_diario[col_nome] = df.groupby(df['DATA'].dt.date)[col_nome].sum().values
+    
+    if len(df_diario) >= 2:
+        # Opções de defeitos que possuem dados
+        opcoes_defeitos = []
         for codigo in CODIGOS_DEFEITO_REAIS:
             nome = MAPEAMENTO_DEFEITOS[codigo]
             nome_clean = nome.upper().replace(' ', '_').replace('Ç', 'C').replace('Ã', 'A').replace('Á', 'A').replace('Ó', 'O')
             col_nome = f'QTD_{nome_clean}'
-            if col_nome in df.columns:
-                df_diario[col_nome] = df.groupby(df['DATA'].dt.date)[col_nome].sum().values
+            if col_nome in df_diario.columns and df_diario[col_nome].sum() > 0:
+                opcoes_defeitos.append((nome, col_nome))
         
-        if len(df_diario) >= 2:
-            # Opções de defeitos que possuem dados
-            opcoes_defeitos = []
-            for codigo in CODIGOS_DEFEITO_REAIS:
-                nome = MAPEAMENTO_DEFEITOS[codigo]
-                nome_clean = nome.upper().replace(' ', '_').replace('Ç', 'C').replace('Ã', 'A').replace('Á', 'A').replace('Ó', 'O')
-                col_nome = f'QTD_{nome_clean}'
-                if col_nome in df_diario.columns and df_diario[col_nome].sum() > 0:
-                    opcoes_defeitos.append((nome, col_nome))
+        # Adicionar opção "Todos os Defeitos"
+        opcoes_defeitos.insert(0, ("📊 TODOS OS DEFEITOS", "TOTAL_DEFEITOS"))
+        
+        if opcoes_defeitos:
+            defeito_selecionado = st.selectbox(
+                "Selecione o defeito para análise:",
+                options=[n for n, _ in opcoes_defeitos],
+                key="defeito_param"
+            )
             
-            # Adicionar opção "Todos os Defeitos"
-            opcoes_defeitos.insert(0, ("📊 TODOS OS DEFEITOS", "TOTAL_DEFEITOS"))
+            # Encontrar a coluna do defeito selecionado
+            col_defeito = next(c for n, c in opcoes_defeitos if n == defeito_selecionado)
             
-            if opcoes_defeitos:
-                defeito_selecionado = st.selectbox(
-                    "Selecione o defeito para análise:",
-                    options=[n for n, _ in opcoes_defeitos],
-                    key="defeito_param"
-                )
+            # Criar gráfico
+            fig, ax1 = plt.subplots(figsize=(14, 6), facecolor=THEME['bg_card'])
+            apply_chart_style(ax1, fig, f"{defeito_selecionado} vs Parâmetros de Processo", 
+                              xlabel="Data", ylabel="Quantidade de Defeitos", accent=THEME['accent_red'])
+            
+            # Barras - defeitos
+            bars = ax1.bar(df_diario['DATA'], df_diario[col_defeito], 
+                           color=THEME['accent_red'], alpha=0.5, width=0.8, label=defeito_selecionado)
+            
+            # Adicionar valores nas barras
+            for bar, val in zip(bars, df_diario[col_defeito]):
+                if val > 0:
+                    ax1.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.3, 
+                            str(int(val)), ha='center', va='bottom', fontsize=7, color=THEME['accent_red'])
+            
+            ax1.set_ylabel('Quantidade de Defeitos', color=THEME['accent_red'])
+            ax1.tick_params(axis='y', labelcolor=THEME['accent_red'])
+            
+            # Eixo secundário - parâmetros
+            ax2 = ax1.twinx()
+            
+            # Linha 1: Temperatura Meio
+            if 'MEIO' in df_diario.columns:
+                ax2.plot(df_diario['DATA'], df_diario['MEIO'], 
+                        color=THEME['accent_orange'], marker='o', markersize=4, linewidth=2, 
+                        linestyle='-', label='🌡️ Temp. Meio (°C)')
+            
+            # Linha 2: Humidade C4
+            if 'C4' in df_diario.columns:
+                ax2.plot(df_diario['DATA'], df_diario['C4'], 
+                        color=THEME['accent_cyan'], marker='s', markersize=4, linewidth=2, 
+                        linestyle='--', label='💧 Humidade C4 (%)')
+            
+            # Linha 3: Tempo C2
+            if 'C2' in df_diario.columns:
+                ax2.plot(df_diario['DATA'], df_diario['C2'], 
+                        color=THEME['accent_lime'], marker='^', markersize=4, linewidth=2, 
+                        linestyle='-.', label='⏱️ Tempo C2 (s)')
+            
+            ax2.set_ylabel('Valores dos Parâmetros', color=THEME['text_primary'])
+            ax2.tick_params(axis='y', labelcolor=THEME['text_primary'])
+            
+            # Legendas combinadas
+            lines1, labels1 = ax1.get_legend_handles_labels()
+            lines2, labels2 = ax2.get_legend_handles_labels()
+            ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left', fontsize=8, 
+                      framealpha=0.9, facecolor=THEME['bg_card'])
+            
+            plt.setp(ax1.xaxis.get_majorticklabels(), rotation=35, ha='right', fontsize=8)
+            fig.tight_layout()
+            st.pyplot(fig)
+            plt.close(fig)
+            
+            # ── ESTATÍSTICAS DE CORRELAÇÃO COM ANÁLISE INTELIGENTE ──
+            st.markdown("#### 📊 Correlações com Análise Contextual")
+            
+            # Dicionário de observações específicas por tipo de defeito e parâmetro
+            def get_observacao(defeito_nome, parametro, corr_valor):
+                """Retorna observação contextual baseada no defeito e correlação"""
                 
-                # Encontrar a coluna do defeito selecionado
-                col_defeito = next(c for n, c in opcoes_defeitos if n == defeito_selecionado)
+                # Normaliza o nome do defeito
+                defeito_lower = defeito_nome.lower()
+                parametro_lower = parametro.lower()
                 
-                # Criar gráfico
-                fig, ax1 = plt.subplots(figsize=(14, 6), facecolor=THEME['bg_card'])
-                apply_chart_style(ax1, fig, f"{defeito_selecionado} vs Parâmetros de Processo", 
-                                  xlabel="Data", ylabel="Quantidade de Defeitos", accent=THEME['accent_red'])
+                # Observações para HUMIDADE (C4)
+                if 'humidade' in parametro_lower or 'c4' in parametro_lower:
+                    if corr_valor > 0.5:
+                        return "⚠️ **Contradição teórica:** A literatura indica que umidade alta é prejudicial, mas seus dados mostram o oposto. Investigue se: (a) a faixa de umidade está abaixo do limiar crítico; (b) a umidade está compensando resfriamento excessivo; (c) há correlação espúria com outra variável (ex: estação do ano)."
+                    elif corr_valor < -0.5:
+                        if 'quebra no resfriamento' in defeito_lower or 'quebra teste impacto' in defeito_lower:
+                            return "✅ **Coerente com teoria:** Umidade mais alta suaviza o choque térmico, reduzindo quebras por resfriamento abrupto. A umidade atua como amortecedor térmico natural."
+                        elif 'estourou após furar' in defeito_lower:
+                            return "⚠️ **Atenção:** Maior umidade reduzindo este defeito sugere que a peça pode estar chegando muito seca/trincada ao furo. Considere verificar lubrificação da furadeira."
+                        else:
+                            return "✅ **Efeito benéfico:** Maior umidade reduz este defeito. Possível explicação: a umidade moderada (30-60%) melhora a transferência de calor uniforme durante o resfriamento."
+                    else:
+                        if 'quebra no resfriamento' in defeito_lower or 'quebra teste impacto' in defeito_lower:
+                            return "ℹ️ **Correlação fraca:** Umidade não parece ser o principal fator para este defeito. Priorize análise de temperatura e tempo de resfriamento."
+                        else:
+                            return "ℹ️ **Correlação fraca:** Umidade tem impacto limitado neste tipo de defeito."
                 
-                # Barras - defeitos
-                bars = ax1.bar(df_diario['DATA'], df_diario[col_defeito], 
-                               color=THEME['accent_red'], alpha=0.5, width=0.8, label=defeito_selecionado)
+                # Observações para TEMPERATURA MEIO
+                elif 'temperatura' in parametro_lower or 'meio' in parametro_lower:
+                    if corr_valor > 0.5:
+                        if 'quebra no resfriamento' in defeito_lower or 'quebra teste impacto' in defeito_lower:
+                            return "⚠️ **Temperatura muito alta** pode estar causando tensões residuais excessivas. Considere reduzir temperatura do forno em 5-10°C."
+                        elif 'estourou após furar' in defeito_lower:
+                            return "⚠️ **Temperatura alta** pode estar fragilizando o vidro na região do furo. Verifique distribuição de temperatura na peça."
+                        else:
+                            return "⚠️ **Correlação positiva:** Temperaturas mais altas aumentam este defeito. Reduza gradualmente a temperatura e monitore o impacto."
+                    elif corr_valor < -0.5:
+                        if 'quebra no resfriamento' in defeito_lower or 'quebra teste impacto' in defeito_lower:
+                            return "✅ **Temperatura muito baixa** pode estar causando têmpera insuficiente. Aumente temperatura em 5-10°C e verifique resultado."
+                        else:
+                            return "✅ **Correlação negativa:** Temperaturas mais altas reduzem este defeito. Considere operar no limite superior da faixa especificada."
+                    else:
+                        return "ℹ️ **Correlação moderada:** Temperatura tem influência, mas não é o fator dominante. Analise também tempo de residência e resfriamento."
                 
-                # Adicionar valores nas barras
-                for bar, val in zip(bars, df_diario[col_defeito]):
-                    if val > 0:
-                        ax1.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.3, 
-                                str(int(val)), ha='center', va='bottom', fontsize=7, color=THEME['accent_red'])
+                # Observações para TEMPO C2
+                elif 'tempo' in parametro_lower or 'c2' in parametro_lower:
+                    if corr_valor > 0.5:
+                        if 'quebra no resfriamento' in defeito_lower or 'quebra teste impacto' in defeito_lower:
+                            return "⚠️ **Tempo de residência muito longo** pode estar superaquecendo o vidro. Reduza o tempo gradualmente."
+                        elif 'ovalizada' in defeito_lower:
+                            return "⚠️ **Tempo excessivo** pode estar causando deformação (ovalização) por amolecimento excessivo do vidro."
+                        else:
+                            return "⚠️ **Correlação positiva:** Tempos mais longos aumentam este defeito. Reduza o tempo de residência no forno."
+                    elif corr_valor < -0.5:
+                        if 'quebra teste impacto' in defeito_lower:
+                            return "✅ **Tempo insuficiente** para têmpera adequada. Aumente o tempo de residência para garantir aquecimento uniforme."
+                        elif 'furada e não fraturou' in defeito_lower:
+                            return "⚠️ **Tempo curto** pode resultar em têmpera incompleta, reduzindo a fragmentação. Aumente tempo ou temperatura."
+                        else:
+                            return "✅ **Correlação negativa:** Tempos mais longos reduzem este defeito. Considere operar com maior tempo de residência."
+                    else:
+                        return "ℹ️ **Correlação moderada:** Tempo tem influência secundária. Priorize ajuste de temperatura primeiro."
                 
-                ax1.set_ylabel('Quantidade de Defeitos', color=THEME['accent_red'])
-                ax1.tick_params(axis='y', labelcolor=THEME['accent_red'])
-                
-                # Eixo secundário - parâmetros
-                ax2 = ax1.twinx()
-                
-                # Linha 1: Temperatura Meio
-                if 'MEIO' in df_diario.columns:
-                    ax2.plot(df_diario['DATA'], df_diario['MEIO'], 
-                            color=THEME['accent_orange'], marker='o', markersize=4, linewidth=2, 
-                            linestyle='-', label='🌡️ Temp. Meio (°C)')
-                
-                # Linha 2: Humidade C4
-                if 'C4' in df_diario.columns:
-                    ax2.plot(df_diario['DATA'], df_diario['C4'], 
-                            color=THEME['accent_cyan'], marker='s', markersize=4, linewidth=2, 
-                            linestyle='--', label='💧 Humidade C4 (%)')
-                
-                # Linha 3: Tempo C2
-                if 'C2' in df_diario.columns:
-                    ax2.plot(df_diario['DATA'], df_diario['C2'], 
-                            color=THEME['accent_lime'], marker='^', markersize=4, linewidth=2, 
-                            linestyle='-.', label='⏱️ Tempo C2 (s)')
-                
-                ax2.set_ylabel('Valores dos Parâmetros', color=THEME['text_primary'])
-                ax2.tick_params(axis='y', labelcolor=THEME['text_primary'])
-                
-                # Legendas combinadas
-                lines1, labels1 = ax1.get_legend_handles_labels()
-                lines2, labels2 = ax2.get_legend_handles_labels()
-                ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left', fontsize=8, 
-                          framealpha=0.9, facecolor=THEME['bg_card'])
-                
-                plt.setp(ax1.xaxis.get_majorticklabels(), rotation=35, ha='right', fontsize=8)
-                fig.tight_layout()
-                st.pyplot(fig)
-                plt.close(fig)
-                
-                # Estatísticas de correlação
-                st.markdown("#### 📊 Correlações")
-                
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    if 'MEIO' in df_diario.columns:
-                        corr_temp = df_diario[col_defeito].corr(df_diario['MEIO'])
-                        cor_temp = corr_temp if pd.notna(corr_temp) else 0
-                        delta_temp = "📈" if cor_temp > 0 else "📉"
-                        st.metric(f"🌡️ vs Temp. Meio", f"{cor_temp:.2f}", delta_temp)
-                
-                with col2:
-                    if 'C4' in df_diario.columns:
-                        corr_hum = df_diario[col_defeito].corr(df_diario['C4'])
-                        cor_hum = corr_hum if pd.notna(corr_hum) else 0
-                        delta_hum = "📈" if cor_hum > 0 else "📉"
-                        st.metric(f"💧 vs Humidade C4", f"{cor_hum:.2f}", delta_hum)
-                
-                with col3:
-                    if 'C2' in df_diario.columns:
-                        corr_tempo = df_diario[col_defeito].corr(df_diario['C2'])
-                        cor_tempo = corr_tempo if pd.notna(corr_tempo) else 0
-                        delta_tempo = "📈" if cor_tempo > 0 else "📉"
-                        st.metric(f"⏱️ vs Tempo C2", f"{cor_tempo:.2f}", delta_tempo)
-                
-                # Total do defeito selecionado
-                total_defeito = int(df_diario[col_defeito].sum())
-                st.info(f"📋 **Total de '{defeito_selecionado}' no período:** {total_defeito} ocorrências")
-                
-                # Análise rápida
-                st.markdown("#### 🔍 Análise Rápida")
-                
-                analises = []
-                
+                return "🔍 Nenhuma correlação forte identificada. Continue monitorando outros parâmetros."
+            
+            # Exibir correlações em cards
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
                 if 'MEIO' in df_diario.columns:
                     corr_temp = df_diario[col_defeito].corr(df_diario['MEIO'])
-                    if pd.notna(corr_temp):
-                        if corr_temp > 0.5:
-                            analises.append(f"⚠️ **Temperatura Meio** tem correlação positiva forte ({corr_temp:.2f}) com este defeito.")
-                        elif corr_temp < -0.5:
-                            analises.append(f"✅ **Temperatura Meio** tem correlação negativa forte ({corr_temp:.2f}) - temperaturas mais altas reduzem o defeito.")
-                
+                    cor_temp = corr_temp if pd.notna(corr_temp) else 0
+                    delta_temp = "📈" if cor_temp > 0 else "📉" if cor_temp < 0 else "➡️"
+                    st.metric(f"🌡️ vs Temp. Meio", f"{cor_temp:.2f}", delta_temp)
+                    
+                    with st.expander("🔍 Análise", expanded=False):
+                        obs_temp = get_observacao(defeito_selecionado, "Temperatura Meio", cor_temp)
+                        st.markdown(obs_temp)
+            
+            with col2:
                 if 'C4' in df_diario.columns:
                     corr_hum = df_diario[col_defeito].corr(df_diario['C4'])
-                    if pd.notna(corr_hum):
-                        if corr_hum > 0.5:
-                            analises.append(f"⚠️ **Humidade C4** tem correlação positiva forte ({corr_hum:.2f}) com este defeito.")
-                        elif corr_hum < -0.5:
-                            analises.append(f"✅ **Humidade C4** tem correlação negativa forte ({corr_hum:.2f}) - maior humidade reduz o defeito.")
-                
+                    cor_hum = corr_hum if pd.notna(corr_hum) else 0
+                    delta_hum = "📈" if cor_hum > 0 else "📉" if cor_hum < 0 else "➡️"
+                    st.metric(f"💧 vs Humidade C4", f"{cor_hum:.2f}", delta_hum)
+                    
+                    with st.expander("🔍 Análise", expanded=False):
+                        obs_hum = get_observacao(defeito_selecionado, "Humidade C4", cor_hum)
+                        st.markdown(obs_hum)
+            
+            with col3:
                 if 'C2' in df_diario.columns:
                     corr_tempo = df_diario[col_defeito].corr(df_diario['C2'])
-                    if pd.notna(corr_tempo):
-                        if corr_tempo > 0.5:
-                            analises.append(f"⚠️ **Tempo C2** tem correlação positiva forte ({corr_tempo:.2f}) com este defeito.")
-                        elif corr_tempo < -0.5:
-                            analises.append(f"✅ **Tempo C2** tem correlação negativa forte ({corr_tempo:.2f}) - tempos maiores reduzem o defeito.")
+                    cor_tempo = corr_tempo if pd.notna(corr_tempo) else 0
+                    delta_tempo = "📈" if cor_tempo > 0 else "📉" if cor_tempo < 0 else "➡️"
+                    st.metric(f"⏱️ vs Tempo C2", f"{cor_tempo:.2f}", delta_tempo)
+                    
+                    with st.expander("🔍 Análise", expanded=False):
+                        obs_tempo = get_observacao(defeito_selecionado, "Tempo C2", cor_tempo)
+                        st.markdown(obs_tempo)
+            
+            # Total do defeito selecionado
+            total_defeito = int(df_diario[col_defeito].sum())
+            st.info(f"📋 **Total de '{defeito_selecionado}' no período:** {total_defeito} ocorrências")
+            
+            # ── RESUMO EXECUTIVO COM RECOMENDAÇÕES ──
+            st.markdown("#### 🎯 Resumo Executivo e Recomendações")
+            
+            # Coletar todas as correlações
+            correlacoes = {}
+            if 'MEIO' in df_diario.columns:
+                correlacoes['Temperatura Meio'] = df_diario[col_defeito].corr(df_diario['MEIO'])
+            if 'C4' in df_diario.columns:
+                correlacoes['Humidade C4'] = df_diario[col_defeito].corr(df_diario['C4'])
+            if 'C2' in df_diario.columns:
+                correlacoes['Tempo C2'] = df_diario[col_defeito].corr(df_diario['C2'])
+            
+            # Filtrar correlações válidas
+            correlacoes_validas = {k: v for k, v in correlacoes.items() if pd.notna(v)}
+            
+            if correlacoes_validas:
+                # Encontrar fator mais influente (maior |correlação|)
+                fator_mais_influente = max(correlacoes_validas.items(), key=lambda x: abs(x[1]))
                 
-                if analises:
-                    for a in analises:
-                        st.markdown(a)
+                st.markdown(f"""
+                <div style="background: {THEME['bg_card2']}; padding: 15px; border-radius: 10px; margin: 10px 0;">
+                    <strong>📌 Fator mais influente para "{defeito_selecionado}":</strong> {fator_mais_influente[0]} 
+                    (correlação {fator_mais_influente[1]:.2f})
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Recomendações baseadas nas correlações
+                recomendacoes = []
+                
+                # Recomendação para Temperatura
+                if 'Temperatura Meio' in correlacoes_validas:
+                    corr_temp = correlacoes_validas['Temperatura Meio']
+                    if corr_temp > 0.5:
+                        recomendacoes.append("🔧 **Ação:** Reduza a temperatura do forno em 5-10°C e monitore o impacto neste defeito.")
+                    elif corr_temp < -0.5:
+                        recomendacoes.append("🔧 **Ação:** Aumente a temperatura do forno em 5-10°C e monitore a redução deste defeito.")
+                
+                # Recomendação para Humidade
+                if 'Humidade C4' in correlacoes_validas:
+                    corr_hum = correlacoes_validas['Humidade C4']
+                    if corr_hum > 0.5:
+                        recomendacoes.append("🌧️ **Ação:** Reduza a umidade ambiente (use desumidificadores) abaixo de 50% para diminuir este defeito.")
+                    elif corr_hum < -0.5:
+                        recomendacoes.append("💧 **Ação:** A umidade mais alta está reduzindo este defeito. Mantenha umidade entre 40-60% e evite ambientes muito secos (<30%).")
+                
+                # Recomendação para Tempo
+                if 'Tempo C2' in correlacoes_validas:
+                    corr_tempo = correlacoes_validas['Tempo C2']
+                    if corr_tempo > 0.5:
+                        recomendacoes.append("⏱️ **Ação:** Reduza o tempo de residência no forno em 10-15% e monitore o efeito.")
+                    elif corr_tempo < -0.5:
+                        recomendacoes.append("⏱️ **Ação:** Aumente o tempo de residência no forno para garantir têmpera adequada.")
+                
+                if recomendacoes:
+                    st.markdown("#### 🔧 Recomendações de Ajuste:")
+                    for rec in recomendacoes:
+                        st.markdown(rec)
                 else:
-                    st.markdown("🔸 Nenhuma correlação forte identificada entre os parâmetros e este defeito.")
+                    st.markdown("🔸 Nenhuma correlação forte (>0.5 ou <-0.5) identificada. O processo parece estável para este defeito.")
             else:
-                st.info("Nenhum defeito com dados suficientes para análise.")
+                st.markdown("🔸 Dados insuficientes para análise de correlação.")
+            
+            # Aviso sobre limitações da análise
+            with st.expander("ℹ️ Sobre esta análise", expanded=False):
+                st.markdown("""
+                **Limitações e cuidados:**
+                - Correlação não implica causalidade. Uma correlação forte pode indicar que duas variáveis mudam juntas, mas não necessariamente que uma causa a outra.
+                - Podem existir **variáveis de confundimento** (ex: estação do ano, matéria-prima, operador) que influenciam tanto o defeito quanto o parâmetro.
+                - **Intervalo de confiança:** Correlações baseadas em poucos pontos (menos de 10 dias) têm baixa confiabilidade estatística.
+                - **Faixa de operação:** As correlações são válidas apenas dentro da faixa de dados observada. Extrapolações podem ser perigosas.
+                
+                **Recomendação:** Use estas análises como **guia para investigação**, não como verdade absoluta. Sempre valide ajustes com testes controlados.
+                """)
         else:
-            st.info("Dados insuficientes para análise diária (mínimo 2 dias).")
+            st.info("Nenhum defeito com dados suficientes para análise.")
     else:
-        st.info("Sem dados disponíveis para análise.")
-
-    st.markdown(f"""
-    <div style="text-align:right;padding:16px 0 8px;
-        font-family:'JetBrains Mono',monospace;font-size:10px;
-        color:{THEME['text_muted']};letter-spacing:.1em;">
-        TRS DASHBOARD · TÊMPERA · {get_horario_brasilia()}
-    </div>
-    """, unsafe_allow_html=True)
+        st.info("Dados insuficientes para análise diária (mínimo 2 dias).")
+else:
+    st.info("Sem dados disponíveis para análise.")
