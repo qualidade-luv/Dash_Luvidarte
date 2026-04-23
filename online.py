@@ -674,7 +674,8 @@ if aba_selecionada == 'PRENSADOS':
                     lambda row: max(0, row['ACERTOS_MIN'] - 165) if row['IS_SABADO'] else row['ACERTOS_MIN'], axis=1
                 )
             return df
-        except Exception:
+        except Exception as e:
+            st.error(f"Erro ao carregar dados de Prensados: {e}")
             return pd.DataFrame()
 
     with st.spinner("Carregando dados..."):
@@ -892,43 +893,52 @@ if aba_selecionada == 'PRENSADOS':
     render_section_header("Evolução Diária do TRS", "▸")
 
     if not df.empty and 'TRS 100%' in df.columns:
-        resumo_dia = df.groupby(df['DATA'].dt.date).agg({
-            'PRODUZIDO': 'sum',
-            'APROVADO': 'sum',
-            'EMBALADO': 'sum',
-            'TRS 100%': 'sum'
-        }).reset_index()
-        resumo_dia['DATA'] = pd.to_datetime(resumo_dia['DATA'])
-        resumo_dia['TRS 1ª ESCOLHA (%)'] = (resumo_dia['APROVADO'] / resumo_dia['TRS 100%'].replace(0, 1) * 100).fillna(0)
-        resumo_dia['TRS FINAL (%)'] = (resumo_dia['EMBALADO'] / resumo_dia['TRS 100%'].replace(0, 1) * 100).fillna(0)
-        resumo_dia = resumo_dia.sort_values('DATA')
+        # CORREÇÃO: Apenas as colunas que existem em Prensados
+        colunas_agg = {}
+        for col in ['PRODUZIDO', 'APROVADO', 'EMBALADO', 'TRS 100%']:
+            if col in df.columns:
+                colunas_agg[col] = 'sum'
+        
+        if colunas_agg:
+            resumo_dia = df.groupby(df['DATA'].dt.date).agg(colunas_agg).reset_index()
+            resumo_dia['DATA'] = pd.to_datetime(resumo_dia['DATA'])
+            
+            if 'APROVADO' in resumo_dia.columns and 'TRS 100%' in resumo_dia.columns:
+                resumo_dia['TRS 1ª ESCOLHA (%)'] = (resumo_dia['APROVADO'] / resumo_dia['TRS 100%'].replace(0, 1) * 100).fillna(0)
+            
+            if 'EMBALADO' in resumo_dia.columns and 'TRS 100%' in resumo_dia.columns:
+                resumo_dia['TRS FINAL (%)'] = (resumo_dia['EMBALADO'] / resumo_dia['TRS 100%'].replace(0, 1) * 100).fillna(0)
+            
+            resumo_dia = resumo_dia.sort_values('DATA')
 
-        if not resumo_dia.empty:
-            fig, ax = plt.subplots(figsize=(14, 5), facecolor=THEME['bg_card'])
-            apply_chart_style(ax, fig, "TRS Diário — Período Selecionado", ylabel="TRS (%)")
+            if not resumo_dia.empty and ('TRS 1ª ESCOLHA (%)' in resumo_dia.columns or 'TRS FINAL (%)' in resumo_dia.columns):
+                fig, ax = plt.subplots(figsize=(14, 5), facecolor=THEME['bg_card'])
+                apply_chart_style(ax, fig, "TRS Diário — Período Selecionado", ylabel="TRS (%)")
 
-            # Linha TRS 1ª Escolha
-            ax.plot(resumo_dia['DATA'], resumo_dia['TRS 1ª ESCOLHA (%)'],
-                    marker='o', markersize=6, linewidth=2.5,
-                    color=THEME['accent_cyan'], alpha=0.95, label='TRS 1ª Escolha',
-                    markerfacecolor=THEME['bg_card'], markeredgecolor=THEME['accent_cyan'], markeredgewidth=2)
+                # Linha TRS 1ª Escolha
+                if 'TRS 1ª ESCOLHA (%)' in resumo_dia.columns:
+                    ax.plot(resumo_dia['DATA'], resumo_dia['TRS 1ª ESCOLHA (%)'],
+                            marker='o', markersize=6, linewidth=2.5,
+                            color=THEME['accent_cyan'], alpha=0.95, label='TRS 1ª Escolha',
+                            markerfacecolor=THEME['bg_card'], markeredgecolor=THEME['accent_cyan'], markeredgewidth=2)
 
-            # Linha TRS Final
-            ax.plot(resumo_dia['DATA'], resumo_dia['TRS FINAL (%)'],
-                    marker='s', markersize=6, linewidth=2.5,
-                    color=THEME['accent_orange'], alpha=0.95, label='TRS Final',
-                    markerfacecolor=THEME['bg_card'], markeredgecolor=THEME['accent_orange'], markeredgewidth=2)
+                # Linha TRS Final
+                if 'TRS FINAL (%)' in resumo_dia.columns:
+                    ax.plot(resumo_dia['DATA'], resumo_dia['TRS FINAL (%)'],
+                            marker='s', markersize=6, linewidth=2.5,
+                            color=THEME['accent_orange'], alpha=0.95, label='TRS Final',
+                            markerfacecolor=THEME['bg_card'], markeredgecolor=THEME['accent_orange'], markeredgewidth=2)
 
-            # Meta
-            ax.axhline(y=85, color=THEME['accent_red'], linestyle=':', alpha=0.7, linewidth=1.5, label='Meta 85%')
+                # Meta
+                ax.axhline(y=85, color=THEME['accent_red'], linestyle=':', alpha=0.7, linewidth=1.5, label='Meta 85%')
 
-            ax.legend(framealpha=0.15, facecolor=THEME['bg_card'], edgecolor=THEME['border_bright'],
-                      labelcolor=THEME['text_primary'], fontsize=9)
-            plt.setp(ax.xaxis.get_majorticklabels(), rotation=35, ha='right', fontsize=8,
-                     color=THEME['text_muted'])
-            fig.tight_layout(pad=1.5)
-            st.pyplot(fig)
-            plt.close(fig)
+                ax.legend(framealpha=0.15, facecolor=THEME['bg_card'], edgecolor=THEME['border_bright'],
+                          labelcolor=THEME['text_primary'], fontsize=9)
+                plt.setp(ax.xaxis.get_majorticklabels(), rotation=35, ha='right', fontsize=8,
+                         color=THEME['text_muted'])
+                fig.tight_layout(pad=1.5)
+                st.pyplot(fig)
+                plt.close(fig)
 
     st.markdown("<hr>", unsafe_allow_html=True)
 
@@ -1083,7 +1093,7 @@ if aba_selecionada == 'PRENSADOS':
         turno_data = []
         for t in df['TURNO'].unique():
             df_t = df[df['TURNO'] == t]
-            te = df_t['EMBALADO'].sum()
+            te = df_t['EMBALADO'].sum() if 'EMBALADO' in df_t.columns else 0
             ta = df_t['APROVADO'].sum()
             tm = df_t['TRS 100%'].sum()
             turno_data.append({
@@ -1121,20 +1131,28 @@ if aba_selecionada == 'PRENSADOS':
             st.pyplot(fig)
             plt.close(fig)
 
-    # ── Defeitos ──
+    # ── Defeitos de Prensados (colunas corretas) ──
     if mostrar_defeitos:
-        render_section_header("Estratificação de Defeitos", "▸")
-        colunas_defeitos = [
-            'BOLHA','PEDRA','TRINCA','RUGAS','CORTE TESOURA','DOBRA','SUJEIRA','QUEBRA',
-            'ARREADO','VIDRO GRUDADO','CONTRA-PEÇA','FALHAS','CHUPADO','ÓLEO TESOURA',
-            'CROMO','MACHO','BARRO','EMPENO','OUTROS'
+        render_section_header("Estratificação de Defeitos - Prensados", "▸")
+        # Defeitos específicos do processo de PREENSADOS (não os da Têmpera)
+        colunas_defeitos_prensados = [
+            'TRINCA', 'RUGAS', 'DOBRA', 'SUJEIRA', 'FALHAS', 'CHUPADO',
+            'CROMO', 'BARRO', 'EMPENO', 'OUTROS', 'REMANEJAMENTO'
         ]
         defeitos_existentes = []
-        for defeito in colunas_defeitos:
+        for defeito in colunas_defeitos_prensados:
             for col in df.columns:
                 if col.upper() == defeito.upper():
                     defeitos_existentes.append(col)
                     break
+        
+        # Fallback: se não encontrar nenhum defeito específico, tenta qualquer coluna que pareça defeito
+        if not defeitos_existentes:
+            for col in df.columns:
+                col_upper = col.upper()
+                if col_upper in ['TRINCA', 'RUGAS', 'DOBRA', 'SUJEIRA', 'FALHAS', 'CHUPADO', 'CROMO', 'BARRO', 'EMPENO', 'OUTROS']:
+                    defeitos_existentes.append(col)
+        
         if defeitos_existentes:
             df_def = df[defeitos_existentes].apply(pd.to_numeric, errors='coerce').fillna(0)
             df_def_sum = df_def.sum().sort_values(ascending=False)
@@ -1158,6 +1176,10 @@ if aba_selecionada == 'PRENSADOS':
                 plt.close(fig)
                 total_def = df_def_sum.sum()
                 st.caption(f"Total de defeitos: {int(total_def):,}".replace(",","."))
+            else:
+                st.info("Nenhum defeito registrado no período selecionado")
+        else:
+            st.info("Colunas de defeitos não encontradas na planilha de Prensados")
 
     st.markdown(f"""
     <div style="text-align:right;padding:16px 0 8px;
@@ -2350,289 +2372,289 @@ elif aba_selecionada == 'TÊMPERA':
     else:
         st.info("Nenhum defeito registrado.")
 
-    # ── Defeitos x Parâmetros ──
-st.markdown("<hr>", unsafe_allow_html=True)
-render_section_header("📈 Defeitos x Parâmetros", "▸", THEME['accent_purple'])
+    # ── Defeitos x Parâmetros ── (CORRIGIDO - agora dentro do bloco TÊMPERA)
+    st.markdown("<hr>", unsafe_allow_html=True)
+    render_section_header("📈 Defeitos x Parâmetros", "▸", THEME['accent_purple'])
 
-if not df.empty and 'DATA' in df.columns:
-    # Agrupar por data
-    df_diario = df.groupby(df['DATA'].dt.date).agg({
-        'APROVADO': 'sum',
-        'TOTAL_DEFEITOS': 'sum',
-        'MEIO': 'mean',
-        'C4': 'mean',
-        'C2': 'mean'
-    }).reset_index()
-    
-    df_diario['DATA'] = pd.to_datetime(df_diario['DATA'])
-    df_diario = df_diario.sort_values('DATA')
-    
-    # Adicionar contagem de cada defeito por dia
-    for codigo in CODIGOS_DEFEITO_REAIS:
-        nome = MAPEAMENTO_DEFEITOS[codigo]
-        nome_clean = nome.upper().replace(' ', '_').replace('Ç', 'C').replace('Ã', 'A').replace('Á', 'A').replace('Ó', 'O')
-        col_nome = f'QTD_{nome_clean}'
-        if col_nome in df.columns:
-            df_diario[col_nome] = df.groupby(df['DATA'].dt.date)[col_nome].sum().values
-    
-    if len(df_diario) >= 2:
-        # Opções de defeitos que possuem dados
-        opcoes_defeitos = []
+    if not df.empty and 'DATA' in df.columns:
+        # Agrupar por data
+        df_diario = df.groupby(df['DATA'].dt.date).agg({
+            'APROVADO': 'sum',
+            'TOTAL_DEFEITOS': 'sum',
+            'MEIO': 'mean',
+            'C4': 'mean',
+            'C2': 'mean'
+        }).reset_index()
+        
+        df_diario['DATA'] = pd.to_datetime(df_diario['DATA'])
+        df_diario = df_diario.sort_values('DATA')
+        
+        # Adicionar contagem de cada defeito por dia
         for codigo in CODIGOS_DEFEITO_REAIS:
             nome = MAPEAMENTO_DEFEITOS[codigo]
             nome_clean = nome.upper().replace(' ', '_').replace('Ç', 'C').replace('Ã', 'A').replace('Á', 'A').replace('Ó', 'O')
             col_nome = f'QTD_{nome_clean}'
-            if col_nome in df_diario.columns and df_diario[col_nome].sum() > 0:
-                opcoes_defeitos.append((nome, col_nome))
+            if col_nome in df.columns:
+                df_diario[col_nome] = df.groupby(df['DATA'].dt.date)[col_nome].sum().values
         
-        # Adicionar opção "Todos os Defeitos"
-        opcoes_defeitos.insert(0, ("📊 TODOS OS DEFEITOS", "TOTAL_DEFEITOS"))
-        
-        if opcoes_defeitos:
-            defeito_selecionado = st.selectbox(
-                "Selecione o defeito para análise:",
-                options=[n for n, _ in opcoes_defeitos],
-                key="defeito_param"
-            )
+        if len(df_diario) >= 2:
+            # Opções de defeitos que possuem dados
+            opcoes_defeitos = []
+            for codigo in CODIGOS_DEFEITO_REAIS:
+                nome = MAPEAMENTO_DEFEITOS[codigo]
+                nome_clean = nome.upper().replace(' ', '_').replace('Ç', 'C').replace('Ã', 'A').replace('Á', 'A').replace('Ó', 'O')
+                col_nome = f'QTD_{nome_clean}'
+                if col_nome in df_diario.columns and df_diario[col_nome].sum() > 0:
+                    opcoes_defeitos.append((nome, col_nome))
             
-            # Encontrar a coluna do defeito selecionado
-            col_defeito = next(c for n, c in opcoes_defeitos if n == defeito_selecionado)
+            # Adicionar opção "Todos os Defeitos"
+            opcoes_defeitos.insert(0, ("📊 TODOS OS DEFEITOS", "TOTAL_DEFEITOS"))
             
-            # Criar gráfico
-            fig, ax1 = plt.subplots(figsize=(14, 6), facecolor=THEME['bg_card'])
-            apply_chart_style(ax1, fig, f"{defeito_selecionado} vs Parâmetros de Processo", 
-                              xlabel="Data", ylabel="Quantidade de Defeitos", accent=THEME['accent_red'])
-            
-            # Barras - defeitos
-            bars = ax1.bar(df_diario['DATA'], df_diario[col_defeito], 
-                           color=THEME['accent_red'], alpha=0.5, width=0.8, label=defeito_selecionado)
-            
-            # Adicionar valores nas barras
-            for bar, val in zip(bars, df_diario[col_defeito]):
-                if val > 0:
-                    ax1.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.3, 
-                            str(int(val)), ha='center', va='bottom', fontsize=7, color=THEME['accent_red'])
-            
-            ax1.set_ylabel('Quantidade de Defeitos', color=THEME['accent_red'])
-            ax1.tick_params(axis='y', labelcolor=THEME['accent_red'])
-            
-            # Eixo secundário - parâmetros
-            ax2 = ax1.twinx()
-            
-            # Linha 1: Temperatura Meio
-            if 'MEIO' in df_diario.columns:
-                ax2.plot(df_diario['DATA'], df_diario['MEIO'], 
-                        color=THEME['accent_orange'], marker='o', markersize=4, linewidth=2, 
-                        linestyle='-', label='🌡️ Temp. Meio (°C)')
-            
-            # Linha 2: Humidade C4
-            if 'C4' in df_diario.columns:
-                ax2.plot(df_diario['DATA'], df_diario['C4'], 
-                        color=THEME['accent_cyan'], marker='s', markersize=4, linewidth=2, 
-                        linestyle='--', label='💧 Humidade C4 (%)')
-            
-            # Linha 3: Tempo C2
-            if 'C2' in df_diario.columns:
-                ax2.plot(df_diario['DATA'], df_diario['C2'], 
-                        color=THEME['accent_lime'], marker='^', markersize=4, linewidth=2, 
-                        linestyle='-.', label='⏱️ Tempo C2 (s)')
-            
-            ax2.set_ylabel('Valores dos Parâmetros', color=THEME['text_primary'])
-            ax2.tick_params(axis='y', labelcolor=THEME['text_primary'])
-            
-            # Legendas combinadas
-            lines1, labels1 = ax1.get_legend_handles_labels()
-            lines2, labels2 = ax2.get_legend_handles_labels()
-            ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left', fontsize=8, 
-                      framealpha=0.9, facecolor=THEME['bg_card'])
-            
-            plt.setp(ax1.xaxis.get_majorticklabels(), rotation=35, ha='right', fontsize=8)
-            fig.tight_layout()
-            st.pyplot(fig)
-            plt.close(fig)
-            
-            # ── ESTATÍSTICAS DE CORRELAÇÃO COM ANÁLISE INTELIGENTE ──
-            st.markdown("#### 📊 Correlações com Análise Contextual")
-            
-            # Dicionário de observações específicas por tipo de defeito e parâmetro
-            def get_observacao(defeito_nome, parametro, corr_valor):
-                """Retorna observação contextual baseada no defeito e correlação"""
+            if opcoes_defeitos:
+                defeito_selecionado = st.selectbox(
+                    "Selecione o defeito para análise:",
+                    options=[n for n, _ in opcoes_defeitos],
+                    key="defeito_param"
+                )
                 
-                # Normaliza o nome do defeito
-                defeito_lower = defeito_nome.lower()
-                parametro_lower = parametro.lower()
+                # Encontrar a coluna do defeito selecionado
+                col_defeito = next(c for n, c in opcoes_defeitos if n == defeito_selecionado)
                 
-                # Observações para HUMIDADE (C4)
-                if 'humidade' in parametro_lower or 'c4' in parametro_lower:
-                    if corr_valor > 0.5:
-                        return "⚠️ **Contradição teórica:** A literatura indica que umidade alta é prejudicial, mas seus dados mostram o oposto. Investigue se: (a) a faixa de umidade está abaixo do limiar crítico; (b) a umidade está compensando resfriamento excessivo; (c) há correlação espúria com outra variável (ex: estação do ano)."
-                    elif corr_valor < -0.5:
-                        if 'quebra no resfriamento' in defeito_lower or 'quebra teste impacto' in defeito_lower:
-                            return "✅ **Coerente com teoria:** Umidade mais alta suaviza o choque térmico, reduzindo quebras por resfriamento abrupto. A umidade atua como amortecedor térmico natural."
-                        elif 'estourou após furar' in defeito_lower:
-                            return "⚠️ **Atenção:** Maior umidade reduzindo este defeito sugere que a peça pode estar chegando muito seca/trincada ao furo. Considere verificar lubrificação da furadeira."
-                        else:
-                            return "✅ **Efeito benéfico:** Maior umidade reduz este defeito. Possível explicação: a umidade moderada (30-60%) melhora a transferência de calor uniforme durante o resfriamento."
-                    else:
-                        if 'quebra no resfriamento' in defeito_lower or 'quebra teste impacto' in defeito_lower:
-                            return "ℹ️ **Correlação fraca:** Umidade não parece ser o principal fator para este defeito. Priorize análise de temperatura e tempo de resfriamento."
-                        else:
-                            return "ℹ️ **Correlação fraca:** Umidade tem impacto limitado neste tipo de defeito."
+                # Criar gráfico
+                fig, ax1 = plt.subplots(figsize=(14, 6), facecolor=THEME['bg_card'])
+                apply_chart_style(ax1, fig, f"{defeito_selecionado} vs Parâmetros de Processo", 
+                                  xlabel="Data", ylabel="Quantidade de Defeitos", accent=THEME['accent_red'])
                 
-                # Observações para TEMPERATURA MEIO
-                elif 'temperatura' in parametro_lower or 'meio' in parametro_lower:
-                    if corr_valor > 0.5:
-                        if 'quebra no resfriamento' in defeito_lower or 'quebra teste impacto' in defeito_lower:
-                            return "⚠️ **Temperatura muito alta** pode estar causando tensões residuais excessivas. Considere reduzir temperatura do forno em 5-10°C."
-                        elif 'estourou após furar' in defeito_lower:
-                            return "⚠️ **Temperatura alta** pode estar fragilizando o vidro na região do furo. Verifique distribuição de temperatura na peça."
-                        else:
-                            return "⚠️ **Correlação positiva:** Temperaturas mais altas aumentam este defeito. Reduza gradualmente a temperatura e monitore o impacto."
-                    elif corr_valor < -0.5:
-                        if 'quebra no resfriamento' in defeito_lower or 'quebra teste impacto' in defeito_lower:
-                            return "✅ **Temperatura muito baixa** pode estar causando têmpera insuficiente. Aumente temperatura em 5-10°C e verifique resultado."
-                        else:
-                            return "✅ **Correlação negativa:** Temperaturas mais altas reduzem este defeito. Considere operar no limite superior da faixa especificada."
-                    else:
-                        return "ℹ️ **Correlação moderada:** Temperatura tem influência, mas não é o fator dominante. Analise também tempo de residência e resfriamento."
+                # Barras - defeitos
+                bars = ax1.bar(df_diario['DATA'], df_diario[col_defeito], 
+                               color=THEME['accent_red'], alpha=0.5, width=0.8, label=defeito_selecionado)
                 
-                # Observações para TEMPO C2
-                elif 'tempo' in parametro_lower or 'c2' in parametro_lower:
-                    if corr_valor > 0.5:
-                        if 'quebra no resfriamento' in defeito_lower or 'quebra teste impacto' in defeito_lower:
-                            return "⚠️ **Tempo de residência muito longo** pode estar superaquecendo o vidro. Reduza o tempo gradualmente."
-                        elif 'ovalizada' in defeito_lower:
-                            return "⚠️ **Tempo excessivo** pode estar causando deformação (ovalização) por amolecimento excessivo do vidro."
-                        else:
-                            return "⚠️ **Correlação positiva:** Tempos mais longos aumentam este defeito. Reduza o tempo de residência no forno."
-                    elif corr_valor < -0.5:
-                        if 'quebra teste impacto' in defeito_lower:
-                            return "✅ **Tempo insuficiente** para têmpera adequada. Aumente o tempo de residência para garantir aquecimento uniforme."
-                        elif 'furada e não fraturou' in defeito_lower:
-                            return "⚠️ **Tempo curto** pode resultar em têmpera incompleta, reduzindo a fragmentação. Aumente tempo ou temperatura."
-                        else:
-                            return "✅ **Correlação negativa:** Tempos mais longos reduzem este defeito. Considere operar com maior tempo de residência."
-                    else:
-                        return "ℹ️ **Correlação moderada:** Tempo tem influência secundária. Priorize ajuste de temperatura primeiro."
+                # Adicionar valores nas barras
+                for bar, val in zip(bars, df_diario[col_defeito]):
+                    if val > 0:
+                        ax1.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.3, 
+                                str(int(val)), ha='center', va='bottom', fontsize=7, color=THEME['accent_red'])
                 
-                return "🔍 Nenhuma correlação forte identificada. Continue monitorando outros parâmetros."
-            
-            # Exibir correlações em cards
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
+                ax1.set_ylabel('Quantidade de Defeitos', color=THEME['accent_red'])
+                ax1.tick_params(axis='y', labelcolor=THEME['accent_red'])
+                
+                # Eixo secundário - parâmetros
+                ax2 = ax1.twinx()
+                
+                # Linha 1: Temperatura Meio
                 if 'MEIO' in df_diario.columns:
-                    corr_temp = df_diario[col_defeito].corr(df_diario['MEIO'])
-                    cor_temp = corr_temp if pd.notna(corr_temp) else 0
-                    delta_temp = "📈" if cor_temp > 0 else "📉" if cor_temp < 0 else "➡️"
-                    st.metric(f"🌡️ vs Temp. Meio", f"{cor_temp:.2f}", delta_temp)
-                    
-                    with st.expander("🔍 Análise", expanded=False):
-                        obs_temp = get_observacao(defeito_selecionado, "Temperatura Meio", cor_temp)
-                        st.markdown(obs_temp)
-            
-            with col2:
+                    ax2.plot(df_diario['DATA'], df_diario['MEIO'], 
+                            color=THEME['accent_orange'], marker='o', markersize=4, linewidth=2, 
+                            linestyle='-', label='🌡️ Temp. Meio (°C)')
+                
+                # Linha 2: Humidade C4
                 if 'C4' in df_diario.columns:
-                    corr_hum = df_diario[col_defeito].corr(df_diario['C4'])
-                    cor_hum = corr_hum if pd.notna(corr_hum) else 0
-                    delta_hum = "📈" if cor_hum > 0 else "📉" if cor_hum < 0 else "➡️"
-                    st.metric(f"💧 vs Humidade C4", f"{cor_hum:.2f}", delta_hum)
-                    
-                    with st.expander("🔍 Análise", expanded=False):
-                        obs_hum = get_observacao(defeito_selecionado, "Humidade C4", cor_hum)
-                        st.markdown(obs_hum)
-            
-            with col3:
+                    ax2.plot(df_diario['DATA'], df_diario['C4'], 
+                            color=THEME['accent_cyan'], marker='s', markersize=4, linewidth=2, 
+                            linestyle='--', label='💧 Humidade C4 (%)')
+                
+                # Linha 3: Tempo C2
                 if 'C2' in df_diario.columns:
-                    corr_tempo = df_diario[col_defeito].corr(df_diario['C2'])
-                    cor_tempo = corr_tempo if pd.notna(corr_tempo) else 0
-                    delta_tempo = "📈" if cor_tempo > 0 else "📉" if cor_tempo < 0 else "➡️"
-                    st.metric(f"⏱️ vs Tempo C2", f"{cor_tempo:.2f}", delta_tempo)
+                    ax2.plot(df_diario['DATA'], df_diario['C2'], 
+                            color=THEME['accent_lime'], marker='^', markersize=4, linewidth=2, 
+                            linestyle='-.', label='⏱️ Tempo C2 (s)')
+                
+                ax2.set_ylabel('Valores dos Parâmetros', color=THEME['text_primary'])
+                ax2.tick_params(axis='y', labelcolor=THEME['text_primary'])
+                
+                # Legendas combinadas
+                lines1, labels1 = ax1.get_legend_handles_labels()
+                lines2, labels2 = ax2.get_legend_handles_labels()
+                ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left', fontsize=8, 
+                          framealpha=0.9, facecolor=THEME['bg_card'])
+                
+                plt.setp(ax1.xaxis.get_majorticklabels(), rotation=35, ha='right', fontsize=8)
+                fig.tight_layout()
+                st.pyplot(fig)
+                plt.close(fig)
+                
+                # ── ESTATÍSTICAS DE CORRELAÇÃO COM ANÁLISE INTELIGENTE ──
+                st.markdown("#### 📊 Correlações com Análise Contextual")
+                
+                # Dicionário de observações específicas por tipo de defeito e parâmetro
+                def get_observacao(defeito_nome, parametro, corr_valor):
+                    """Retorna observação contextual baseada no defeito e correlação"""
                     
-                    with st.expander("🔍 Análise", expanded=False):
-                        obs_tempo = get_observacao(defeito_selecionado, "Tempo C2", cor_tempo)
-                        st.markdown(obs_tempo)
-            
-            # Total do defeito selecionado
-            total_defeito = int(df_diario[col_defeito].sum())
-            st.info(f"📋 **Total de '{defeito_selecionado}' no período:** {total_defeito} ocorrências")
-            
-            # ── RESUMO EXECUTIVO COM RECOMENDAÇÕES ──
-            st.markdown("#### 🎯 Resumo Executivo e Recomendações")
-            
-            # Coletar todas as correlações
-            correlacoes = {}
-            if 'MEIO' in df_diario.columns:
-                correlacoes['Temperatura Meio'] = df_diario[col_defeito].corr(df_diario['MEIO'])
-            if 'C4' in df_diario.columns:
-                correlacoes['Humidade C4'] = df_diario[col_defeito].corr(df_diario['C4'])
-            if 'C2' in df_diario.columns:
-                correlacoes['Tempo C2'] = df_diario[col_defeito].corr(df_diario['C2'])
-            
-            # Filtrar correlações válidas
-            correlacoes_validas = {k: v for k, v in correlacoes.items() if pd.notna(v)}
-            
-            if correlacoes_validas:
-                # Encontrar fator mais influente (maior |correlação|)
-                fator_mais_influente = max(correlacoes_validas.items(), key=lambda x: abs(x[1]))
+                    # Normaliza o nome do defeito
+                    defeito_lower = defeito_nome.lower()
+                    parametro_lower = parametro.lower()
+                    
+                    # Observações para HUMIDADE (C4)
+                    if 'humidade' in parametro_lower or 'c4' in parametro_lower:
+                        if corr_valor > 0.5:
+                            return "⚠️ **Contradição teórica:** A literatura indica que umidade alta é prejudicial, mas seus dados mostram o oposto. Investigue se: (a) a faixa de umidade está abaixo do limiar crítico; (b) a umidade está compensando resfriamento excessivo; (c) há correlação espúria com outra variável (ex: estação do ano)."
+                        elif corr_valor < -0.5:
+                            if 'quebra no resfriamento' in defeito_lower or 'quebra teste impacto' in defeito_lower:
+                                return "✅ **Coerente com teoria:** Umidade mais alta suaviza o choque térmico, reduzindo quebras por resfriamento abrupto. A umidade atua como amortecedor térmico natural."
+                            elif 'estourou após furar' in defeito_lower:
+                                return "⚠️ **Atenção:** Maior umidade reduzindo este defeito sugere que a peça pode estar chegando muito seca/trincada ao furo. Considere verificar lubrificação da furadeira."
+                            else:
+                                return "✅ **Efeito benéfico:** Maior umidade reduz este defeito. Possível explicação: a umidade moderada (30-60%) melhora a transferência de calor uniforme durante o resfriamento."
+                        else:
+                            if 'quebra no resfriamento' in defeito_lower or 'quebra teste impacto' in defeito_lower:
+                                return "ℹ️ **Correlação fraca:** Umidade não parece ser o principal fator para este defeito. Priorize análise de temperatura e tempo de resfriamento."
+                            else:
+                                return "ℹ️ **Correlação fraca:** Umidade tem impacto limitado neste tipo de defeito."
+                    
+                    # Observações para TEMPERATURA MEIO
+                    elif 'temperatura' in parametro_lower or 'meio' in parametro_lower:
+                        if corr_valor > 0.5:
+                            if 'quebra no resfriamento' in defeito_lower or 'quebra teste impacto' in defeito_lower:
+                                return "⚠️ **Temperatura muito alta** pode estar causando tensões residuais excessivas. Considere reduzir temperatura do forno em 5-10°C."
+                            elif 'estourou após furar' in defeito_lower:
+                                return "⚠️ **Temperatura alta** pode estar fragilizando o vidro na região do furo. Verifique distribuição de temperatura na peça."
+                            else:
+                                return "⚠️ **Correlação positiva:** Temperaturas mais altas aumentam este defeito. Reduza gradualmente a temperatura e monitore o impacto."
+                        elif corr_valor < -0.5:
+                            if 'quebra no resfriamento' in defeito_lower or 'quebra teste impacto' in defeito_lower:
+                                return "✅ **Temperatura muito baixa** pode estar causando têmpera insuficiente. Aumente temperatura em 5-10°C e verifique resultado."
+                            else:
+                                return "✅ **Correlação negativa:** Temperaturas mais altas reduzem este defeito. Considere operar no limite superior da faixa especificada."
+                        else:
+                            return "ℹ️ **Correlação moderada:** Temperatura tem influência, mas não é o fator dominante. Analise também tempo de residência e resfriamento."
+                    
+                    # Observações para TEMPO C2
+                    elif 'tempo' in parametro_lower or 'c2' in parametro_lower:
+                        if corr_valor > 0.5:
+                            if 'quebra no resfriamento' in defeito_lower or 'quebra teste impacto' in defeito_lower:
+                                return "⚠️ **Tempo de residência muito longo** pode estar superaquecendo o vidro. Reduza o tempo gradualmente."
+                            elif 'ovalizada' in defeito_lower:
+                                return "⚠️ **Tempo excessivo** pode estar causando deformação (ovalização) por amolecimento excessivo do vidro."
+                            else:
+                                return "⚠️ **Correlação positiva:** Tempos mais longos aumentam este defeito. Reduza o tempo de residência no forno."
+                        elif corr_valor < -0.5:
+                            if 'quebra teste impacto' in defeito_lower:
+                                return "✅ **Tempo insuficiente** para têmpera adequada. Aumente o tempo de residência para garantir aquecimento uniforme."
+                            elif 'furada e não fraturou' in defeito_lower:
+                                return "⚠️ **Tempo curto** pode resultar em têmpera incompleta, reduzindo a fragmentação. Aumente tempo ou temperatura."
+                            else:
+                                return "✅ **Correlação negativa:** Tempos mais longos reduzem este defeito. Considere operar com maior tempo de residência."
+                        else:
+                            return "ℹ️ **Correlação moderada:** Tempo tem influência secundária. Priorize ajuste de temperatura primeiro."
+                    
+                    return "🔍 Nenhuma correlação forte identificada. Continue monitorando outros parâmetros."
                 
-                st.markdown(f"""
-                <div style="background: {THEME['bg_card2']}; padding: 15px; border-radius: 10px; margin: 10px 0;">
-                    <strong>📌 Fator mais influente para "{defeito_selecionado}":</strong> {fator_mais_influente[0]} 
-                    (correlação {fator_mais_influente[1]:.2f})
-                </div>
-                """, unsafe_allow_html=True)
+                # Exibir correlações em cards
+                col1, col2, col3 = st.columns(3)
                 
-                # Recomendações baseadas nas correlações
-                recomendacoes = []
+                with col1:
+                    if 'MEIO' in df_diario.columns:
+                        corr_temp = df_diario[col_defeito].corr(df_diario['MEIO'])
+                        cor_temp = corr_temp if pd.notna(corr_temp) else 0
+                        delta_temp = "📈" if cor_temp > 0 else "📉" if cor_temp < 0 else "➡️"
+                        st.metric(f"🌡️ vs Temp. Meio", f"{cor_temp:.2f}", delta_temp)
+                        
+                        with st.expander("🔍 Análise", expanded=False):
+                            obs_temp = get_observacao(defeito_selecionado, "Temperatura Meio", cor_temp)
+                            st.markdown(obs_temp)
                 
-                # Recomendação para Temperatura
-                if 'Temperatura Meio' in correlacoes_validas:
-                    corr_temp = correlacoes_validas['Temperatura Meio']
-                    if corr_temp > 0.5:
-                        recomendacoes.append("🔧 **Ação:** Reduza a temperatura do forno em 5-10°C e monitore o impacto neste defeito.")
-                    elif corr_temp < -0.5:
-                        recomendacoes.append("🔧 **Ação:** Aumente a temperatura do forno em 5-10°C e monitore a redução deste defeito.")
+                with col2:
+                    if 'C4' in df_diario.columns:
+                        corr_hum = df_diario[col_defeito].corr(df_diario['C4'])
+                        cor_hum = corr_hum if pd.notna(corr_hum) else 0
+                        delta_hum = "📈" if cor_hum > 0 else "📉" if cor_hum < 0 else "➡️"
+                        st.metric(f"💧 vs Humidade C4", f"{cor_hum:.2f}", delta_hum)
+                        
+                        with st.expander("🔍 Análise", expanded=False):
+                            obs_hum = get_observacao(defeito_selecionado, "Humidade C4", cor_hum)
+                            st.markdown(obs_hum)
                 
-                # Recomendação para Humidade
-                if 'Humidade C4' in correlacoes_validas:
-                    corr_hum = correlacoes_validas['Humidade C4']
-                    if corr_hum > 0.5:
-                        recomendacoes.append("🌧️ **Ação:** Reduza a umidade ambiente (use desumidificadores) abaixo de 50% para diminuir este defeito.")
-                    elif corr_hum < -0.5:
-                        recomendacoes.append("💧 **Ação:** A umidade mais alta está reduzindo este defeito. Mantenha umidade entre 40-60% e evite ambientes muito secos (<30%).")
+                with col3:
+                    if 'C2' in df_diario.columns:
+                        corr_tempo = df_diario[col_defeito].corr(df_diario['C2'])
+                        cor_tempo = corr_tempo if pd.notna(corr_tempo) else 0
+                        delta_tempo = "📈" if cor_tempo > 0 else "📉" if cor_tempo < 0 else "➡️"
+                        st.metric(f"⏱️ vs Tempo C2", f"{cor_tempo:.2f}", delta_tempo)
+                        
+                        with st.expander("🔍 Análise", expanded=False):
+                            obs_tempo = get_observacao(defeito_selecionado, "Tempo C2", cor_tempo)
+                            st.markdown(obs_tempo)
                 
-                # Recomendação para Tempo
-                if 'Tempo C2' in correlacoes_validas:
-                    corr_tempo = correlacoes_validas['Tempo C2']
-                    if corr_tempo > 0.5:
-                        recomendacoes.append("⏱️ **Ação:** Reduza o tempo de residência no forno em 10-15% e monitore o efeito.")
-                    elif corr_tempo < -0.5:
-                        recomendacoes.append("⏱️ **Ação:** Aumente o tempo de residência no forno para garantir têmpera adequada.")
+                # Total do defeito selecionado
+                total_defeito = int(df_diario[col_defeito].sum())
+                st.info(f"📋 **Total de '{defeito_selecionado}' no período:** {total_defeito} ocorrências")
                 
-                if recomendacoes:
-                    st.markdown("#### 🔧 Recomendações de Ajuste:")
-                    for rec in recomendacoes:
-                        st.markdown(rec)
+                # ── RESUMO EXECUTIVO COM RECOMENDAÇÕES ──
+                st.markdown("#### 🎯 Resumo Executivo e Recomendações")
+                
+                # Coletar todas as correlações
+                correlacoes = {}
+                if 'MEIO' in df_diario.columns:
+                    correlacoes['Temperatura Meio'] = df_diario[col_defeito].corr(df_diario['MEIO'])
+                if 'C4' in df_diario.columns:
+                    correlacoes['Humidade C4'] = df_diario[col_defeito].corr(df_diario['C4'])
+                if 'C2' in df_diario.columns:
+                    correlacoes['Tempo C2'] = df_diario[col_defeito].corr(df_diario['C2'])
+                
+                # Filtrar correlações válidas
+                correlacoes_validas = {k: v for k, v in correlacoes.items() if pd.notna(v)}
+                
+                if correlacoes_validas:
+                    # Encontrar fator mais influente (maior |correlação|)
+                    fator_mais_influente = max(correlacoes_validas.items(), key=lambda x: abs(x[1]))
+                    
+                    st.markdown(f"""
+                    <div style="background: {THEME['bg_card2']}; padding: 15px; border-radius: 10px; margin: 10px 0;">
+                        <strong>📌 Fator mais influente para "{defeito_selecionado}":</strong> {fator_mais_influente[0]} 
+                        (correlação {fator_mais_influente[1]:.2f})
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # Recomendações baseadas nas correlações
+                    recomendacoes = []
+                    
+                    # Recomendação para Temperatura
+                    if 'Temperatura Meio' in correlacoes_validas:
+                        corr_temp = correlacoes_validas['Temperatura Meio']
+                        if corr_temp > 0.5:
+                            recomendacoes.append("🔧 **Ação:** Reduza a temperatura do forno em 5-10°C e monitore o impacto neste defeito.")
+                        elif corr_temp < -0.5:
+                            recomendacoes.append("🔧 **Ação:** Aumente a temperatura do forno em 5-10°C e monitore a redução deste defeito.")
+                    
+                    # Recomendação para Humidade
+                    if 'Humidade C4' in correlacoes_validas:
+                        corr_hum = correlacoes_validas['Humidade C4']
+                        if corr_hum > 0.5:
+                            recomendacoes.append("🌧️ **Ação:** Reduza a umidade ambiente (use desumidificadores) abaixo de 50% para diminuir este defeito.")
+                        elif corr_hum < -0.5:
+                            recomendacoes.append("💧 **Ação:** A umidade mais alta está reduzindo este defeito. Mantenha umidade entre 40-60% e evite ambientes muito secos (<30%).")
+                    
+                    # Recomendação para Tempo
+                    if 'Tempo C2' in correlacoes_validas:
+                        corr_tempo = correlacoes_validas['Tempo C2']
+                        if corr_tempo > 0.5:
+                            recomendacoes.append("⏱️ **Ação:** Reduza o tempo de residência no forno em 10-15% e monitore o efeito.")
+                        elif corr_tempo < -0.5:
+                            recomendacoes.append("⏱️ **Ação:** Aumente o tempo de residência no forno para garantir têmpera adequada.")
+                    
+                    if recomendacoes:
+                        st.markdown("#### 🔧 Recomendações de Ajuste:")
+                        for rec in recomendacoes:
+                            st.markdown(rec)
+                    else:
+                        st.markdown("🔸 Nenhuma correlação forte (>0.5 ou <-0.5) identificada. O processo parece estável para este defeito.")
                 else:
-                    st.markdown("🔸 Nenhuma correlação forte (>0.5 ou <-0.5) identificada. O processo parece estável para este defeito.")
-            else:
-                st.markdown("🔸 Dados insuficientes para análise de correlação.")
-            
-            # Aviso sobre limitações da análise
-            with st.expander("ℹ️ Sobre esta análise", expanded=False):
-                st.markdown("""
-                **Limitações e cuidados:**
-                - Correlação não implica causalidade. Uma correlação forte pode indicar que duas variáveis mudam juntas, mas não necessariamente que uma causa a outra.
-                - Podem existir **variáveis de confundimento** (ex: estação do ano, matéria-prima, operador) que influenciam tanto o defeito quanto o parâmetro.
-                - **Intervalo de confiança:** Correlações baseadas em poucos pontos (menos de 10 dias) têm baixa confiabilidade estatística.
-                - **Faixa de operação:** As correlações são válidas apenas dentro da faixa de dados observada. Extrapolações podem ser perigosas.
+                    st.markdown("🔸 Dados insuficientes para análise de correlação.")
                 
-                **Recomendação:** Use estas análises como **guia para investigação**, não como verdade absoluta. Sempre valide ajustes com testes controlados.
-                """)
+                # Aviso sobre limitações da análise
+                with st.expander("ℹ️ Sobre esta análise", expanded=False):
+                    st.markdown("""
+                    **Limitações e cuidados:**
+                    - Correlação não implica causalidade. Uma correlação forte pode indicar que duas variáveis mudam juntas, mas não necessariamente que uma causa a outra.
+                    - Podem existir **variáveis de confundimento** (ex: estação do ano, matéria-prima, operador) que influenciam tanto o defeito quanto o parâmetro.
+                    - **Intervalo de confiança:** Correlações baseadas em poucos pontos (menos de 10 dias) têm baixa confiabilidade estatística.
+                    - **Faixa de operação:** As correlações são válidas apenas dentro da faixa de dados observada. Extrapolações podem ser perigosas.
+                    
+                    **Recomendação:** Use estas análises como **guia para investigação**, não como verdade absoluta. Sempre valide ajustes com testes controlados.
+                    """)
+            else:
+                st.info("Nenhum defeito com dados suficientes para análise.")
         else:
-            st.info("Nenhum defeito com dados suficientes para análise.")
+            st.info("Dados insuficientes para análise diária (mínimo 2 dias).")
     else:
-        st.info("Dados insuficientes para análise diária (mínimo 2 dias).")
-else:
-    st.info("Sem dados disponíveis para análise.")
+        st.info("Sem dados disponíveis para análise.")
