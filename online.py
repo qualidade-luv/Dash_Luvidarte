@@ -29,6 +29,7 @@ ID_PLANILHA_TEMPERA = '1GJegUHosaQLEJVMCH6QVuKjSjuaxrWkgzNEr9vM5Yio'
 # Configurações do AR no Google Sheets
 ID_PLANILHA_AR = '12pz6EE1KDo41szDyGEyTyK27mAOb9F1FyU77_M1kL0o'
 ABA_AR = 'AR'
+ABA_RM = 'RM'  # Esta linha deve existir
 EMAIL_SERVICE_ACCOUNT = 'script-atualizacao@dashboard-gerencial-492613.iam.gserviceaccount.com'
 
 PRACAS_NAO_SOPRO = ['GIL', 'GILSIMAR', 'ED CARLOS', 'EDI CARLOS', 'ROBÔ 2', 'ROBÔ-2', 'ROBÔ', 'ROBO']
@@ -37,7 +38,8 @@ ABAS = {
     'PRENSADOS': 'TRS_INDUSTRIAL',
     'SOPRO': 'TRS_SOPRO',
     'TÊMPERA': 'TRS_TEMPERA',
-    'AVISO DE REJEIÇÃO': 'AR'
+    'AVISO DE REJEIÇÃO': 'AR',
+    'REQUISIÇÃO MANUTENÇÃO': 'RM'  # NOVA LINHA
 }
 
 # Configurações do Sistema de Aviso de Rejeição (AR)
@@ -100,6 +102,15 @@ def get_horario_brasilia():
     brasilia_offset = timezone(timedelta(hours=-3))
     agora_brasilia = utc_now.astimezone(brasilia_offset)
     return agora_brasilia.strftime('%d/%m/%Y %H:%M')
+    
+# ======================
+# FUNÇÃO PARA HORÁRIO BRASÍLIA (GLOBAL)
+# ======================
+def get_horario_brasilia_obj():
+    from datetime import timezone, timedelta
+    utc_now = datetime.now(timezone.utc)
+    brasilia_offset = timezone(timedelta(hours=-3))
+    return utc_now.astimezone(brasilia_offset)    
 
 # ======================
 # FUNÇÕES AUXILIARES GLOBAIS
@@ -3438,5 +3449,656 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
     </div>
     """, unsafe_allow_html=True)
 
-if aba_selecionada not in ['AVISO DE REJEIÇÃO']:
+   
+# ==================================================================================================
+# REQUISIÇÃO DE MANUTENÇÃO (RM) - VERSÃO CORRIGIDA
+# ==================================================================================================
+elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
+    render_page_header("REQUISIÇÃO DE MANUTENÇÃO", f"MF-001 · Atualizado {get_horario_brasilia()}", THEME['accent_lime'])
+    
+    # Configurações do RM
+    ID_PLANILHA_RM = ID_PLANILHA_AR  # Mesma planilha do AR
+    ABA_RM = 'RM'  # Aba específica para RM
+    
+    # Opções
+    OPCOES_CARATER_RM = [
+        "1 - Risco Físico/Segurança",
+        "2 - Impacto Imediato na Produção", 
+        "3 - Impacto a Longo Prazo",
+        "4 - Melhoria/Preventiva"
+    ]
+    OPCOES_SETORES_RM = ["Produção", "Corte", "Vidraria", "Rodaria", "Embalagem", "Expedição", "Qualidade", "Ferramentaria", "Manutenção", "Outros"]
+    OPCOES_SETORES2_RM = ["Elétrica", "Mecânica", "Informática", "Ferramentaria", "Manutenção Geral"]
+    OPCOES_STATUS_RM = ["ABERTO", "EM ANDAMENTO", "FINALIZADO", "CANCELADO"]
+    
+    # Criar diretórios RM
+    CAMINHO_PDF_RM = r"\\srv-luvidarte\dados\DOC\Engenharia_Luvidarte\SGQ - LUVIDARTE - ALTERADAS\1-REQUISIÇÃO DE MANUTENÇÃO\1-PDF"
+    CAMINHO_PDF_RELATORIO_RM = r"\\srv-luvidarte\dados\DOC\Engenharia_Luvidarte\SGQ - LUVIDARTE - ALTERADAS\1-REQUISIÇÃO DE MANUTENÇÃO\2-PDF"
+    os.makedirs(CAMINHO_PDF_RM, exist_ok=True)
+    os.makedirs(CAMINHO_PDF_RELATORIO_RM, exist_ok=True)
+    
+    @dataclass
+    class RegistroRM:
+        id: Optional[int] = None
+        data: Optional[datetime] = None
+        hora: str = ""
+        emissor: str = ""
+        equipamento: str = ""
+        setor: str = ""
+        caracter: str = ""
+        setor2: str = ""
+        problema: str = ""
+        trabalho: str = ""
+        analise: str = ""
+        status: str = "ABERTO"
+        data_finalizacao: Optional[datetime] = None
+        emissor2: str = ""
+    
+    def obter_proximo_id_rm():
+        try:
+            client = get_gspread_client()
+            if client is None:
+                return 1
+            sheet = client.open_by_key(ID_PLANILHA_RM).worksheet(ABA_RM)
+            todos_dados = sheet.get_all_values()
+            if len(todos_dados) < 2:
+                return 1
+            ids = []
+            for row in todos_dados[1:]:
+                if row and row[0].strip():
+                    try:
+                        ids.append(int(row[0]))
+                    except:
+                        pass
+            return max(ids) + 1 if ids else 1
+        except:
+            return 1
+    
+    def carregar_registros_rm(filtros: Dict[str, Any] = None) -> List[RegistroRM]:
+        registros = []
+        try:
+            client = get_gspread_client()
+            if client is None:
+                st.error("❌ Não foi possível conectar ao Google Sheets")
+                return registros
+            
+            # Abrir a aba RM
+            spreadsheet = client.open_by_key(ID_PLANILHA_RM)
+            
+            # Verificar se a aba existe
+            try:
+                sheet = spreadsheet.worksheet(ABA_RM)
+            except Exception as e:
+                st.error(f"❌ Aba '{ABA_RM}' não encontrada! Verifique se o nome da aba está correto.")
+                return registros
+            
+            # Obter todos os dados
+            todos_dados = sheet.get_all_values()
+            
+            if len(todos_dados) < 2:
+                st.warning(f"⚠️ Nenhum dado encontrado na aba '{ABA_RM}'. Adicione pelo menos uma linha de dados.")
+                return registros
+            
+            # Processar linhas (pular cabeçalho)
+            for idx, row in enumerate(todos_dados[1:], start=2):
+                if len(row) < 14:
+                    continue
+                
+                try:
+                    # Mapear colunas conforme sua planilha
+                    # Coluna A (0): ID
+                    # Coluna B (1): DATA
+                    # Coluna C (2): HORA
+                    # Coluna D (3): EMISSOR
+                    # Coluna E (4): EQUIPAMENTO
+                    # Coluna F (5): SETOR
+                    # Coluna G (6): CARÁTER
+                    # Coluna H (7): SETOR2
+                    # Coluna I (8): PROBLEMA
+                    # Coluna J (9): TRABALHO
+                    # Coluna K (10): ANÁLISE
+                    # Coluna L (11): STATUS
+                    # Coluna M (12): DATA FINALIZAÇÃO
+                    # Coluna N (13): EMISSOR2
+                    
+                    registro = RegistroRM()
+                    registro.id = int(row[0]) if row[0].strip() else None
+                    registro.data = converter_data_br(row[1])
+                    registro.hora = row[2] if len(row) > 2 else ""
+                    registro.emissor = row[3] if len(row) > 3 else ""
+                    registro.equipamento = row[4] if len(row) > 4 else ""
+                    registro.setor = row[5] if len(row) > 5 else ""
+                    registro.caracter = row[6] if len(row) > 6 else ""
+                    registro.setor2 = row[7] if len(row) > 7 else ""
+                    registro.problema = row[8] if len(row) > 8 else ""
+                    registro.trabalho = row[9] if len(row) > 9 else ""
+                    registro.analise = row[10] if len(row) > 10 else ""
+                    registro.status = row[11] if len(row) > 11 else "ABERTO"
+                    registro.data_finalizacao = converter_data_br(row[12]) if len(row) > 12 else None
+                    registro.emissor2 = row[13] if len(row) > 13 else ""
+                    
+                    # Aplicar filtros
+                    if filtros:
+                        incluir = True
+                        if filtros.get('id') and filtros['id'] != registro.id:
+                            incluir = False
+                        if filtros.get('equipamento') and filtros['equipamento'].lower() not in registro.equipamento.lower():
+                            incluir = False
+                        if filtros.get('status') and filtros['status'] != registro.status:
+                            incluir = False
+                    else:
+                        incluir = True
+                    
+                    if incluir and registro.id is not None:
+                        registros.append(registro)
+                        
+                except Exception as e:
+                    st.warning(f"Erro ao processar linha {idx}: {e}")
+                    continue
+            
+            # Ordenar por ID decrescente (mais recente primeiro)
+            registros.sort(key=lambda x: x.id if x.id else 0, reverse=True)
+            
+            if registros:
+                st.success(f"✅ {len(registros)} registro(s) carregado(s)")
+            
+        except Exception as e:
+            st.error(f"Erro ao carregar registros RM: {e}")
+            traceback.print_exc()
+        
+        return registros
+    
+    def salvar_registro_rm(registro: RegistroRM, eh_alteracao: bool = False) -> bool:
+        try:
+            client = get_gspread_client()
+            if client is None:
+                st.error("❌ Não foi possível conectar ao Google Sheets")
+                return False
+            
+            sheet = client.open_by_key(ID_PLANILHA_RM).worksheet(ABA_RM)
+            
+            dados = [
+                str(registro.id) if registro.id else "",
+                registro.data.strftime("%d/%m/%Y") if registro.data else "",
+                registro.hora,
+                registro.emissor,
+                registro.equipamento,
+                registro.setor,
+                registro.caracter,
+                registro.setor2,
+                registro.problema,
+                registro.trabalho,
+                registro.analise,
+                registro.status,
+                registro.data_finalizacao.strftime("%d/%m/%Y") if registro.data_finalizacao else "",
+                registro.emissor2
+            ]
+            
+            if eh_alteracao:
+                cell = sheet.find(str(registro.id), in_column=1)
+                if cell:
+                    row_num = cell.row
+                    for col, valor in enumerate(dados, start=1):
+                        sheet.update_cell(row_num, col, valor)
+                else:
+                    sheet.append_row(dados)
+            else:
+                sheet.insert_row(dados, index=2)
+            
+            return True
+            
+        except Exception as e:
+            st.error(f"Erro ao salvar registro RM: {e}")
+            return False
+    
+    def excluir_registro_rm(id: int) -> bool:
+        try:
+            client = get_gspread_client()
+            if client is None:
+                st.error("❌ Não foi possível conectar ao Google Sheets")
+                return False
+            
+            sheet = client.open_by_key(ID_PLANILHA_RM).worksheet(ABA_RM)
+            cell = sheet.find(str(id), in_column=1)
+            if cell:
+                sheet.delete_rows(cell.row)
+                return True
+            return False
+            
+        except Exception as e:
+            st.error(f"Erro ao excluir registro RM: {e}")
+            return False
+    
+    def gerar_pdf_rm(registro: RegistroRM) -> Optional[bytes]:
+        try:
+            from reportlab.lib.pagesizes import A4
+            from reportlab.lib import colors
+            from reportlab.lib.units import cm
+            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            
+            buffer = io.BytesIO()
+            doc = SimpleDocTemplate(buffer, pagesize=A4)
+            elementos = []
+            styles = getSampleStyleSheet()
+            styleN = styles["Normal"]
+            
+            elementos.append(Paragraph("<b>REQUISIÇÃO DE MANUTENÇÃO</b>", ParagraphStyle(name='Titulo', parent=styles["Heading1"], fontSize=16, alignment=1, spaceAfter=12)))
+            elementos.append(Paragraph("<b>MF-001 - Luvidarte</b>", ParagraphStyle(name='Subtitulo', parent=styles["Heading2"], fontSize=12, alignment=1, spaceAfter=24)))
+            
+            data_str = registro.data.strftime("%d/%m/%Y") if registro.data else ""
+            data_fim_str = registro.data_finalizacao.strftime("%d/%m/%Y") if registro.data_finalizacao else ""
+            
+            tabela_dados = Table([
+                ["ID:", registro.id, "Data:", data_str, "Hora:", registro.hora],
+                ["Emissor:", registro.emissor, "Equipamento:", registro.equipamento, "Setor:", registro.setor],
+                ["Caráter:", registro.caracter, "Setor Destino:", registro.setor2, "Status:", registro.status],
+                ["Emissor Técnico:", registro.emissor2, "Data Finalização:", data_fim_str, "", ""],
+            ], colWidths=[2.5*cm, 4*cm, 2.5*cm, 4*cm, 2*cm, 2.5*cm])
+            
+            tabela_dados.setStyle(TableStyle([
+                ("GRID", (0,0), (-1,-1), 0.5, colors.black),
+                ("BACKGROUND", (0,0), (-1,0), colors.lightgrey),
+                ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+                ("ALIGN", (0,0), (-1,-1), "LEFT"),
+                ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+                ("PADDING", (0,0), (-1,-1), 6),
+            ]))
+            elementos.append(tabela_dados)
+            elementos.append(Spacer(1, 24))
+            
+            elementos.append(Paragraph("<b>DESCRIÇÃO DO PROBLEMA:</b>", ParagraphStyle(name='SubtituloSecao', parent=styleN, fontSize=12, spaceAfter=6)))
+            elementos.append(Paragraph(registro.problema or "-", styleN))
+            elementos.append(Spacer(1, 24))
+            
+            elementos.append(Paragraph("<b>TRABALHO REALIZADO:</b>", ParagraphStyle(name='SubtituloSecao', parent=styleN, fontSize=12, spaceAfter=6)))
+            elementos.append(Paragraph(registro.trabalho or "_________________________", styleN))
+            elementos.append(Spacer(1, 24))
+            
+            elementos.append(Paragraph("<b>ANÁLISE DO SERVIÇO:</b>", ParagraphStyle(name='SubtituloSecao', parent=styleN, fontSize=12, spaceAfter=6)))
+            elementos.append(Paragraph(registro.analise or "_________________________", styleN))
+            elementos.append(Spacer(1, 24))
+            
+            elementos.append(Paragraph("<b>ASSINATURAS:</b>", ParagraphStyle(name='SubtituloSecao', parent=styleN, fontSize=12, spaceAfter=6)))
+            tabela_assinatura = Table([
+                ["Solicitante", "Responsável Técnico", "Conferência Qualidade"],
+                ["_________________________", "_________________________", "_________________________"],
+                ["Data: __/__/____", "Data: __/__/____", "Data: __/__/____"]
+            ], colWidths=[5.5*cm, 5.5*cm, 5.5*cm])
+            tabela_assinatura.setStyle(TableStyle([
+                ("ALIGN", (0,0), (-1,-1), "CENTER"),
+                ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+                ("PADDING", (0,0), (-1,-1), 10),
+                ("FONTNAME", (0,0), (0,0), "Helvetica-Bold"),
+                ("FONTNAME", (1,0), (1,0), "Helvetica-Bold"),
+                ("FONTNAME", (2,0), (2,0), "Helvetica-Bold"),
+            ]))
+            elementos.append(tabela_assinatura)
+            
+            elementos.append(Spacer(1, 36))
+            elementos.append(Paragraph(f"Documento gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}", ParagraphStyle(name='Rodape', parent=styleN, fontSize=8, alignment=2)))
+            
+            doc.build(elementos)
+            buffer.seek(0)
+            return buffer.getvalue()
+        except Exception as e:
+            st.error(f"Erro ao gerar PDF RM: {e}")
+            return None
+    
+    with st.container():
+        st.markdown(f"""
+        <div style="background: linear-gradient(135deg, {THEME['bg_card']} 0%, {THEME['bg_card2']} 100%); padding: 15px 20px; border-radius: 10px; border-left: 4px solid {THEME['accent_lime']}; margin: 20px 0;">
+            <span style="font-size: 20px; margin-right: 10px;">🔧</span>
+            <span style="font-family: 'Rajdhani', sans-serif; font-size: 18px; font-weight: bold; color: {THEME['accent_lime']};">REQUISIÇÃO DE MANUTENÇÃO - MF-001</span>
+            <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: {THEME['text_muted']}; margin-left: 15px;">Sistema de Gestão da Qualidade</span>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        with st.expander("📌 **Tabela de Caráter - Níveis 1 a 4**", expanded=False):
+            st.markdown("""
+            | Nível | Descrição | Ação Recomendada |
+            |-------|-----------|------------------|
+            | 🚨 **1** | **Risco Físico/Segurança** | Risco iminente de acidente ou dano físico. Ação imediata! |
+            | ⚠️ **2** | **Impacto Imediato na Produção** | Parada total ou parcial da produção. Resolver em até 4h |
+            | 📊 **3** | **Impacto a Longo Prazo** | Pode afetar produção futura. Planejar em até 48h |
+            | 🔧 **4** | **Melhoria/Preventiva** | Manutenção programada ou melhoria. Agendar conforme disponibilidade |
+            """)
+        
+        menu_rm = st.radio("Opções:", ["📝 Nova Requisição", "📊 Visualizar Requisições", "🔍 Buscar/Editar/Excluir", "📈 Dashboard RM"], horizontal=True, key="menu_rm_principal")
+        
+        if 'rm_pdf_bytes' not in st.session_state:
+            st.session_state.rm_pdf_bytes = None
+        if 'rm_pdf_nome' not in st.session_state:
+            st.session_state.rm_pdf_nome = None
+        if 'rm_mostrar_pdf' not in st.session_state:
+            st.session_state.rm_mostrar_pdf = False
+        if 'rm_ultimo_registro' not in st.session_state:
+            st.session_state.rm_ultimo_registro = None
+        if 'rm_registro_editando' not in st.session_state:
+            st.session_state.rm_registro_editando = None
+        
+        if menu_rm == "📝 Nova Requisição":
+            st.subheader("Nova Requisição de Manutenção")
+            st.info("⚠️ Data e hora serão preenchidas automaticamente no salvamento (Horário de Brasília)")
+            
+            if st.session_state.rm_mostrar_pdf and st.session_state.rm_pdf_bytes:
+                st.success(f"✅ Requisição salva com sucesso!")
+                if st.session_state.rm_ultimo_registro:
+                    reg = st.session_state.rm_ultimo_registro
+                    with st.expander("📋 Ver detalhes da requisição", expanded=True):
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.write(f"**ID:** {reg.id}")
+                            st.write(f"**Data:** {reg.data.strftime('%d/%m/%Y') if reg.data else '-'}")
+                            st.write(f"**Hora:** {reg.hora}")
+                            st.write(f"**Emissor:** {reg.emissor}")
+                            st.write(f"**Equipamento:** {reg.equipamento}")
+                        with col2:
+                            st.write(f"**Setor:** {reg.setor}")
+                            st.write(f"**Caráter:** {reg.caracter}")
+                            st.write(f"**Status:** {reg.status}")
+                            st.write(f"**Setor Destino:** {reg.setor2}")
+                st.markdown("---")
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.download_button(label="📥 Baixar PDF", data=st.session_state.rm_pdf_bytes, file_name=st.session_state.rm_pdf_nome, mime="application/pdf", use_container_width=True)
+                with col2:
+                    if st.button("📧 Enviar por E-mail", use_container_width=True):
+                        setor_lower = reg.setor2.lower() if reg.setor2 else ""
+                        destinatarios = [EMAIL_CONFIG_AR["usuario"]]
+                        assunto = f"Requisição de Manutenção #{reg.id} - {reg.equipamento}"
+                        corpo = f"""Prezados,\n\nSegue requisição de manutenção #{reg.id}.\n\nEquipamento: {reg.equipamento}\nCaráter: {reg.caracter}\nSetor Destino: {reg.setor2}\n\nAtenciosamente,\nSistema de Gestão - Luvidarte"""
+                        if enviar_email_ar(destinatarios, assunto, corpo, st.session_state.rm_pdf_bytes, st.session_state.rm_pdf_nome):
+                            st.success("📧 E-mail enviado!")
+                        else:
+                            st.error("❌ Erro ao enviar e-mail")
+                with col3:
+                    if st.button("➕ Nova Requisição", use_container_width=True):
+                        st.session_state.rm_pdf_bytes = None
+                        st.session_state.rm_pdf_nome = None
+                        st.session_state.rm_mostrar_pdf = False
+                        st.session_state.rm_ultimo_registro = None
+                        st.rerun()
+            else:
+                with st.form("nova_requisicao_rm"):
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        proximo = obter_proximo_id_rm()
+                        st.info(f"📌 Próximo ID: {proximo}")
+                        usar_auto = st.checkbox("Usar ID automático", value=True)
+                        if usar_auto:
+                            id_reg = proximo
+                            st.text_input("ID", value=str(id_reg), disabled=True)
+                        else:
+                            id_reg = st.number_input("ID", min_value=1, step=1)
+                        emissor = st.text_input("Emissor*")
+                        equipamento = st.text_input("Equipamento*")
+                        setor = st.selectbox("Setor*", OPCOES_SETORES_RM)
+                    with col2:
+                        caracter = st.selectbox("Caráter*", OPCOES_CARATER_RM)
+                        if "1 -" in caracter:
+                            st.error("🚨 **RISCO FÍSICO!** Ação imediata necessária!")
+                        elif "2 -" in caracter:
+                            st.warning("⚠️ **IMPACTO IMEDIATO!** Resolver em até 4h")
+                        elif "3 -" in caracter:
+                            st.info("📊 **Impacto a longo prazo** - Planejar em até 48h")
+                        else:
+                            st.success("🔧 **Melhoria/Preventiva** - Agendar programação")
+                        setor2 = st.selectbox("Setor Destino*", OPCOES_SETORES2_RM)
+                        status = st.selectbox("Status*", OPCOES_STATUS_RM)
+                        data_finalizacao = st.date_input("Data Finalização", datetime.now())
+                    with col3:
+                        problema = st.text_area("Descrição do Problema*", height=120)
+                        trabalho = st.text_area("Trabalho Realizado", height=100)
+                        analise = st.text_area("Análise do Serviço", height=100)
+                        emissor2 = st.text_input("Emissor Técnico")
+                    submitted = st.form_submit_button("💾 SALVAR REQUISIÇÃO", type="primary", use_container_width=True)
+                    if submitted:
+                        if not emissor or not equipamento or not problema:
+                            st.error("❌ Preencha todos os campos obrigatórios (*)")
+                        else:
+                            agora_brasilia = get_horario_brasilia_obj()
+                            registro = RegistroRM(
+                                id=id_reg, data=agora_brasilia.date(), hora=agora_brasilia.strftime("%H:%M:%S"),
+                                emissor=emissor, equipamento=equipamento, setor=setor, caracter=caracter,
+                                setor2=setor2, problema=problema, trabalho=trabalho, analise=analise,
+                                status=status, data_finalizacao=data_finalizacao, emissor2=emissor2
+                            )
+                            if salvar_registro_rm(registro, eh_alteracao=False):
+                                st.success(f"✅ Requisição {id_reg} salva com sucesso!")
+                                pdf_bytes = gerar_pdf_rm(registro)
+                                if pdf_bytes:
+                                    st.session_state.rm_pdf_bytes = pdf_bytes
+                                    st.session_state.rm_pdf_nome = sanitize_filename_ar(f"RM_{id_reg}_{equipamento[:30]}") + ".pdf"
+                                    st.session_state.rm_mostrar_pdf = True
+                                    st.session_state.rm_ultimo_registro = registro
+                                    st.rerun()
+        
+        elif menu_rm == "📊 Visualizar Requisições":
+            st.subheader("Lista de Requisições de Manutenção")
+            with st.spinner("Carregando registros..."):
+                registros = carregar_registros_rm()
+            
+            if registros:
+                # Filtros
+                col_f1, col_f2, col_f3 = st.columns(3)
+                with col_f1:
+                    filtro_status = st.selectbox("Status", ["Todos"] + OPCOES_STATUS_RM)
+                with col_f2:
+                    filtro_caracter = st.selectbox("Caráter", ["Todos"] + OPCOES_CARATER_RM)
+                with col_f3:
+                    filtro_id = st.number_input("ID", min_value=0, step=1, value=0)
+                
+                dados_filtrados = registros
+                if filtro_status != "Todos":
+                    dados_filtrados = [r for r in dados_filtrados if r.status == filtro_status]
+                if filtro_caracter != "Todos":
+                    dados_filtrados = [r for r in dados_filtrados if r.caracter == filtro_caracter]
+                if filtro_id > 0:
+                    dados_filtrados = [r for r in dados_filtrados if r.id == filtro_id]
+                
+                # Estatísticas
+                col_e1, col_e2, col_e3, col_e4 = st.columns(4)
+                with col_e1:
+                    st.metric("Total", len(registros))
+                with col_e2:
+                    abertos = len([r for r in registros if r.status == "ABERTO"])
+                    st.metric("Em Aberto", abertos)
+                with col_e3:
+                    criticos = len([r for r in registros if "1 -" in r.caracter])
+                    st.metric("Nível 1 (Crítico)", criticos)
+                with col_e4:
+                    finalizados = len([r for r in registros if r.status == "FINALIZADO"])
+                    st.metric("Finalizados", finalizados)
+                
+                # Tabela
+                dados_tabela = []
+                for reg in dados_filtrados[:100]:
+                    emoji = "🚨" if "1 -" in reg.caracter else "⚠️" if "2 -" in reg.caracter else "📊" if "3 -" in reg.caracter else "🔧"
+                    dados_tabela.append({
+                        "ID": reg.id,
+                        "Data": reg.data.strftime("%d/%m/%Y") if reg.data else "-",
+                        "Equipamento": reg.equipamento[:30] + "..." if len(reg.equipamento) > 30 else reg.equipamento,
+                        "Caráter": f"{emoji} {reg.caracter}",
+                        "Setor Destino": reg.setor2,
+                        "Status": reg.status,
+                        "Emissor": reg.emissor
+                    })
+                df = pd.DataFrame(dados_tabela)
+                st.dataframe(df, use_container_width=True, height=400)
+            else:
+                st.info("📭 Nenhuma requisição encontrada")
+        
+        elif menu_rm == "🔍 Buscar/Editar/Excluir":
+            st.subheader("Buscar, Editar ou Excluir Requisição")
+            
+            col_b1, col_b2 = st.columns([2, 1])
+            with col_b1:
+                id_busca = st.number_input("Digite o ID da requisição", min_value=1, step=1, key="busca_rm")
+            with col_b2:
+                buscar_clicked = st.button("🔍 Buscar", use_container_width=True)
+            
+            if buscar_clicked and id_busca:
+                with st.spinner("Buscando..."):
+                    registros = carregar_registros_rm({"id": id_busca})
+                if registros:
+                    st.session_state.rm_registro_editando = registros[0]
+                    st.rerun()
+                else:
+                    st.error(f"❌ Requisição ID {id_busca} não encontrada!")
+            
+            if st.session_state.rm_registro_editando:
+                reg = st.session_state.rm_registro_editando
+                st.success(f"✅ Requisição ID {reg.id} encontrada!")
+                
+                with st.expander("📋 Dados completos da requisição", expanded=True):
+                    col_d1, col_d2 = st.columns(2)
+                    with col_d1:
+                        st.write("**📅 Datas e Horários:**")
+                        st.write(f"- Data: {reg.data.strftime('%d/%m/%Y') if reg.data else '-'}")
+                        st.write(f"- Hora: {reg.hora}")
+                        st.write(f"- Data Finalização: {reg.data_finalizacao.strftime('%d/%m/%Y') if reg.data_finalizacao else '-'}")
+                        st.write("**📝 Informações:**")
+                        st.write(f"- Emissor: {reg.emissor}")
+                        st.write(f"- Equipamento: {reg.equipamento}")
+                        st.write(f"- Setor: {reg.setor}")
+                    with col_d2:
+                        st.write("**⚖️ Caráter e Status:**")
+                        st.write(f"- Caráter: {reg.caracter}")
+                        st.write(f"- Status: {reg.status}")
+                        st.write(f"- Setor Destino: {reg.setor2}")
+                        st.write(f"- Emissor Técnico: {reg.emissor2}")
+                        st.write("**📋 Descrição:**")
+                        st.write(f"- Problema: {reg.problema[:150]}...")
+                
+                tab_editar, tab_excluir = st.tabs(["✏️ Editar", "🗑️ Excluir"])
+                
+                with tab_editar:
+                    with st.form("editar_rm"):
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            data_edt = st.date_input("Data", reg.data if reg.data else datetime.now())
+                            hora_edt = st.text_input("Hora", reg.hora)
+                            emissor_edt = st.text_input("Emissor", reg.emissor)
+                            equipamento_edt = st.text_input("Equipamento", reg.equipamento)
+                            setor_edt = st.selectbox("Setor", OPCOES_SETORES_RM, index=OPCOES_SETORES_RM.index(reg.setor) if reg.setor in OPCOES_SETORES_RM else 0)
+                        with col2:
+                            caracter_edt = st.selectbox("Caráter", OPCOES_CARATER_RM, index=OPCOES_CARATER_RM.index(reg.caracter) if reg.caracter in OPCOES_CARATER_RM else 0)
+                            setor2_edt = st.selectbox("Setor Destino", OPCOES_SETORES2_RM, index=OPCOES_SETORES2_RM.index(reg.setor2) if reg.setor2 in OPCOES_SETORES2_RM else 0)
+                            status_edt = st.selectbox("Status", OPCOES_STATUS_RM, index=OPCOES_STATUS_RM.index(reg.status) if reg.status in OPCOES_STATUS_RM else 0)
+                            data_fim_edt = st.date_input("Data Finalização", reg.data_finalizacao if reg.data_finalizacao else datetime.now())
+                        with col3:
+                            problema_edt = st.text_area("Descrição do Problema", reg.problema, height=120)
+                            trabalho_edt = st.text_area("Trabalho Realizado", reg.trabalho, height=100)
+                            analise_edt = st.text_area("Análise do Serviço", reg.analise, height=100)
+                            emissor2_edt = st.text_input("Emissor Técnico", reg.emissor2)
+                        if st.form_submit_button("💾 SALVAR ALTERAÇÕES", type="primary"):
+                            registro_atualizado = RegistroRM(
+                                id=reg.id, data=data_edt, hora=hora_edt, emissor=emissor_edt,
+                                equipamento=equipamento_edt, setor=setor_edt, caracter=caracter_edt,
+                                setor2=setor2_edt, problema=problema_edt, trabalho=trabalho_edt,
+                                analise=analise_edt, status=status_edt, data_finalizacao=data_fim_edt,
+                                emissor2=emissor2_edt
+                            )
+                            if salvar_registro_rm(registro_atualizado, eh_alteracao=True):
+                                st.success(f"✅ Requisição {reg.id} atualizada!")
+                                st.session_state.rm_registro_editando = None
+                                st.rerun()
+                            else:
+                                st.error("❌ Erro ao atualizar requisição")
+                
+                with tab_excluir:
+                    st.error(f"⚠️ **ATENÇÃO!** Exclusão da Requisição ID {reg.id}")
+                    st.warning("Esta ação é **IRREVERSÍVEL**!")
+                    confirmar = st.checkbox(f"Confirmo exclusão da requisição {reg.id}")
+                    if confirmar and st.button("🗑️ EXCLUIR", type="primary"):
+                        with st.spinner(f"Excluindo requisição {reg.id}..."):
+                            if excluir_registro_rm(reg.id):
+                                st.success(f"✅ Requisição {reg.id} excluída!")
+                                st.session_state.rm_registro_editando = None
+                                st.rerun()
+                            else:
+                                st.error(f"❌ Erro ao excluir requisição {reg.id}")
+        
+        elif menu_rm == "📈 Dashboard RM":
+            st.subheader("Dashboard de Manutenção")
+            with st.spinner("Carregando dados..."):
+                registros = carregar_registros_rm()
+            if registros:
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Total Requisições", len(registros))
+                with col2:
+                    abertos = len([r for r in registros if r.status == "ABERTO"])
+                    st.metric("Em Aberto", abertos)
+                with col3:
+                    criticos = len([r for r in registros if "1 -" in r.caracter])
+                    st.metric("Nível 1 (Crítico)", criticos)
+                with col4:
+                    finalizados = len([r for r in registros if r.status == "FINALIZADO"])
+                    st.metric("Finalizados", finalizados)
+                
+                st.subheader("Distribuição por Caráter")
+                caracter_counts = {}
+                for c in OPCOES_CARATER_RM:
+                    caracter_counts[c] = len([r for r in registros if r.caracter == c])
+                fig, ax = plt.subplots(figsize=(10, 4), facecolor=THEME['bg_card'])
+                cores = ['#E81123', '#FF8C00', '#FFB900', '#107C10']
+                bars = ax.bar(range(len(caracter_counts)), list(caracter_counts.values()), color=cores, alpha=0.8)
+                ax.set_xticks(range(len(caracter_counts)))
+                ax.set_xticklabels([c.split(' - ')[1] for c in caracter_counts.keys()], rotation=0)
+                ax.set_ylabel("Quantidade")
+                ax.set_title("Requisições por Caráter")
+                for bar, v in zip(bars, caracter_counts.values()):
+                    if v > 0:
+                        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5, str(v), ha='center', va='bottom')
+                st.pyplot(fig)
+                plt.close(fig)
+                
+                st.subheader("Status das Requisições")
+                status_counts = {}
+                for s in OPCOES_STATUS_RM:
+                    status_counts[s] = len([r for r in registros if r.status == s])
+                fig2, ax2 = plt.subplots(figsize=(8, 4), facecolor=THEME['bg_card'])
+                cores_status = ['#E81123' if s == 'ABERTO' else '#FF8C00' if s == 'EM ANDAMENTO' else '#107C10' for s in status_counts.keys()]
+                bars2 = ax2.bar(range(len(status_counts)), list(status_counts.values()), color=cores_status, alpha=0.8)
+                ax2.set_xticks(range(len(status_counts)))
+                ax2.set_xticklabels(status_counts.keys())
+                ax2.set_ylabel("Quantidade")
+                ax2.set_title("Requisições por Status")
+                for bar, v in zip(bars2, status_counts.values()):
+                    if v > 0:
+                        ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5, str(v), ha='center', va='bottom')
+                st.pyplot(fig2)
+                plt.close(fig2)
+                
+                st.subheader("🚨 Requisições Críticas (Nível 1)")
+                criticas = [r for r in registros if "1 -" in r.caracter]
+                if criticas:
+                    dados_criticos = []
+                    for reg in criticas:
+                        dados_criticos.append({
+                            "ID": reg.id,
+                            "Data": reg.data.strftime("%d/%m/%Y") if reg.data else "-",
+                            "Equipamento": reg.equipamento,
+                            "Setor": reg.setor,
+                            "Status": reg.status
+                        })
+                    st.dataframe(pd.DataFrame(dados_criticos), use_container_width=True)
+                else:
+                    st.success("✅ Nenhuma requisição crítica no momento!")
+            else:
+                st.info("Nenhuma requisição encontrada para análise.")
+    
+    st.markdown(f"""
+    <div style="text-align:right;padding:16px 0 8px;
+        font-family:'JetBrains Mono',monospace;font-size:10px;
+        color:{THEME['text_muted']};letter-spacing:.1em;">
+        REQUISIÇÃO DE MANUTENÇÃO · {get_horario_brasilia()}
+    </div>
+    """, unsafe_allow_html=True)
+
+# Rodapé final
+if aba_selecionada not in ['AVISO DE REJEIÇÃO', 'REQUISIÇÃO MANUTENÇÃO']:
     pass
