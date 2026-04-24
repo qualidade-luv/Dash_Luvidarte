@@ -8,6 +8,16 @@ from oauth2client.service_account import ServiceAccountCredentials
 import re
 import os
 import numpy as np
+import io
+import unicodedata
+from openpyxl import load_workbook
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.application import MIMEApplication
+import traceback
+from typing import List, Optional, Dict, Any
+from dataclasses import dataclass
 
 # ======================
 # CONFIGURAÇÕES
@@ -20,8 +30,35 @@ PRACAS_NAO_SOPRO = ['GIL', 'GILSIMAR', 'ED CARLOS', 'EDI CARLOS', 'ROBÔ 2', 'RO
 ABAS = {
     'PRENSADOS': 'TRS_INDUSTRIAL',
     'SOPRO': 'TRS_SOPRO',
-    'TÊMPERA': 'TRS_TEMPERA'
+    'TÊMPERA': 'TRS_TEMPERA',
+    'AVISO DE REJEIÇÃO': 'AR'
 }
+
+# Configurações do Sistema de Aviso de Rejeição (AR)
+CAMINHO_PLANILHA_AR = r"\\srv-luvidarte\dados\DOC\Engenharia_Luvidarte\SGQ - LUVIDARTE - ALTERADAS\0-AVISO DE REJEIÇÃO\CQ - 018  AVISO DE REJEIÇÃO.xlsm"
+ABA_AR = "HISTORICO"
+CAMINHO_PDF_AR = r"\\srv-luvidarte\dados\DOC\Engenharia_Luvidarte\SGQ - LUVIDARTE - ALTERADAS\0-AVISO DE REJEIÇÃO\1-PDF"
+CAMINHO_PDF_RELATORIO_AR = r"\\srv-luvidarte\dados\DOC\Engenharia_Luvidarte\SGQ - LUVIDARTE - ALTERADAS\0-AVISO DE REJEIÇÃO\2-PDF"
+
+EMAIL_CONFIG_AR = {
+    "usuario": "erp@luvidarte.com.br",
+    "senha": "Qualidade123#",
+    "destinatarios": ["producao@luvidarte.com.br", "engenharia@luvidarte.com.br", 
+                     "qualidade@luvidarte.com.br", "qualidade2@luvidarte.com.br"],
+    "smtp_server": "email-ssl.com.br",
+    "smtp_port": 465
+}
+
+OPCOES_DECISAO_AR = ["APROVADO CONDICIONAL", "REPROVADO", "EM ANÁLISE"]
+OPCOES_STATUS_AR = ["ABERTO", "FINALIZADO"]
+OPCOES_TURNO_AR = ["Manhã", "Tarde", "Noite"]
+
+# Criar diretórios AR
+for caminho in [CAMINHO_PDF_AR, CAMINHO_PDF_RELATORIO_AR]:
+    try:
+        os.makedirs(caminho, exist_ok=True)
+    except:
+        pass
 
 # ======================
 # TEMA VISUAL - CLARO (LIGHT MODE)
@@ -54,7 +91,6 @@ st.set_page_config(
 # FUNÇÃO PARA HORÁRIO BRASÍLIA
 # ======================
 def get_horario_brasilia():
-    """Retorna o horário atual de Brasília (GMT-3)"""
     from datetime import timezone, timedelta
     utc_now = datetime.now(timezone.utc)
     brasilia_offset = timezone(timedelta(hours=-3))
@@ -62,418 +98,47 @@ def get_horario_brasilia():
     return agora_brasilia.strftime('%d/%m/%Y %H:%M')
 
 # ======================
-# CSS GLOBAL - TEMA CLARO
+# FUNÇÕES AUXILIARES GLOBAIS
 # ======================
-st.markdown(f"""
-<style>
-  @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Barlow:wght@300;400;500;600&display=swap');
+def safe_float_tempera(val):
+    if val is None or pd.isna(val):
+        return 0.0
+    try:
+        val_str = str(val).strip()
+        if val_str == '' or val_str == 'nan':
+            return 0.0
+        val_str = val_str.replace(',', '.')
+        return float(val_str)
+    except:
+        return 0.0
 
-  /* ── Reset & Base ── */
-  html, body, [class*="css"] {{
-      font-family: 'Barlow', sans-serif;
-      background-color: {THEME['bg_primary']} !important;
-      color: {THEME['text_primary']} !important;
-  }}
-  .stApp {{ background-color: {THEME['bg_primary']} !important; }}
+def get_gspread_client():
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    try:
+        if 'gcp_service_account' in st.secrets:
+            creds_dict = dict(st.secrets["gcp_service_account"])
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+            return gspread.authorize(creds)
+    except:
+        pass
+    
+    caminhos_credenciais = [
+        r'C:\Users\elton\OneDrive\Documentos\dashboard-gerencial-492613-042470f98e27.json',
+        r'C:\Users\elton\OneDrive\Desktop\dashboard-gerencial-492613-042470f98e27.json',
+        r'C:\Users\elton\Desktop\dashboard-gerencial-492613-042470f98e27.json',
+        r'C:\Users\elton\Downloads\dashboard-gerencial-492613-042470f98e27.json',
+        r'dashboard-gerencial-492613-042470f98e27.json',
+        r'\\srv-luvidarte\dados\DOC\Engenharia_Luvidarte\SGQ - LUVIDARTE - ALTERADAS\4-TRS\dashboard-gerencial-492613-042470f98e27.json',
+    ]
+    for caminho in caminhos_credenciais:
+        try:
+            if os.path.exists(caminho):
+                creds = ServiceAccountCredentials.from_json_keyfile_name(caminho, scope)
+                return gspread.authorize(creds)
+        except:
+            pass
+    return None
 
-  /* ── Sidebar ── */
-  [data-testid="stSidebar"] {{
-      background: linear-gradient(180deg, #FFFFFF 0%, #F0F2F5 100%) !important;
-      border-right: 1px solid {THEME['border_bright']} !important;
-  }}
-  
-  /* ── RadioButton PRENSADOS, SOPRO e TÊMPERA em preto negrito ── */
-  [data-testid="stSidebar"] .stRadio label {{
-      color: #000000 !important;
-      font-weight: bold !important;
-      font-family: 'Rajdhani', sans-serif !important;
-      font-size: 15px !important;
-      letter-spacing: 0.08em;
-  }}
-  
-  [data-testid="stSidebar"] div[role="radiogroup"] label {{
-      color: #000000 !important;
-      font-weight: bold !important;
-  }}
-  
-  [data-testid="stSidebar"] .stRadio label span {{
-      color: #000000 !important;
-      font-weight: bold !important;
-  }}
-  
-  [data-testid="stSidebar"] .stRadio * {{
-      color: #000000 !important;
-      font-weight: bold !important;
-  }}
-  
-  [data-testid="stSidebar"] .stRadio label:hover {{
-      color: #000000 !important;
-      font-weight: bold !important;
-      opacity: 0.8;
-  }}
-  
-  /* ── Sidebar Filters - preto negrito ── */
-  [data-testid="stSidebar"] .stSelectbox label,
-  [data-testid="stSidebar"] .stTextInput label,
-  [data-testid="stSidebar"] .stDateInput label,
-  [data-testid="stSidebar"] .stNumberInput label,
-  [data-testid="stSidebar"] .stCheckbox label,
-  [data-testid="stSidebar"] .stMultiSelect label,
-  [data-testid="stSidebar"] .stSlider label,
-  [data-testid="stSidebar"] .stTimeInput label,
-  [data-testid="stSidebar"] .stTextArea label,
-  [data-testid="stSidebar"] .stColorPicker label,
-  [data-testid="stSidebar"] .stFileUploader label,
-  [data-testid="stSidebar"] .stForm label {{
-      color: #000000 !important;
-      font-weight: bold !important;
-      font-family: 'JetBrains Mono', monospace !important;
-      font-size: 11px !important;
-      text-transform: uppercase;
-      letter-spacing: 0.12em;
-  }}
-  
-  [data-testid="stSidebar"] label {{
-      color: #000000 !important;
-      font-weight: bold !important;
-  }}
-  
-  [data-testid="stSidebar"] h1 {{
-      font-family: 'Rajdhani', sans-serif !important;
-      color: {THEME['accent_cyan']} !important;
-      font-size: 20px !important;
-      font-weight: 700 !important;
-      letter-spacing: 0.15em;
-      text-transform: uppercase;
-      border-bottom: 1px solid {THEME['border_bright']};
-      padding-bottom: 8px;
-      margin-bottom: 12px;
-  }}
-
-  /* ── Input widgets ── */
-  .stSelectbox div[data-baseweb="select"] > div,
-  .stTextInput input,
-  .stNumberInput input,
-  .stDateInput input {{
-      background-color: {THEME['bg_card']} !important;
-      border: 1px solid {THEME['border_bright']} !important;
-      color: {THEME['text_primary']} !important;
-      border-radius: 4px !important;
-      font-family: 'JetBrains Mono', monospace !important;
-      font-size: 12px !important;
-  }}
-  .stSelectbox div[data-baseweb="select"] > div:hover {{
-      border-color: {THEME['accent_cyan']} !important;
-  }}
-
-  /* ── Checkbox ── */
-  .stCheckbox > label > div[data-testid="stCheckbox"] {{
-      border-color: {THEME['accent_cyan']} !important;
-  }}
-
-  /* ── Metric cards ── */
-  [data-testid="stMetric"] {{
-      background: linear-gradient(135deg, {THEME['bg_card']} 0%, {THEME['bg_card2']} 100%) !important;
-      border: 1px solid {THEME['border_bright']} !important;
-      border-radius: 8px !important;
-      padding: 16px 20px !important;
-      position: relative;
-      overflow: hidden;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-  }}
-  [data-testid="stMetric"]::before {{
-      content: '';
-      position: absolute;
-      top: 0; left: 0; right: 0;
-      height: 2px;
-      background: linear-gradient(90deg, {THEME['accent_cyan']}, transparent);
-  }}
-  [data-testid="stMetricLabel"] {{
-      font-family: 'JetBrains Mono', monospace !important;
-      font-size: 10px !important;
-      font-weight: 500 !important;
-      letter-spacing: 0.15em !important;
-      text-transform: uppercase !important;
-      color: {THEME['text_muted']} !important;
-  }}
-  [data-testid="stMetricValue"] {{
-      font-family: 'Rajdhani', sans-serif !important;
-      font-size: 32px !important;
-      font-weight: 700 !important;
-      color: {THEME['accent_cyan']} !important;
-      letter-spacing: 0.05em;
-  }}
-
-  /* ── Section headers ── */
-  h1 {{
-      font-family: 'Rajdhani', sans-serif !important;
-      font-weight: 700 !important;
-      font-size: 26px !important;
-      letter-spacing: 0.1em !important;
-      text-transform: uppercase !important;
-      color: {THEME['text_primary']} !important;
-  }}
-  h2, h3 {{
-      font-family: 'Rajdhani', sans-serif !important;
-      font-weight: 600 !important;
-      letter-spacing: 0.08em !important;
-      text-transform: uppercase !important;
-      color: {THEME['text_primary']} !important;
-  }}
-  .stSubheader, [data-testid="stMarkdownContainer"] h3 {{
-      border-left: 3px solid {THEME['accent_cyan']};
-      padding-left: 10px;
-  }}
-
-  /* ── Dataframe ── */
-  .stDataFrame {{
-      border: 1px solid {THEME['border_bright']} !important;
-      border-radius: 6px !important;
-      overflow: hidden;
-  }}
-  .stDataFrame thead th {{
-      background-color: {THEME['bg_card']} !important;
-      color: {THEME['accent_cyan']} !important;
-      font-family: 'JetBrains Mono', monospace !important;
-      font-size: 11px !important;
-      text-transform: uppercase !important;
-      letter-spacing: 0.1em !important;
-      border-bottom: 1px solid {THEME['border_bright']} !important;
-  }}
-  .stDataFrame tbody tr:hover td {{
-      background-color: rgba(0, 120, 212, 0.06) !important;
-  }}
-  .stDataFrame tbody td {{
-      font-family: 'JetBrains Mono', monospace !important;
-      font-size: 12px !important;
-      border-color: {THEME['border']} !important;
-      color: {THEME['text_primary']} !important;
-  }}
-
-  /* ── Divider ── */
-  hr {{
-      border: none !important;
-      border-top: 1px solid {THEME['border_bright']} !important;
-      margin: 24px 0 !important;
-  }}
-
-  /* ── Info/Warning/Success banners ── */
-  .stInfo {{ background-color: rgba(0,120,212,0.08) !important; border-left: 3px solid {THEME['accent_cyan']} !important; border-radius: 4px !important; }}
-  .stWarning {{ background-color: rgba(232,108,44,0.08) !important; border-left: 3px solid {THEME['accent_orange']} !important; border-radius: 4px !important; }}
-  .stSuccess {{ background-color: rgba(16,124,16,0.08) !important; border-left: 3px solid {THEME['accent_lime']} !important; border-radius: 4px !important; }}
-  .stError {{ background-color: rgba(232,17,35,0.08) !important; border-left: 3px solid {THEME['accent_red']} !important; border-radius: 4px !important; }}
-
-  /* ── Spinner ── */
-  .stSpinner > div {{ border-top-color: {THEME['accent_cyan']} !important; }}
-
-  /* ── Caption ── */
-  .stCaption {{ color: {THEME['text_muted']} !important; font-family: 'JetBrains Mono', monospace !important; font-size: 10px !important; }}
-
-  /* ── Bar chart ── */
-  [data-testid="stArrowVegaLiteChart"] {{ background: {THEME['bg_card']} !important; border-radius: 8px; }}
-
-  /* ── Scrollbar ── */
-  ::-webkit-scrollbar {{ width: 4px; height: 4px; }}
-  ::-webkit-scrollbar-track {{ background: {THEME['bg_primary']}; }}
-  ::-webkit-scrollbar-thumb {{ background: {THEME['border_bright']}; border-radius: 2px; }}
-  ::-webkit-scrollbar-thumb:hover {{ background: {THEME['accent_cyan']}; }}
-  
-  /* ── Remove qualquer mensagem de conexão ── */
-  .stAlert, .element-container:has(.stAlert), [data-testid="stNotification"] {{
-      display: none !important;
-  }}
-  
-  /* ── Estilo para linha de análise ── */
-  .analise-row td {{
-      background-color: #E6F2E6 !important;
-      color: #107C10 !important;
-      font-style: italic !important;
-      font-family: 'JetBrains Mono', monospace !important;
-      font-size: 11px !important;
-  }}
-</style>
-""", unsafe_allow_html=True)
-
-
-def render_page_header(title: str, subtitle: str, accent: str = None):
-    """Renderiza cabeçalho da página com estilo industrial."""
-    if accent is None:
-        accent = THEME['accent_cyan']
-    st.markdown(f"""
-    <div style="
-        padding: 28px 0 20px 0;
-        border-bottom: 1px solid {THEME['border_bright']};
-        margin-bottom: 28px;
-        display: flex;
-        align-items: center;
-        gap: 16px;
-    ">
-        <div style="
-            width: 4px;
-            height: 48px;
-            background: linear-gradient(180deg, {accent}, transparent);
-            border-radius: 2px;
-            flex-shrink: 0;
-        "></div>
-        <div>
-            <div style="
-                font-family: 'JetBrains Mono', monospace;
-                font-size: 10px;
-                letter-spacing: 0.25em;
-                color: {accent};
-                text-transform: uppercase;
-                margin-bottom: 4px;
-                opacity: 0.8;
-            ">LUVIDARTE / TRS DASHBOARD</div>
-            <div style="
-                font-family: 'Rajdhani', sans-serif;
-                font-size: 36px;
-                font-weight: 700;
-                color: {THEME['text_primary']};
-                letter-spacing: 0.1em;
-                text-transform: uppercase;
-                line-height: 1;
-            ">{title}</div>
-            <div style="
-                font-family: 'Barlow', sans-serif;
-                font-size: 13px;
-                color: {THEME['text_muted']};
-                margin-top: 4px;
-                letter-spacing: 0.05em;
-            ">{subtitle}</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-
-def render_section_header(title: str, icon: str = "▸", accent: str = None):
-    if accent is None:
-        accent = THEME['accent_cyan']
-    st.markdown(f"""
-    <div style="
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        margin: 28px 0 14px 0;
-        padding-bottom: 8px;
-        border-bottom: 1px solid {THEME['border']};
-    ">
-        <span style="color: {accent}; font-size: 16px; font-family: 'Rajdhani', sans-serif;">{icon}</span>
-        <span style="
-            font-family: 'Rajdhani', sans-serif;
-            font-size: 18px;
-            font-weight: 600;
-            letter-spacing: 0.1em;
-            text-transform: uppercase;
-            color: {THEME['text_primary']};
-        ">{title}</span>
-    </div>
-    """, unsafe_allow_html=True)
-
-
-def render_kpi_card(label: str, value: str, accent: str = None, icon: str = ""):
-    if accent is None:
-        accent = THEME['accent_cyan']
-    st.markdown(f"""
-    <div style="
-        background: linear-gradient(135deg, {THEME['bg_card']} 0%, {THEME['bg_card2']} 100%);
-        border: 1px solid {THEME['border_bright']};
-        border-radius: 8px;
-        padding: 18px 22px;
-        position: relative;
-        overflow: hidden;
-        height: 100%;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-    ">
-        <div style="
-            position: absolute;
-            top: 0; left: 0; right: 0;
-            height: 2px;
-            background: linear-gradient(90deg, {accent}, transparent);
-        "></div>
-        <div style="
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 9px;
-            letter-spacing: 0.2em;
-            text-transform: uppercase;
-            color: {THEME['text_muted']};
-            margin-bottom: 8px;
-        ">{icon} {label}</div>
-        <div style="
-            font-family: 'Rajdhani', sans-serif;
-            font-size: 34px;
-            font-weight: 700;
-            color: {accent};
-            letter-spacing: 0.03em;
-            line-height: 1;
-        ">{value}</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-
-def apply_chart_style(ax, fig, title: str, xlabel: str = "", ylabel: str = "",
-                      accent: str = None):
-    """Aplica estilo claro/industrial consistente em todos os gráficos matplotlib."""
-    if accent is None:
-        accent = THEME['accent_cyan']
-    fig.patch.set_facecolor(THEME['bg_card'])
-    ax.set_facecolor(THEME['bg_card'])
-
-    ax.set_title(title, fontsize=14, fontweight='bold',
-                 color=THEME['text_primary'], fontfamily='sans-serif',
-                 pad=16, loc='left')
-    if xlabel:
-        ax.set_xlabel(xlabel, fontsize=10, color=THEME['text_muted'], labelpad=8)
-    if ylabel:
-        ax.set_ylabel(ylabel, fontsize=10, color=THEME['text_muted'], labelpad=8)
-
-    ax.tick_params(colors=THEME['text_muted'], labelsize=9)
-    ax.grid(True, alpha=0.3, color=THEME['grid'], linewidth=0.8, linestyle='--')
-    ax.set_axisbelow(True)
-
-    for spine in ax.spines.values():
-        spine.set_edgecolor(THEME['border_bright'])
-        spine.set_linewidth(0.8)
-
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-
-
-# ======================
-# SIDEBAR - navegação
-# ======================
-with st.sidebar:
-    st.markdown(f"""
-    <div style="
-        text-align: center;
-        padding: 20px 0 16px;
-        border-bottom: 1px solid {THEME['border_bright']};
-        margin-bottom: 20px;
-    ">
-        <div style="
-            font-family: 'Rajdhani', sans-serif;
-            font-size: 24px;
-            font-weight: 700;
-            color: {THEME['accent_cyan']};
-            letter-spacing: 0.2em;
-        ">⚙ TRS</div>
-        <div style="
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 9px;
-            color: {THEME['text_muted']};
-            letter-spacing: 0.2em;
-            text-transform: uppercase;
-            margin-top: 2px;
-        ">Industrial Dashboard</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.markdown(f"<div style='font-family:JetBrains Mono,monospace;font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:{THEME['accent_cyan']};margin-bottom:8px'>▸ Setor</div>", unsafe_allow_html=True)
-    aba_selecionada = st.radio("", list(ABAS.keys()), label_visibility="collapsed")
-
-# ======================
-# FUNÇÕES AUXILIARES COMUNS
-# ======================
 def converter_numero_br(valor):
     if valor is None or pd.isna(valor):
         return 0.0
@@ -504,7 +169,6 @@ def converter_numero_br(valor):
         return resultado
     except:
         return 0.0
-
 
 def converter_data_br(data_str):
     if data_str is None or pd.isna(data_str):
@@ -540,14 +204,12 @@ def converter_data_br(data_str):
     except:
         return None
 
-
 def minutos_para_horas_str(minutos):
     if pd.isna(minutos) or minutos is None or minutos == 0:
         return "00:00"
     horas = int(minutos) // 60
     mins = int(minutos) % 60
     return f"{horas:02d}:{mins:02d}"
-
 
 def converter_tempo_para_minutos(valor):
     if pd.isna(valor) or valor is None or valor == '':
@@ -592,92 +254,720 @@ def converter_tempo_para_minutos(valor):
                 return int(valor * 60)
     return 0
 
-
-def get_gspread_client():
-    scope = [
-        "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/drive"
-    ]
+# ======================
+# FUNÇÕES DE CARREGAMENTO DE DADOS (DEFINIDAS GLOBALMENTE)
+# ======================
+@st.cache_data(ttl=300)
+def carregar_dados_prensados():
     try:
-        if 'gcp_service_account' in st.secrets:
-            creds_dict = dict(st.secrets["gcp_service_account"])
-            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-            client = gspread.authorize(creds)
-            return client
+        client = get_gspread_client()
+        if client is None:
+            return pd.DataFrame()
+        sheet = client.open_by_key(ID_PLANILHA_PRENSADOS_SOPRO).worksheet('TRS_INDUSTRIAL')
+        todos_dados = sheet.get_all_values()
+        if len(todos_dados) < 2:
+            return pd.DataFrame()
+        cabecalho = todos_dados[1]
+        valores = todos_dados[2:]
+        df = pd.DataFrame(valores, columns=cabecalho)
+        df.columns = df.columns.str.strip().str.upper()
+        if 'DATA' in df.columns:
+            df['DATA'] = df['DATA'].apply(converter_data_br)
+            df = df.dropna(subset=['DATA'])
+        if 'APROVADO FINAL' in df.columns:
+            df = df.rename(columns={'APROVADO FINAL': 'EMBALADO'})
+        colunas_numericas = ['PRODUZIDO', 'APROVADO', 'EMBALADO', 'TRS 100%', 'REFUGADO', 'BOQUETA']
+        for col in colunas_numericas:
+            if col in df.columns:
+                df[col] = df[col].apply(converter_numero_br)
+        df['ANO_MES'] = df['DATA'].dt.to_period('M').astype(str)
+        df['DIA_SEMANA'] = df['DATA'].dt.day_name()
+        df['SEMANA'] = df['DATA'].dt.isocalendar().week
+        df['IS_SABADO'] = df['DATA'].dt.dayofweek == 5
+        for col in df.columns:
+            col_upper = str(col).upper()
+            if 'ACERTO' in col_upper and 'MIN' not in col_upper:
+                df['ACERTOS_MIN'] = df[col].apply(converter_tempo_para_minutos)
+            if 'MANUT' in col_upper and 'MIN' not in col_upper:
+                df['MANUT_MIN'] = df[col].apply(converter_tempo_para_minutos)
+            if 'HORAS TOTAIS' in col_upper or 'HORA TOTAL' in col_upper:
+                df['HORAS_TOTAIS_MIN'] = df[col].apply(converter_tempo_para_minutos)
+        if 'ACERTOS_MIN' in df.columns:
+            df['ACERTOS_MIN_AJUSTADO'] = df.apply(
+                lambda row: max(0, row['ACERTOS_MIN'] - 165) if row['IS_SABADO'] else row['ACERTOS_MIN'], axis=1
+            )
+        return df
     except Exception as e:
-        pass
+        st.error(f"Erro ao carregar dados de Prensados: {e}")
+        return pd.DataFrame()
 
-    caminhos_credenciais = [
-        r'C:\Users\elton\OneDrive\Documentos\dashboard-gerencial-492613-042470f98e27.json',
-        r'C:\Users\elton\OneDrive\Desktop\dashboard-gerencial-492613-042470f98e27.json',
-        r'C:\Users\elton\Desktop\dashboard-gerencial-492613-042470f98e27.json',
-        r'C:\Users\elton\Downloads\dashboard-gerencial-492613-042470f98e27.json',
-        r'dashboard-gerencial-492613-042470f98e27.json',
-        r'\\srv-luvidarte\dados\DOC\Engenharia_Luvidarte\SGQ - LUVIDARTE - ALTERADAS\4-TRS\dashboard-gerencial-492613-042470f98e27.json',
-    ]
+@st.cache_data(ttl=300)
+def carregar_dados_sopro():
+    try:
+        client = get_gspread_client()
+        if client is None:
+            return pd.DataFrame()
+        sheet = client.open_by_key(ID_PLANILHA_PRENSADOS_SOPRO).worksheet('TRS_SOPRO')
+        todos_dados = sheet.get_all_values()
+        if len(todos_dados) < 2:
+            return pd.DataFrame()
+        cabecalho = todos_dados[0]
+        valores = todos_dados[1:]
+        df = pd.DataFrame(valores, columns=cabecalho)
+        df.columns = df.columns.str.strip().str.upper()
+        if 'PRAÇA' in df.columns:
+            df['PRAÇA_NORM'] = df['PRAÇA'].fillna('').astype(str).str.upper().str.strip()
+            mascara = ~df['PRAÇA_NORM'].apply(
+                lambda x: any(p in x for p in [p.upper() for p in PRACAS_NAO_SOPRO])
+            )
+            df = df[mascara].copy()
+            df = df.drop(columns=['PRAÇA_NORM'])
+        if 'DATA' in df.columns:
+            df['DATA'] = df['DATA'].apply(converter_data_br)
+            df = df.dropna(subset=['DATA'])
+        for col in ['PRODUZIDO', 'APROVADO', 'TRS_BRUTO']:
+            if col in df.columns:
+                df[col] = df[col].apply(converter_numero_br)
+        if 'PRODUZIDO' in df.columns and 'APROVADO' in df.columns:
+            df['REFUGADO'] = (df['PRODUZIDO'] - df['APROVADO']).clip(lower=0)
+        else:
+            df['REFUGADO'] = 0
+        df['ANO_MES'] = df['DATA'].dt.to_period('M').astype(str)
+        return df
+    except Exception:
+        return pd.DataFrame()
 
-    for caminho in caminhos_credenciais:
-        try:
-            if os.path.exists(caminho):
-                creds = ServiceAccountCredentials.from_json_keyfile_name(caminho, scope)
-                client = gspread.authorize(creds)
-                return client
-        except Exception:
-            pass
+@st.cache_data(ttl=300)
+def carregar_dados_tempera():
+    try:
+        client = get_gspread_client()
+        if client is None:
+            return pd.DataFrame()
+        sheet = client.open_by_key(ID_PLANILHA_TEMPERA).worksheet('TRS_TEMPERA')
+        todos_dados = sheet.get_all_values()
+        
+        if len(todos_dados) < 2:
+            return pd.DataFrame()
+        
+        cabecalho = todos_dados[0]
+        valores = todos_dados[1:]
+        df = pd.DataFrame(valores, columns=cabecalho)
+        colunas = list(df.columns)
+        
+        if len(colunas) >= 5:
+            df = df.rename(columns={
+                colunas[0]: 'PRODUCAO',
+                colunas[1]: 'DATA_TEMP',
+                colunas[2]: 'TURNO_TEMP',
+                colunas[3]: 'PRODUTO',
+                colunas[4]: 'GANCHEIRA'
+            })
+        
+        if len(colunas) >= 8:
+            df = df.rename(columns={
+                colunas[5]: 'SUPERIOR',
+                colunas[6]: 'MEIO',
+                colunas[7]: 'INFERIOR'
+            })
+        
+        if len(colunas) >= 11:
+            df = df.rename(columns={
+                colunas[8]: 'A1',
+                colunas[9]: 'C1',
+                colunas[10]: 'A2'
+            })
+        
+        if len(colunas) >= 14:
+            df = df.rename(columns={
+                colunas[11]: 'C2',
+                colunas[12]: 'A3',
+                colunas[13]: 'C3'
+            })
+        
+        if len(colunas) >= 17:
+            df = df.rename(columns={
+                colunas[14]: 'A4',
+                colunas[15]: 'C4',
+                colunas[16]: 'A5'
+            })
+        
+        if len(colunas) >= 20:
+            df = df.rename(columns={
+                colunas[17]: 'C5',
+                colunas[18]: 'A e B'
+            })
+        
+        if 'DATA_TEMP' in df.columns:
+            df['DATA'] = df['DATA_TEMP'].apply(converter_data_br)
+        elif 'PRODUCAO' in df.columns:
+            df['DATA'] = df['PRODUCAO'].apply(converter_data_br)
+        
+        if 'DATA' in df.columns:
+            df = df.dropna(subset=['DATA'])
+        
+        colunas_numericas = ['SUPERIOR', 'MEIO', 'INFERIOR', 'A1', 'C1', 'A2', 'C2', 'A3', 'C3', 'A4', 'C4', 'A5', 'C5', 'A e B']
+        
+        for col in colunas_numericas:
+            if col in df.columns:
+                df[col] = df[col].apply(safe_float_tempera)
+        
+        if 'C2' in df.columns:
+            def converter_tempo_c2(val):
+                if pd.isna(val) or val == 0:
+                    return 0
+                if val <= 1:
+                    return val * 100
+                elif val <= 10:
+                    return val * 10
+                else:
+                    return val
+            df['C2'] = df['C2'].apply(converter_tempo_c2)
+        
+        colunas_posicoes_validas = []
+        for col in df.columns:
+            try:
+                num = int(str(col).strip())
+                if 19 <= num <= 70:
+                    colunas_posicoes_validas.append(col)
+            except:
+                pass
+        
+        df['TOTAL_PECAS'] = 40
+        df['APROVADO'] = 40
+        df['TOTAL_DEFEITOS'] = 0
+        df['IS_CRITICO'] = False
+        
+        MAPEAMENTO_DEFEITOS = {
+            1: 'Estourou após furar',
+            2: 'Quebra no resfriamento',
+            3: 'Quebra teste impacto',
+            4: 'Furada e não fraturou',
+            5: 'Quebra de quarentena',
+            6: 'Ovalizada'
+        }
+        CODIGOS_DEFEITO_REAIS = [2, 3, 4, 5, 6]
+        
+        for codigo, nome in MAPEAMENTO_DEFEITOS.items():
+            nome_clean = nome.upper().replace(' ', '_').replace('Ç', 'C').replace('Ã', 'A').replace('Á', 'A').replace('Ó', 'O')
+            df[f'QTD_{nome_clean}'] = 0
+        
+        for idx, row in df.iterrows():
+            defeitos_contagem = {codigo: 0 for codigo in MAPEAMENTO_DEFEITOS.keys()}
+            
+            for col in colunas_posicoes_validas:
+                try:
+                    val = row[col]
+                    if pd.notna(val) and str(val).strip():
+                        codigo = int(float(str(val).strip()))
+                        if codigo in MAPEAMENTO_DEFEITOS:
+                            defeitos_contagem[codigo] += 1
+                except:
+                    pass
+            
+            total_defeitos_reais = sum(defeitos_contagem.get(cod, 0) for cod in CODIGOS_DEFEITO_REAIS)
+            aprovadas = 40 - total_defeitos_reais
+            
+            df.at[idx, 'APROVADO'] = aprovadas
+            df.at[idx, 'TOTAL_DEFEITOS'] = total_defeitos_reais
+            df.at[idx, 'TRS (%)'] = (aprovadas / 40 * 100) if 40 > 0 else 0
+            
+            is_critico = False
+            if defeitos_contagem.get(4, 0) >= 1:
+                is_critico = True
+            if defeitos_contagem.get(3, 0) > 2:
+                is_critico = True
+            df.at[idx, 'IS_CRITICO'] = is_critico
+            
+            for codigo, nome in MAPEAMENTO_DEFEITOS.items():
+                nome_clean = nome.upper().replace(' ', '_').replace('Ç', 'C').replace('Ã', 'A').replace('Á', 'A').replace('Ó', 'O')
+                col_nome = f'QTD_{nome_clean}'
+                if col_nome in df.columns:
+                    df.at[idx, col_nome] = defeitos_contagem.get(codigo, 0)
+        
+        return df
+        
+    except Exception as e:
+        st.error(f"Erro ao carregar dados: {str(e)}")
+        return pd.DataFrame()
 
-    return None
+# ======================
+# FUNÇÕES DO SISTEMA AR (AVISO DE REJEIÇÃO)
+# ======================
+@dataclass
+class RegistroAR:
+    numero: Optional[int] = None
+    data: Optional[datetime] = None
+    hora: str = ""
+    codigo: str = ""
+    emissor: str = ""
+    referencia: str = ""
+    decisao: str = ""
+    descricao: str = ""
+    status: str = "ABERTO"
+    disposicao: str = ""
+    data_finalizacao: Optional[datetime] = None
+    turno: str = ""
 
+def sanitize_filename_ar(filename: str) -> str:
+    filename = unicodedata.normalize("NFKD", filename).encode("ASCII", "ignore").decode("ASCII")
+    filename = re.sub(r'[^a-zA-Z0-9_-]', '_', filename)
+    return filename[:50]
+
+def obter_proximo_numero_ar():
+    try:
+        wb = load_workbook(CAMINHO_PLANILHA_AR, keep_vba=True, data_only=True)
+        ws = wb[ABA_AR]
+        numeros = []
+        for row in range(6, ws.max_row + 1):
+            valor = ws[f"A{row}"].value
+            if isinstance(valor, (int, float)):
+                numeros.append(valor)
+        wb.close()
+        if not numeros:
+            return 1
+        return int(max(numeros)) + 1
+    except Exception as e:
+        return 1
+
+def carregar_registros_ar(filtros: Dict[str, Any] = None) -> List[RegistroAR]:
+    registros = []
+    try:
+        wb = load_workbook(CAMINHO_PLANILHA_AR, keep_vba=True, data_only=True)
+        ws = wb[ABA_AR]
+        for row in range(6, ws.max_row + 1):
+            numero = ws[f"A{row}"].value
+            data = ws[f"B{row}"].value
+            if not data or not numero:
+                continue
+            registro = RegistroAR()
+            registro.numero = numero
+            registro.data = data if isinstance(data, datetime) else None
+            registro.hora = str(ws[f"C{row}"].value or "")
+            registro.codigo = str(ws[f"D{row}"].value or "")
+            registro.emissor = str(ws[f"E{row}"].value or "")
+            registro.referencia = str(ws[f"F{row}"].value or "")
+            registro.decisao = str(ws[f"G{row}"].value or "")
+            registro.descricao = str(ws[f"H{row}"].value or "")
+            registro.status = str(ws[f"I{row}"].value or "ABERTO")
+            registro.disposicao = str(ws[f"J{row}"].value or "")
+            registro.data_finalizacao = ws[f"K{row}"].value if isinstance(ws[f"K{row}"].value, datetime) else None
+            registro.turno = str(ws[f"L{row}"].value or "")
+            
+            if filtros:
+                incluir = True
+                if filtros.get('numero') and filtros['numero'] != registro.numero:
+                    incluir = False
+                if filtros.get('codigo') and filtros['codigo'].lower() not in registro.codigo.lower():
+                    incluir = False
+                if filtros.get('emissor') and filtros['emissor'].lower() not in registro.emissor.lower():
+                    incluir = False
+                if filtros.get('status') and filtros['status'].upper() != registro.status.upper():
+                    incluir = False
+                if filtros.get('decisao') and filtros['decisao'].upper() != registro.decisao.upper():
+                    incluir = False
+            
+            if not filtros or incluir:
+                registros.append(registro)
+        wb.close()
+        registros.sort(key=lambda x: x.data if x.data else datetime.min, reverse=True)
+    except Exception as e:
+        st.error(f"Erro ao carregar registros AR: {e}")
+    return registros
+
+def salvar_registro_ar(registro: RegistroAR, eh_alteracao: bool = False) -> bool:
+    try:
+        wb = load_workbook(CAMINHO_PLANILHA_AR, keep_vba=True, data_only=True)
+        ws = wb[ABA_AR]
+        
+        if eh_alteracao:
+            linha_encontrada = None
+            for row in range(6, ws.max_row + 1):
+                if ws[f"A{row}"].value == registro.numero:
+                    linha_encontrada = row
+                    break
+            if linha_encontrada:
+                linha = linha_encontrada
+            else:
+                ws.insert_rows(6)
+                linha = 6
+        else:
+            ws.insert_rows(6)
+            linha = 6
+        
+        ws[f"A{linha}"] = registro.numero
+        ws[f"B{linha}"] = registro.data
+        ws[f"C{linha}"] = registro.hora
+        ws[f"D{linha}"] = registro.codigo
+        ws[f"E{linha}"] = registro.emissor
+        ws[f"F{linha}"] = registro.referencia
+        ws[f"G{linha}"] = registro.decisao
+        ws[f"H{linha}"] = registro.descricao
+        ws[f"I{linha}"] = registro.status
+        ws[f"J{linha}"] = registro.disposicao
+        ws[f"K{linha}"] = registro.data_finalizacao
+        ws[f"L{linha}"] = registro.turno
+        
+        wb.save(CAMINHO_PLANILHA_AR)
+        wb.close()
+        return True
+    except Exception as e:
+        st.error(f"Erro ao salvar registro AR: {e}")
+        return False
+
+def excluir_registro_ar(numero: int) -> bool:
+    try:
+        wb = load_workbook(CAMINHO_PLANILHA_AR, keep_vba=True, data_only=True)
+        ws = wb[ABA_AR]
+        linha_encontrada = None
+        for row in range(6, ws.max_row + 1):
+            if ws[f"A{row}"].value == numero:
+                linha_encontrada = row
+                break
+        if linha_encontrada:
+            ws.delete_rows(linha_encontrada)
+            wb.save(CAMINHO_PLANILHA_AR)
+            wb.close()
+            return True
+        wb.close()
+        return False
+    except Exception as e:
+        st.error(f"Erro ao excluir registro AR: {e}")
+        return False
+
+def gerar_pdf_ar(registro: RegistroAR) -> Optional[bytes]:
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib import colors
+        from reportlab.lib.units import cm
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4)
+        elementos = []
+        styles = getSampleStyleSheet()
+        styleN = styles["Normal"]
+        style_grande = ParagraphStyle('style_grande', parent=styleN, fontSize=12, leading=16)
+        
+        elementos.append(Paragraph("<b>AVISO DE REJEIÇÃO</b>", ParagraphStyle(
+            name='Titulo', parent=styleN, fontSize=16, alignment=1, spaceAfter=12
+        )))
+        elementos.append(Paragraph("<b>CQ-018 REV004 - Luvidarte</b>", ParagraphStyle(
+            name='Subtitulo', parent=styleN, fontSize=12, alignment=1, spaceAfter=24
+        )))
+        
+        data_str = registro.data.strftime("%d/%m/%Y") if registro.data else ""
+        data_fim_str = registro.data_finalizacao.strftime("%d/%m/%Y") if registro.data_finalizacao else ""
+        
+        tabela_cabecalho = Table([
+            ["Nº Controle:", registro.numero, "Data:", data_str],
+            ["Hora:", registro.hora, "Turno:", registro.turno],
+            ["Código:", registro.codigo, "Status:", registro.status],
+            ["Emissor:", registro.emissor, "", ""],
+            ["Referência:", registro.referencia, "", ""],
+            ["Situação:", registro.decisao, "Data Finalização:", data_fim_str]
+        ], colWidths=[4*cm, 6*cm, 4*cm, 6*cm])
+        
+        tabela_cabecalho.setStyle(TableStyle([
+            ("GRID", (0,0), (-1,-1), 0.5, colors.black),
+            ("BACKGROUND", (0,0), (-1,0), colors.lightgrey),
+            ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+            ("ALIGN", (0,0), (-1,-1), "LEFT"),
+            ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+            ("PADDING", (0,0), (-1,-1), 6),
+            ("SPAN", (2,3), (3,3)),
+            ("SPAN", (2,4), (3,4)),
+        ]))
+        elementos.append(tabela_cabecalho)
+        elementos.append(Spacer(1, 24))
+        
+        elementos.append(Paragraph("<b>DESCRIÇÃO DO PROBLEMA:</b>", 
+                                 ParagraphStyle(name='SubtituloSecao', parent=styleN, fontSize=12, spaceAfter=6)))
+        elementos.append(Paragraph(registro.descricao or "-", style_grande))
+        elementos.append(Spacer(1, 24))
+        
+        elementos.append(Paragraph("<b>DISPOSIÇÃO / AÇÕES TOMADAS:</b>", 
+                                 ParagraphStyle(name='SubtituloSecao', parent=styleN, fontSize=12, spaceAfter=6)))
+        
+        if registro.disposicao and registro.disposicao.strip():
+            elementos.append(Paragraph(registro.disposicao, style_grande))
+            elementos.append(Spacer(1, 12))
+        
+        elementos.append(Paragraph("<b>ASSINATURAS:</b>", 
+                                 ParagraphStyle(name='SubtituloSecao', parent=styleN, fontSize=12, spaceAfter=6)))
+        
+        tabela_assinatura = Table([
+            ["Responsável:", "________________________________________"],
+            ["Cargo:", "________________________________________"],
+            ["Visto:", "________________________________________"],
+            ["Cargo:", "________________________________________"],
+            ["Data:", "________________________________________"]
+        ], colWidths=[4*cm, 14*cm])
+        
+        tabela_assinatura.setStyle(TableStyle([
+            ("GRID", (0,0), (-1,-1), 0.5, colors.lightgrey),
+            ("ALIGN", (0,0), (0,-1), "LEFT"),
+            ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+            ("PADDING", (0,0), (-1,-1), 10),
+            ("BACKGROUND", (0,0), (0,-1), colors.lightgrey),
+        ]))
+        elementos.append(tabela_assinatura)
+        
+        elementos.append(Spacer(1, 36))
+        elementos.append(Paragraph(f"Documento gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}", 
+                                 ParagraphStyle(name='Rodape', parent=styleN, fontSize=8, alignment=2)))
+        elementos.append(Paragraph("* Espaços em branco devem ser preenchidos manualmente após impressão", 
+                                 ParagraphStyle(name='RodapeInstrucao', parent=styleN, fontSize=8, alignment=2, textColor=colors.gray)))
+        
+        doc.build(elementos)
+        buffer.seek(0)
+        return buffer.getvalue()
+    except Exception as e:
+        st.error(f"Erro ao gerar PDF AR: {e}")
+        return None
+
+def enviar_email_ar(destinatarios, assunto, corpo, anexo_bytes=None, nome_anexo=None):
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = EMAIL_CONFIG_AR["usuario"]
+        msg['To'] = ", ".join(destinatarios)
+        msg['Subject'] = assunto
+        msg.attach(MIMEText(corpo, 'plain'))
+        if anexo_bytes and nome_anexo:
+            anexo = MIMEApplication(anexo_bytes, _subtype='pdf')
+            anexo.add_header('Content-Disposition', 'attachment', filename=nome_anexo)
+            msg.attach(anexo)
+        with smtplib.SMTP_SSL(EMAIL_CONFIG_AR["smtp_server"], EMAIL_CONFIG_AR["smtp_port"], timeout=30) as server:
+            server.login(EMAIL_CONFIG_AR["usuario"], EMAIL_CONFIG_AR["senha"])
+            server.send_message(msg)
+        return True
+    except Exception as e:
+        st.error(f"Erro ao enviar e-mail AR: {e}")
+        return False
+
+# ======================
+# FUNÇÕES DE RENDERIZAÇÃO
+# ======================
+def render_page_header(title: str, subtitle: str, accent: str = None):
+    if accent is None:
+        accent = THEME['accent_cyan']
+    st.markdown(f"""
+    <div style="padding: 28px 0 20px 0; border-bottom: 1px solid {THEME['border_bright']}; margin-bottom: 28px; display: flex; align-items: center; gap: 16px;">
+        <div style="width: 4px; height: 48px; background: linear-gradient(180deg, {accent}, transparent); border-radius: 2px;"></div>
+        <div>
+            <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.25em; color: {accent}; text-transform: uppercase;">LUVIDARTE / TRS DASHBOARD</div>
+            <div style="font-family: 'Rajdhani', sans-serif; font-size: 36px; font-weight: 700; color: {THEME['text_primary']}; letter-spacing: 0.1em; text-transform: uppercase;">{title}</div>
+            <div style="font-family: 'Barlow', sans-serif; font-size: 13px; color: {THEME['text_muted']}; margin-top: 4px;">{subtitle}</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+def render_section_header(title: str, icon: str = "▸", accent: str = None):
+    if accent is None:
+        accent = THEME['accent_cyan']
+    st.markdown(f"""
+    <div style="display: flex; align-items: center; gap: 10px; margin: 28px 0 14px 0; padding-bottom: 8px; border-bottom: 1px solid {THEME['border']};">
+        <span style="color: {accent}; font-size: 16px;">{icon}</span>
+        <span style="font-family: 'Rajdhani', sans-serif; font-size: 18px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: {THEME['text_primary']};">{title}</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+def render_kpi_card(label: str, value: str, accent: str = None, icon: str = ""):
+    if accent is None:
+        accent = THEME['accent_cyan']
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, {THEME['bg_card']} 0%, {THEME['bg_card2']} 100%); border: 1px solid {THEME['border_bright']}; border-radius: 8px; padding: 18px 22px; position: relative; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+        <div style="position: absolute; top: 0; left: 0; right: 0; height: 2px; background: linear-gradient(90deg, {accent}, transparent);"></div>
+        <div style="font-family: 'JetBrains Mono', monospace; font-size: 9px; letter-spacing: 0.2em; text-transform: uppercase; color: {THEME['text_muted']}; margin-bottom: 8px;">{icon} {label}</div>
+        <div style="font-family: 'Rajdhani', sans-serif; font-size: 34px; font-weight: 700; color: {accent}; letter-spacing: 0.03em; line-height: 1;">{value}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+def apply_chart_style(ax, fig, title: str, xlabel: str = "", ylabel: str = "", accent: str = None):
+    if accent is None:
+        accent = THEME['accent_cyan']
+    fig.patch.set_facecolor(THEME['bg_card'])
+    ax.set_facecolor(THEME['bg_card'])
+    ax.set_title(title, fontsize=14, fontweight='bold', color=THEME['text_primary'], pad=16, loc='left')
+    if xlabel:
+        ax.set_xlabel(xlabel, fontsize=10, color=THEME['text_muted'], labelpad=8)
+    if ylabel:
+        ax.set_ylabel(ylabel, fontsize=10, color=THEME['text_muted'], labelpad=8)
+    ax.tick_params(colors=THEME['text_muted'], labelsize=9)
+    ax.grid(True, alpha=0.3, color=THEME['grid'], linewidth=0.8, linestyle='--')
+    ax.set_axisbelow(True)
+    for spine in ax.spines.values():
+        spine.set_edgecolor(THEME['border_bright'])
+        spine.set_linewidth(0.8)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+
+# ======================
+# CSS GLOBAL
+# ======================
+st.markdown(f"""
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Barlow:wght@300;400;500;600&display=swap');
+
+  html, body, [class*="css"] {{
+      font-family: 'Barlow', sans-serif;
+      background-color: {THEME['bg_primary']} !important;
+      color: {THEME['text_primary']} !important;
+  }}
+  .stApp {{ background-color: {THEME['bg_primary']} !important; }}
+
+  [data-testid="stSidebar"] {{
+      background: linear-gradient(180deg, #FFFFFF 0%, #F0F2F5 100%) !important;
+      border-right: 1px solid {THEME['border_bright']} !important;
+  }}
+  
+  [data-testid="stSidebar"] .stRadio label {{
+      color: #000000 !important;
+      font-weight: bold !important;
+      font-family: 'Rajdhani', sans-serif !important;
+      font-size: 15px !important;
+      letter-spacing: 0.08em;
+  }}
+  
+  [data-testid="stSidebar"] .stRadio * {{
+      color: #000000 !important;
+      font-weight: bold !important;
+  }}
+  
+  [data-testid="stSidebar"] .stSelectbox label,
+  [data-testid="stSidebar"] .stTextInput label,
+  [data-testid="stSidebar"] .stDateInput label,
+  [data-testid="stSidebar"] .stNumberInput label,
+  [data-testid="stSidebar"] .stCheckbox label {{
+      color: #000000 !important;
+      font-weight: bold !important;
+      font-family: 'JetBrains Mono', monospace !important;
+      font-size: 11px !important;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+  }}
+  
+  [data-testid="stSidebar"] h1 {{
+      font-family: 'Rajdhani', sans-serif !important;
+      color: {THEME['accent_cyan']} !important;
+      font-size: 20px !important;
+      font-weight: 700 !important;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      border-bottom: 1px solid {THEME['border_bright']};
+      padding-bottom: 8px;
+  }}
+
+  .stSelectbox div[data-baseweb="select"] > div,
+  .stTextInput input,
+  .stNumberInput input,
+  .stDateInput input {{
+      background-color: {THEME['bg_card']} !important;
+      border: 1px solid {THEME['border_bright']} !important;
+      color: {THEME['text_primary']} !important;
+      border-radius: 4px !important;
+      font-family: 'JetBrains Mono', monospace !important;
+      font-size: 12px !important;
+  }}
+
+  [data-testid="stMetric"] {{
+      background: linear-gradient(135deg, {THEME['bg_card']} 0%, {THEME['bg_card2']} 100%) !important;
+      border: 1px solid {THEME['border_bright']} !important;
+      border-radius: 8px !important;
+      padding: 16px 20px !important;
+      position: relative;
+      overflow: hidden;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+  }}
+  
+  [data-testid="stMetric"]::before {{
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, {THEME['accent_cyan']}, transparent);
+  }}
+  
+  [data-testid="stMetricLabel"] {{
+      font-family: 'JetBrains Mono', monospace !important;
+      font-size: 10px !important;
+      font-weight: 500 !important;
+      letter-spacing: 0.15em !important;
+      text-transform: uppercase !important;
+      color: {THEME['text_muted']} !important;
+  }}
+  
+  [data-testid="stMetricValue"] {{
+      font-family: 'Rajdhani', sans-serif !important;
+      font-size: 32px !important;
+      font-weight: 700 !important;
+      color: {THEME['accent_cyan']} !important;
+      letter-spacing: 0.05em;
+  }}
+
+  h1 {{
+      font-family: 'Rajdhani', sans-serif !important;
+      font-weight: 700 !important;
+      font-size: 26px !important;
+      letter-spacing: 0.1em !important;
+      text-transform: uppercase !important;
+      color: {THEME['text_primary']} !important;
+  }}
+  
+  h2, h3 {{
+      font-family: 'Rajdhani', sans-serif !important;
+      font-weight: 600 !important;
+      letter-spacing: 0.08em !important;
+      text-transform: uppercase !important;
+      color: {THEME['text_primary']} !important;
+  }}
+
+  .stDataFrame {{
+      border: 1px solid {THEME['border_bright']} !important;
+      border-radius: 6px !important;
+      overflow: hidden;
+  }}
+  
+  .stDataFrame thead th {{
+      background-color: {THEME['bg_card']} !important;
+      color: {THEME['accent_cyan']} !important;
+      font-family: 'JetBrains Mono', monospace !important;
+      font-size: 11px !important;
+      text-transform: uppercase !important;
+      letter-spacing: 0.1em !important;
+  }}
+
+  hr {{
+      border: none !important;
+      border-top: 1px solid {THEME['border_bright']} !important;
+      margin: 24px 0 !important;
+  }}
+
+  .stInfo {{ background-color: rgba(0,120,212,0.08) !important; border-left: 3px solid {THEME['accent_cyan']} !important; }}
+  .stWarning {{ background-color: rgba(232,108,44,0.08) !important; border-left: 3px solid {THEME['accent_orange']} !important; }}
+  .stSuccess {{ background-color: rgba(16,124,16,0.08) !important; border-left: 3px solid {THEME['accent_lime']} !important; }}
+  .stError {{ background-color: rgba(232,17,35,0.08) !important; border-left: 3px solid {THEME['accent_red']} !important; }}
+</style>
+""", unsafe_allow_html=True)
+
+# ======================
+# SIDEBAR - navegação
+# ======================
+with st.sidebar:
+    st.markdown(f"""
+    <div style="text-align: center; padding: 20px 0 16px; border-bottom: 1px solid {THEME['border_bright']}; margin-bottom: 20px;">
+        <div style="font-family: 'Rajdhani', sans-serif; font-size: 24px; font-weight: 700; color: {THEME['accent_cyan']}; letter-spacing: 0.2em;">⚙ TRS</div>
+        <div style="font-family: 'JetBrains Mono', monospace; font-size: 9px; color: {THEME['text_muted']}; letter-spacing: 0.2em; text-transform: uppercase;">Industrial Dashboard</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown(f"<div style='font-family:JetBrains Mono,monospace;font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:{THEME['accent_cyan']};margin-bottom:8px'>▸ Setor</div>", unsafe_allow_html=True)
+    aba_selecionada = st.radio("", list(ABAS.keys()), label_visibility="collapsed")
 
 # ==================================================================================================
 # PRENSADOS
 # ==================================================================================================
 if aba_selecionada == 'PRENSADOS':
-    ABA = 'TRS_INDUSTRIAL'
-
-    @st.cache_data(ttl=300)
-    def carregar_dados_prensados():
-        try:
-            client = get_gspread_client()
-            if client is None:
-                return pd.DataFrame()
-            sheet = client.open_by_key(ID_PLANILHA_PRENSADOS_SOPRO).worksheet(ABA)
-            todos_dados = sheet.get_all_values()
-            if len(todos_dados) < 2:
-                return pd.DataFrame()
-            cabecalho = todos_dados[1]
-            valores = todos_dados[2:]
-            df = pd.DataFrame(valores, columns=cabecalho)
-            df.columns = df.columns.str.strip().str.upper()
-            if 'DATA' in df.columns:
-                df['DATA'] = df['DATA'].apply(converter_data_br)
-                df = df.dropna(subset=['DATA'])
-            if 'APROVADO FINAL' in df.columns:
-                df = df.rename(columns={'APROVADO FINAL': 'EMBALADO'})
-            colunas_numericas = ['PRODUZIDO', 'APROVADO', 'EMBALADO', 'TRS 100%', 'REFUGADO', 'BOQUETA']
-            for col in colunas_numericas:
-                if col in df.columns:
-                    df[col] = df[col].apply(converter_numero_br)
-            df['ANO_MES'] = df['DATA'].dt.to_period('M').astype(str)
-            df['DIA_SEMANA'] = df['DATA'].dt.day_name()
-            df['SEMANA'] = df['DATA'].dt.isocalendar().week
-            df['IS_SABADO'] = df['DATA'].dt.dayofweek == 5
-            for col in df.columns:
-                col_upper = str(col).upper()
-                if 'ACERTO' in col_upper and 'MIN' not in col_upper:
-                    df['ACERTOS_MIN'] = df[col].apply(converter_tempo_para_minutos)
-                if 'MANUT' in col_upper and 'MIN' not in col_upper:
-                    df['MANUT_MIN'] = df[col].apply(converter_tempo_para_minutos)
-                if 'HORAS TOTAIS' in col_upper or 'HORA TOTAL' in col_upper:
-                    df['HORAS_TOTAIS_MIN'] = df[col].apply(converter_tempo_para_minutos)
-            if 'ACERTOS_MIN' in df.columns:
-                df['ACERTOS_MIN_AJUSTADO'] = df.apply(
-                    lambda row: max(0, row['ACERTOS_MIN'] - 165) if row['IS_SABADO'] else row['ACERTOS_MIN'], axis=1
-                )
-            return df
-        except Exception as e:
-            st.error(f"Erro ao carregar dados de Prensados: {e}")
-            return pd.DataFrame()
-
     with st.spinner("Carregando dados..."):
         df_base = carregar_dados_prensados()
 
@@ -691,7 +981,6 @@ if aba_selecionada == 'PRENSADOS':
         if col in df_base_calc.columns:
             df_base_calc[col] = pd.to_numeric(df_base_calc[col], errors='coerce').fillna(0)
 
-    # Calcular TRS 1ª Escolha e TRS Final
     if 'TRS 100%' in df_base_calc.columns:
         df_base_calc['TRS 1ª ESCOLHA (%)'] = df_base_calc.apply(
             lambda row: (row['APROVADO'] / row['TRS 100%'] * 100) if row['TRS 100%'] != 0 else 0, axis=1
@@ -712,7 +1001,7 @@ if aba_selecionada == 'PRENSADOS':
                 if max_trs > 0:
                     melhores_trs_historico[ref] = max_trs
 
-    # ── Sidebar filtros PRENSADOS ──
+    # Sidebar filtros PRENSADOS
     with st.sidebar:
         st.markdown(f"<div style='font-family:JetBrains Mono,monospace;font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:{THEME['accent_cyan']};margin:20px 0 10px;border-top:1px solid {THEME['border_bright']};padding-top:16px'>▸ Filtros · Prensados</div>", unsafe_allow_html=True)
         filtro_melhores_trs = st.checkbox("Melhores TRS por Referência", value=False)
@@ -724,7 +1013,7 @@ if aba_selecionada == 'PRENSADOS':
         mostrar_defeitos = st.checkbox("Somatório de Defeitos", value=True, key="prensados_defeitos")
         qtd = st.number_input("Linhas na tabela (0 = todas)", min_value=0, max_value=5000, value=0, step=10, key="prensados_qtd")
 
-    # ── Aplicar filtros ──
+    # Aplicar filtros
     df = df_base.copy()
     if data_ini:
         df = df[df['DATA'] >= pd.to_datetime(data_ini)]
@@ -740,7 +1029,7 @@ if aba_selecionada == 'PRENSADOS':
         elif "Auto" in prensa_tipo:
             df = df[df['BOQUETA'] == 2]
 
-    # ── KPIs ──
+    # KPIs
     if not df.empty:
         for col in ['PRODUZIDO', 'APROVADO', 'EMBALADO', 'TRS 100%', 'REFUGADO']:
             if col in df.columns:
@@ -756,200 +1045,98 @@ if aba_selecionada == 'PRENSADOS':
     else:
         total_prod = total_apro = total_embal = total_meta = trs_primeira_escolha = trs_final_total = 0
 
-    # ── Page header ──
-    render_page_header(
-        "PRENSADOS",
-        f"Industrial · {len(df):,} registros carregados · Atualizado {get_horario_brasilia()}",
-        THEME['accent_cyan']
-    )
+    # Page header
+    render_page_header("PRENSADOS", f"Industrial · {len(df):,} registros carregados · Atualizado {get_horario_brasilia()}", THEME['accent_cyan'])
 
-    # ── KPIs (6 cards) ──
+    # KPIs (6 cards)
     c1, c2, c3, c4, c5, c6 = st.columns(6)
-
-    with c1: 
-        render_kpi_card("Produzido", f"{total_prod:,}".replace(",","."), THEME['accent_cyan'], "◈")
-
-    with c2: 
-        render_kpi_card("Aprovado", f"{total_apro:,}".replace(",","."), THEME['accent_lime'], "◈")
-
-    with c3: 
-        render_kpi_card("Meta Líquida", f"{total_meta:,}".replace(",","."), THEME['accent_purple'], "◈")
-
-    with c4: 
-        render_kpi_card("Embalado", f"{total_embal:,}".replace(",","."), THEME['accent_yellow'], "◈")
-
+    with c1: render_kpi_card("Produzido", f"{total_prod:,}".replace(",","."), THEME['accent_cyan'], "◈")
+    with c2: render_kpi_card("Aprovado", f"{total_apro:,}".replace(",","."), THEME['accent_lime'], "◈")
+    with c3: render_kpi_card("Meta Líquida", f"{total_meta:,}".replace(",","."), THEME['accent_purple'], "◈")
+    with c4: render_kpi_card("Embalado", f"{total_embal:,}".replace(",","."), THEME['accent_yellow'], "◈")
     with c5:
         trs_primeira_cor = THEME['accent_lime'] if trs_primeira_escolha >= 85 else THEME['accent_orange'] if trs_primeira_escolha >= 70 else THEME['accent_red']
         render_kpi_card("TRS 1ª Escolha", f"{trs_primeira_escolha:.1f}%", trs_primeira_cor, "◎")
-
     with c6:
         trs_final_cor = THEME['accent_lime'] if trs_final_total >= 85 else THEME['accent_orange'] if trs_final_total >= 70 else THEME['accent_red']
         render_kpi_card("TRS Final", f"{trs_final_total:.1f}%", trs_final_cor, "◎")
 
-    # ── Tabela de produção ──
+    # Tabela de produção
     render_section_header("Tabela de Produção", "▸")
 
     if not df.empty:
-        # Calcular TRS para cada linha
         if 'TRS 100%' in df.columns:
-            df['TRS 1ª ESCOLHA (%)'] = df.apply(
-                lambda r: (r['APROVADO'] / r['TRS 100%'] * 100) if r['TRS 100%'] != 0 else 0, axis=1
-            )
-            df['TRS FINAL (%)'] = df.apply(
-                lambda r: (r['EMBALADO'] / r['TRS 100%'] * 100) if r['TRS 100%'] != 0 else 0, axis=1
-            )
-        else:
-            df['TRS 1ª ESCOLHA (%)'] = 0
-            df['TRS FINAL (%)'] = 0
-        
+            df['TRS 1ª ESCOLHA (%)'] = df.apply(lambda r: (r['APROVADO'] / r['TRS 100%'] * 100) if r['TRS 100%'] != 0 else 0, axis=1)
+            df['TRS FINAL (%)'] = df.apply(lambda r: (r['EMBALADO'] / r['TRS 100%'] * 100) if r['TRS 100%'] != 0 else 0, axis=1)
         df['TRS 1ª ESCOLHA (%)'] = df['TRS 1ª ESCOLHA (%)'].round(2)
         df['TRS FINAL (%)'] = df['TRS FINAL (%)'].round(2)
 
     df_sorted = df.sort_values(by="DATA", ascending=False).reset_index(drop=True)
 
     if filtro_melhores_trs and not df_sorted.empty and 'REFERÊNCIA' in df_sorted.columns:
-        df_sorted = df_sorted[df_sorted.apply(
-            lambda row: row['REFERÊNCIA'] in melhores_trs_historico and
-                        abs(row['TRS FINAL (%)'] - melhores_trs_historico[row['REFERÊNCIA']]) < 0.01, axis=1
-        )].reset_index(drop=True)
+        df_sorted = df_sorted[df_sorted.apply(lambda row: row['REFERÊNCIA'] in melhores_trs_historico and abs(row['TRS FINAL (%)'] - melhores_trs_historico[row['REFERÊNCIA']]) < 0.01, axis=1)].reset_index(drop=True)
         if not df_sorted.empty:
             st.info(f"Exibindo {len(df_sorted)} registro(s) — Melhor TRS Final Histórico por referência")
-        else:
-            st.warning("Nenhum registro encontrado com Melhor TRS Final Histórico")
 
     df_view = df_sorted if qtd == 0 else df_sorted.head(qtd)
 
     if not df_view.empty:
         df_display = df_view.copy()
         df_display['DATA'] = pd.to_datetime(df_display['DATA']).dt.strftime('%d/%m/%Y')
-
         for col in ['PRODUZIDO', 'APROVADO', 'EMBALADO', 'REFUGADO', 'TRS 100%']:
             if col in df_display.columns:
                 df_display[col] = df_display[col].apply(lambda x: int(round(x)) if pd.notnull(x) else 0)
                 df_display[col] = df_display[col].apply(lambda x: f"{x:,}".replace(",", "."))
-        
         if 'TRS 1ª ESCOLHA (%)' in df_display.columns:
             df_display['TRS 1ª ESCOLHA (%)'] = df_display['TRS 1ª ESCOLHA (%)'].apply(lambda x: f"{x:.2f}%")
         if 'TRS FINAL (%)' in df_display.columns:
             df_display['TRS FINAL (%)'] = df_display['TRS FINAL (%)'].apply(lambda x: f"{x:.2f}%")
-
-        colunas_exibir = ['DATA', 'REFERÊNCIA', 'TURNO', 'PRODUZIDO', 'APROVADO', 'TRS 100%', 
-                          'EMBALADO', 'REFUGADO', 'TRS 1ª ESCOLHA (%)', 'TRS FINAL (%)']
+        colunas_exibir = ['DATA', 'REFERÊNCIA', 'TURNO', 'PRODUZIDO', 'APROVADO', 'TRS 100%', 'EMBALADO', 'REFUGADO', 'TRS 1ª ESCOLHA (%)', 'TRS FINAL (%)']
         if 'ANALISE' in df_display.columns:
             colunas_exibir.append('ANALISE')
         colunas_exibir = [col for col in colunas_exibir if col in df_display.columns]
+        st.dataframe(df_display[colunas_exibir], use_container_width=True, height=400)
 
-        # FUNÇÃO: linha de análise sempre abaixo da linha correspondente
-        def render_tabela_com_analise(df_display, colunas_exibir, melhores_trs_historico):
-            cols_sem_analise = [c for c in colunas_exibir if c != 'ANALISE']
-            
-            # Constrói as linhas na ordem correta: linha normal, depois análise (abaixo)
-            linhas_finais = []
-            for idx, row in df_display.iterrows():
-                # 1. Linha normal de dados
-                linha_normal = {col: row[col] for col in cols_sem_analise if col in row.index}
-                linha_normal['_tipo'] = 'dado'
-                linhas_finais.append(linha_normal)
-                
-                # 2. Linha de análise (se existir) - sempre ABAIXO da linha correspondente
-                if 'ANALISE' in df_display.columns:
-                    v = row.get('ANALISE', '')
-                    if pd.notna(v) and str(v).strip():
-                        linha_analise = {}
-                        for i, col in enumerate(cols_sem_analise):
-                            if i == 0:
-                                linha_analise[col] = '📋 ANÁLISE:'
-                            elif i == 1:
-                                linha_analise[col] = str(v)
-                            else:
-                                linha_analise[col] = ''
-                        linha_analise['_tipo'] = 'analise'
-                        linhas_finais.append(linha_analise)
-            
-            df_final = pd.DataFrame(linhas_finais)
-            
-            # Função de estilo
-            def destacar_linhas(row):
-                if row.get('_tipo') == 'analise':
-                    return [f'background-color: #E6F2E6; color: #107C10; font-style: italic; font-family: JetBrains Mono, monospace; font-size: 11px;'] * len(row)
-                ref = row.get('REFERÊNCIA', '')
-                if ref in melhores_trs_historico:
-                    trs_v = row.get('TRS FINAL (%)', '0')
-                    if isinstance(trs_v, str):
-                        trs_v = float(trs_v.replace('%', '').replace(',', '.'))
-                    if abs(trs_v - melhores_trs_historico[ref]) < 0.01:
-                        return ['background-color: #FFF4E6; color: #D48806; font-weight: 600;'] * len(row)
-                return [''] * len(row)
-            
-            styled_df = df_final[cols_sem_analise].style.apply(destacar_linhas, axis=1)
-            st.dataframe(styled_df, use_container_width=True, height=500)
-        
-        render_tabela_com_analise(df_display, colunas_exibir, melhores_trs_historico)
-
-        if not filtro_melhores_trs:
-            st.caption("▸ Dourado: Melhor TRS Final Histórico por referência   ▸ Verde: Análise registrada")
-
-    # ── Gráfico TRS Diário ──
+    # Gráfico TRS Diário
     render_section_header("Evolução Diária do TRS", "▸")
-
     if not df.empty and 'TRS 100%' in df.columns:
-        # CORREÇÃO: Apenas as colunas que existem em Prensados
         colunas_agg = {}
         for col in ['PRODUZIDO', 'APROVADO', 'EMBALADO', 'TRS 100%']:
             if col in df.columns:
                 colunas_agg[col] = 'sum'
-        
         if colunas_agg:
             resumo_dia = df.groupby(df['DATA'].dt.date).agg(colunas_agg).reset_index()
             resumo_dia['DATA'] = pd.to_datetime(resumo_dia['DATA'])
-            
             if 'APROVADO' in resumo_dia.columns and 'TRS 100%' in resumo_dia.columns:
                 resumo_dia['TRS 1ª ESCOLHA (%)'] = (resumo_dia['APROVADO'] / resumo_dia['TRS 100%'].replace(0, 1) * 100).fillna(0)
-            
             if 'EMBALADO' in resumo_dia.columns and 'TRS 100%' in resumo_dia.columns:
                 resumo_dia['TRS FINAL (%)'] = (resumo_dia['EMBALADO'] / resumo_dia['TRS 100%'].replace(0, 1) * 100).fillna(0)
-            
             resumo_dia = resumo_dia.sort_values('DATA')
-
             if not resumo_dia.empty and ('TRS 1ª ESCOLHA (%)' in resumo_dia.columns or 'TRS FINAL (%)' in resumo_dia.columns):
                 fig, ax = plt.subplots(figsize=(14, 5), facecolor=THEME['bg_card'])
                 apply_chart_style(ax, fig, "TRS Diário — Período Selecionado", ylabel="TRS (%)")
-
-                # Linha TRS 1ª Escolha
                 if 'TRS 1ª ESCOLHA (%)' in resumo_dia.columns:
                     ax.plot(resumo_dia['DATA'], resumo_dia['TRS 1ª ESCOLHA (%)'],
                             marker='o', markersize=6, linewidth=2.5,
-                            color=THEME['accent_cyan'], alpha=0.95, label='TRS 1ª Escolha',
-                            markerfacecolor=THEME['bg_card'], markeredgecolor=THEME['accent_cyan'], markeredgewidth=2)
-
-                # Linha TRS Final
+                            color=THEME['accent_cyan'], alpha=0.95, label='TRS 1ª Escolha')
                 if 'TRS FINAL (%)' in resumo_dia.columns:
                     ax.plot(resumo_dia['DATA'], resumo_dia['TRS FINAL (%)'],
                             marker='s', markersize=6, linewidth=2.5,
-                            color=THEME['accent_orange'], alpha=0.95, label='TRS Final',
-                            markerfacecolor=THEME['bg_card'], markeredgecolor=THEME['accent_orange'], markeredgewidth=2)
-
-                # Meta
+                            color=THEME['accent_orange'], alpha=0.95, label='TRS Final')
                 ax.axhline(y=85, color=THEME['accent_red'], linestyle=':', alpha=0.7, linewidth=1.5, label='Meta 85%')
-
-                ax.legend(framealpha=0.15, facecolor=THEME['bg_card'], edgecolor=THEME['border_bright'],
-                          labelcolor=THEME['text_primary'], fontsize=9)
-                plt.setp(ax.xaxis.get_majorticklabels(), rotation=35, ha='right', fontsize=8,
-                         color=THEME['text_muted'])
+                ax.legend(framealpha=0.15, facecolor=THEME['bg_card'], edgecolor=THEME['border_bright'], labelcolor=THEME['text_primary'], fontsize=9)
+                plt.setp(ax.xaxis.get_majorticklabels(), rotation=35, ha='right', fontsize=8, color=THEME['text_muted'])
                 fig.tight_layout(pad=1.5)
                 st.pyplot(fig)
                 plt.close(fig)
 
     st.markdown("<hr>", unsafe_allow_html=True)
 
-    # ── Manual vs Automática ──
+    # Manual vs Automática
     render_section_header("Desempenho por Tipo de Prensa", "▸")
     col1, col2 = st.columns(2)
-
     with col1:
-        st.markdown(f"""<div style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.2em;
-            text-transform:uppercase;color:{THEME['text_muted']};margin-bottom:8px">▸ Semi-Automática (Manual)</div>""",
-            unsafe_allow_html=True)
+        st.markdown(f"""<div style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:{THEME['text_muted']};margin-bottom:8px">▸ Semi-Automática (Manual)</div>""", unsafe_allow_html=True)
         if 'BOQUETA' in df.columns:
             df_manual = df[df['BOQUETA'] == 1]
             if not df_manual.empty:
@@ -959,17 +1146,13 @@ if aba_selecionada == 'PRENSADOS':
                 trs1_m = (t_ap_m / t_mt_m * 100) if t_mt_m > 0 else 0
                 trs_final_m = (t_emb_m / t_mt_m * 100) if t_mt_m > 0 else 0
                 prod_m = df_manual['PRODUZIDO'].sum()
-                
                 trs_color_m = THEME['accent_lime'] if trs1_m >= 85 else THEME['accent_orange'] if trs1_m >= 70 else THEME['accent_red']
                 render_kpi_card("TRS 1ª Escolha — Manual", f"{trs1_m:.1f}%", trs_color_m)
                 st.caption(f"TRS Final: {trs_final_m:.1f}% | Produção: {prod_m:,.0f} un".replace(",","."))
             else:
                 st.info("Sem dados para Prensa Manual")
-
     with col2:
-        st.markdown(f"""<div style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.2em;
-            text-transform:uppercase;color:{THEME['text_muted']};margin-bottom:8px">▸ Automática</div>""",
-            unsafe_allow_html=True)
+        st.markdown(f"""<div style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:{THEME['text_muted']};margin-bottom:8px">▸ Automática</div>""", unsafe_allow_html=True)
         if 'BOQUETA' in df.columns:
             df_auto = df[df['BOQUETA'] == 2]
             if not df_auto.empty:
@@ -979,7 +1162,6 @@ if aba_selecionada == 'PRENSADOS':
                 trs1_a = (t_ap_a / t_mt_a * 100) if t_mt_a > 0 else 0
                 trs_final_a = (t_emb_a / t_mt_a * 100) if t_mt_a > 0 else 0
                 prod_a = df_auto['PRODUZIDO'].sum()
-                
                 trs_color_a = THEME['accent_lime'] if trs1_a >= 85 else THEME['accent_orange'] if trs1_a >= 70 else THEME['accent_red']
                 render_kpi_card("TRS 1ª Escolha — Automática", f"{trs1_a:.1f}%", trs_color_a)
                 st.caption(f"TRS Final: {trs_final_a:.1f}% | Produção: {prod_a:,.0f} un".replace(",","."))
@@ -988,25 +1170,21 @@ if aba_selecionada == 'PRENSADOS':
 
     st.markdown("<hr>", unsafe_allow_html=True)
 
-    # ── Análise de Paradas ──
+    # Análise de Paradas
     render_section_header("Análise de Paradas", "▸")
-
     horas_trabalhadas = 0
     total_acertos = 0
     total_manut = 0
-
     if 'HORAS_TOTAIS_MIN' in df.columns:
         horas_trabalhadas = df['HORAS_TOTAIS_MIN'].sum()
     else:
         dias_uteis = df[~df['IS_SABADO']]['DATA'].nunique() if 'IS_SABADO' in df.columns else 0
         dias_sabado = df[df['IS_SABADO']]['DATA'].nunique() if 'IS_SABADO' in df.columns else 0
         horas_trabalhadas = (dias_uteis * 8 * 60) + (dias_sabado * 6 * 60)
-
     total_acertos = df['ACERTOS_MIN_AJUSTADO'].sum() if 'ACERTOS_MIN_AJUSTADO' in df.columns else 0
     total_manut = df['MANUT_MIN'].sum() if 'MANUT_MIN' in df.columns else 0
     total_paradas = total_acertos + total_manut
     horas_produtivas = max(0, horas_trabalhadas - total_paradas)
-
     p1, p2, p3, p4 = st.columns(4)
     with p1: render_kpi_card("Horas Trabalhadas", minutos_para_horas_str(horas_trabalhadas), THEME['accent_cyan'])
     with p2: render_kpi_card("Acertos", minutos_para_horas_str(total_acertos), THEME['accent_yellow'])
@@ -1014,7 +1192,6 @@ if aba_selecionada == 'PRENSADOS':
     with p4: render_kpi_card("Horas Produtivas", minutos_para_horas_str(horas_produtivas), THEME['accent_lime'])
 
     col1, col2 = st.columns(2)
-
     with col1:
         if 'BOQUETA' in df.columns:
             df_manual_p = df[df['BOQUETA'] == 1]
@@ -1023,62 +1200,43 @@ if aba_selecionada == 'PRENSADOS':
             manut_m = df_manual_p['MANUT_MIN'].sum() if 'MANUT_MIN' in df.columns else 0
             acertos_a = df_auto_p['ACERTOS_MIN_AJUSTADO'].sum() if 'ACERTOS_MIN_AJUSTADO' in df.columns else 0
             manut_a = df_auto_p['MANUT_MIN'].sum() if 'MANUT_MIN' in df.columns else 0
-
             categorias = ['Manual', 'Automática']
             acertos_v = [acertos_m, acertos_a]
             manut_v = [manut_m, manut_a]
-
             fig, ax = plt.subplots(figsize=(7, 5), facecolor=THEME['bg_card'])
             apply_chart_style(ax, fig, "Composição das Paradas", ylabel="Minutos")
-
             x = np.arange(len(categorias))
             w = 0.55
             ax.bar(x, acertos_v, w, label='Acertos', color=THEME['accent_yellow'], alpha=0.88, edgecolor=THEME['bg_card'], linewidth=1.5)
             ax.bar(x, manut_v, w, bottom=acertos_v, label='Manutenção', color=THEME['accent_red'], alpha=0.88, edgecolor=THEME['bg_card'], linewidth=1.5)
-
             for i, (a, m) in enumerate(zip(acertos_v, manut_v)):
                 total = a + m
                 if a > 0: ax.text(i, a/2, minutos_para_horas_str(a), ha='center', va='center', color='black', fontweight='bold', fontsize=10)
                 if m > 0: ax.text(i, a + m/2, minutos_para_horas_str(m), ha='center', va='center', color='black', fontweight='bold', fontsize=10)
                 if total > 0:
-                    ax.text(i, total * 1.05, minutos_para_horas_str(total),
-                            ha='center', va='bottom', color=THEME['text_primary'], fontweight='bold', fontsize=11)
-
+                    ax.text(i, total * 1.05, minutos_para_horas_str(total), ha='center', va='bottom', color=THEME['text_primary'], fontweight='bold', fontsize=11)
             ax.set_xticks(x)
             ax.set_xticklabels(categorias, fontsize=10, color=THEME['text_muted'])
-            ax.legend(framealpha=0.15, facecolor=THEME['bg_card'], edgecolor=THEME['border_bright'],
-                      labelcolor=THEME['text_primary'], fontsize=9)
+            ax.legend(framealpha=0.15, facecolor=THEME['bg_card'], edgecolor=THEME['border_bright'], labelcolor=THEME['text_primary'], fontsize=9)
             fig.tight_layout(pad=1.5)
             st.pyplot(fig)
             plt.close(fig)
-
     with col2:
         if horas_trabalhadas > 0:
             labels_p = ['Produtivas', 'Acertos', 'Manutenção']
             vals_p = [horas_produtivas, total_acertos, total_manut]
             cores_p = [THEME['accent_lime'], THEME['accent_yellow'], THEME['accent_red']]
             lf, vf, cf = zip(*[(l, v, c) for l, v, c in zip(labels_p, vals_p, cores_p) if v > 0]) if any(v > 0 for v in vals_p) else ([], [], [])
-
             if vf:
                 fig, ax = plt.subplots(figsize=(7, 5), facecolor=THEME['bg_card'])
                 fig.patch.set_facecolor(THEME['bg_card'])
                 ax.set_facecolor(THEME['bg_card'])
-
-                wedges, texts, autotexts = ax.pie(
-                    vf, labels=lf, colors=cf,
-                    autopct='%1.1f%%', startangle=90,
-                    textprops={'color': THEME['text_primary'], 'fontsize': 10},
-                    wedgeprops={'edgecolor': THEME['bg_card'], 'linewidth': 2}
-                )
+                wedges, texts, autotexts = ax.pie(vf, labels=lf, colors=cf, autopct='%1.1f%%', startangle=90, textprops={'color': THEME['text_primary'], 'fontsize': 10}, wedgeprops={'edgecolor': THEME['bg_card'], 'linewidth': 2})
                 for at in autotexts:
                     at.set_color('black')
                     at.set_fontweight('bold')
                     at.set_fontsize(10)
-
-                ax.set_title(
-                    f"Distribuição do Tempo\n{minutos_para_horas_str(horas_trabalhadas)} trabalhadas",
-                    fontsize=13, fontweight='bold', color=THEME['text_primary'], pad=14
-                )
+                ax.set_title(f"Distribuição do Tempo\n{minutos_para_horas_str(horas_trabalhadas)} trabalhadas", fontsize=13, fontweight='bold', color=THEME['text_primary'], pad=14)
                 fig.tight_layout(pad=1.5)
                 st.pyplot(fig)
                 plt.close(fig)
@@ -1087,7 +1245,7 @@ if aba_selecionada == 'PRENSADOS':
 
     st.markdown("<hr>", unsafe_allow_html=True)
 
-    # ── TRS por Turno ──
+    # TRS por Turno
     if not df.empty and 'TURNO' in df.columns and 'TRS 100%' in df.columns:
         render_section_header("TRS por Turno", "▸")
         turno_data = []
@@ -1096,63 +1254,45 @@ if aba_selecionada == 'PRENSADOS':
             te = df_t['EMBALADO'].sum() if 'EMBALADO' in df_t.columns else 0
             ta = df_t['APROVADO'].sum()
             tm = df_t['TRS 100%'].sum()
-            turno_data.append({
-                'Turno': t, 
-                'TRS 1ª Escolha': (ta/tm*100) if tm > 0 else 0,
-                'TRS Final': (te/tm*100) if tm > 0 else 0
-            })
+            turno_data.append({'Turno': t, 'TRS 1ª Escolha': (ta/tm*100) if tm > 0 else 0, 'TRS Final': (te/tm*100) if tm > 0 else 0})
         df_tt = pd.DataFrame(turno_data)
         if not df_tt.empty:
             fig, ax = plt.subplots(figsize=(10, 5), facecolor=THEME['bg_card'])
             apply_chart_style(ax, fig, "TRS por Turno", ylabel="TRS (%)")
-            
             x = np.arange(len(df_tt))
             width = 0.35
-            
             bars1 = ax.bar(x - width/2, df_tt['TRS 1ª Escolha'], width, label='TRS 1ª Escolha', color=THEME['accent_cyan'], alpha=0.88, edgecolor=THEME['bg_card'], linewidth=1.5)
             bars2 = ax.bar(x + width/2, df_tt['TRS Final'], width, label='TRS Final', color=THEME['accent_orange'], alpha=0.88, edgecolor=THEME['bg_card'], linewidth=1.5)
-            
             ax.axhline(y=85, color=THEME['accent_red'], linestyle='--', alpha=0.5, linewidth=1.5, label='Meta 85%')
-            
             for bar in bars1:
                 h = bar.get_height()
                 ax.text(bar.get_x() + bar.get_width()/2, h + 1, f'{h:.1f}%', ha='center', va='bottom', fontsize=8, color=THEME['accent_cyan'])
-            
             for bar in bars2:
                 h = bar.get_height()
                 ax.text(bar.get_x() + bar.get_width()/2, h + 1, f'{h:.1f}%', ha='center', va='bottom', fontsize=8, color=THEME['accent_orange'])
-            
             ax.set_xticks(x)
             ax.set_xticklabels(df_tt['Turno'], fontsize=11)
             ax.legend(loc='upper right', fontsize=9)
             ax.set_ylim(0, 105)
-            
             fig.tight_layout(pad=1.5)
             st.pyplot(fig)
             plt.close(fig)
 
-    # ── Defeitos de Prensados (colunas corretas) ──
+    # Defeitos de Prensados
     if mostrar_defeitos:
         render_section_header("Estratificação de Defeitos - Prensados", "▸")
-        # Defeitos específicos do processo de PREENSADOS (não os da Têmpera)
-        colunas_defeitos_prensados = [
-            'TRINCA', 'RUGAS', 'DOBRA', 'SUJEIRA', 'FALHAS', 'CHUPADO',
-            'CROMO', 'BARRO', 'EMPENO', 'OUTROS', 'REMANEJAMENTO'
-        ]
+        colunas_defeitos_prensados = ['TRINCA', 'RUGAS', 'DOBRA', 'SUJEIRA', 'FALHAS', 'CHUPADO', 'CROMO', 'BARRO', 'EMPENO', 'OUTROS', 'REMANEJAMENTO']
         defeitos_existentes = []
         for defeito in colunas_defeitos_prensados:
             for col in df.columns:
                 if col.upper() == defeito.upper():
                     defeitos_existentes.append(col)
                     break
-        
-        # Fallback: se não encontrar nenhum defeito específico, tenta qualquer coluna que pareça defeito
         if not defeitos_existentes:
             for col in df.columns:
                 col_upper = col.upper()
                 if col_upper in ['TRINCA', 'RUGAS', 'DOBRA', 'SUJEIRA', 'FALHAS', 'CHUPADO', 'CROMO', 'BARRO', 'EMPENO', 'OUTROS']:
                     defeitos_existentes.append(col)
-        
         if defeitos_existentes:
             df_def = df[defeitos_existentes].apply(pd.to_numeric, errors='coerce').fillna(0)
             df_def_sum = df_def.sum().sort_values(ascending=False)
@@ -1160,17 +1300,12 @@ if aba_selecionada == 'PRENSADOS':
             if not df_def_sum.empty:
                 fig, ax = plt.subplots(figsize=(12, 4), facecolor=THEME['bg_card'])
                 apply_chart_style(ax, fig, "Defeitos — Somatório", ylabel="Quantidade")
-                bars = ax.bar(range(len(df_def_sum)), df_def_sum.values,
-                              color=THEME['accent_red'], alpha=0.8,
-                              edgecolor=THEME['bg_card'], linewidth=1.2)
+                bars = ax.bar(range(len(df_def_sum)), df_def_sum.values, color=THEME['accent_red'], alpha=0.8, edgecolor=THEME['bg_card'], linewidth=1.2)
                 ax.set_xticks(range(len(df_def_sum)))
-                ax.set_xticklabels(df_def_sum.index, rotation=40, ha='right',
-                                   fontsize=9, color=THEME['text_muted'])
+                ax.set_xticklabels(df_def_sum.index, rotation=40, ha='right', fontsize=9, color=THEME['text_muted'])
                 for bar, val in zip(bars, df_def_sum.values):
                     if val > 0:
-                        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() * 1.02,
-                                f"{int(val):,}".replace(",","."), ha='center', va='bottom',
-                                fontsize=8, color=THEME['text_primary'])
+                        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() * 1.02, f"{int(val):,}".replace(",","."), ha='center', va='bottom', fontsize=8, color=THEME['text_primary'])
                 fig.tight_layout(pad=1.5)
                 st.pyplot(fig)
                 plt.close(fig)
@@ -1194,44 +1329,6 @@ if aba_selecionada == 'PRENSADOS':
 # SOPRO
 # ==================================================================================================
 elif aba_selecionada == 'SOPRO':
-    ABA = 'TRS_SOPRO'
-
-    @st.cache_data(ttl=300)
-    def carregar_dados_sopro():
-        try:
-            client = get_gspread_client()
-            if client is None:
-                return pd.DataFrame()
-            sheet = client.open_by_key(ID_PLANILHA_PRENSADOS_SOPRO).worksheet(ABA)
-            todos_dados = sheet.get_all_values()
-            if len(todos_dados) < 2:
-                return pd.DataFrame()
-            cabecalho = todos_dados[0]
-            valores   = todos_dados[1:]
-            df = pd.DataFrame(valores, columns=cabecalho)
-            df.columns = df.columns.str.strip().str.upper()
-            if 'PRAÇA' in df.columns:
-                df['PRAÇA_NORM'] = df['PRAÇA'].fillna('').astype(str).str.upper().str.strip()
-                mascara = ~df['PRAÇA_NORM'].apply(
-                    lambda x: any(p in x for p in [p.upper() for p in PRACAS_NAO_SOPRO])
-                )
-                df = df[mascara].copy()
-                df = df.drop(columns=['PRAÇA_NORM'])
-            if 'DATA' in df.columns:
-                df['DATA'] = df['DATA'].apply(converter_data_br)
-                df = df.dropna(subset=['DATA'])
-            for col in ['PRODUZIDO', 'APROVADO', 'TRS_BRUTO']:
-                if col in df.columns:
-                    df[col] = df[col].apply(converter_numero_br)
-            if 'PRODUZIDO' in df.columns and 'APROVADO' in df.columns:
-                df['REFUGADO'] = (df['PRODUZIDO'] - df['APROVADO']).clip(lower=0)
-            else:
-                df['REFUGADO'] = 0
-            df['ANO_MES'] = df['DATA'].dt.to_period('M').astype(str)
-            return df
-        except Exception:
-            return pd.DataFrame()
-
     with st.spinner("Carregando dados..."):
         df_base = carregar_dados_sopro()
 
@@ -1242,10 +1339,7 @@ elif aba_selecionada == 'SOPRO':
     df_base_calc = df_base.copy()
     if 'TRS_BRUTO' in df_base_calc.columns:
         df_base_calc['TRS LÍQUIDO (%)'] = (df_base_calc['TRS_BRUTO'] * 100).round(2)
-        # Calcular META (TRS 100%) = APROVADO / (TRS_LIQUIDO / 100)
-        df_base_calc['META'] = df_base_calc.apply(
-            lambda row: (row['APROVADO'] / (row['TRS LÍQUIDO (%)'] / 100)) if row['TRS LÍQUIDO (%)'] > 0 else row['APROVADO'], axis=1
-        ).round(0)
+        df_base_calc['META'] = df_base_calc.apply(lambda row: (row['APROVADO'] / (row['TRS LÍQUIDO (%)'] / 100)) if row['TRS LÍQUIDO (%)'] > 0 else row['APROVADO'], axis=1).round(0)
     else:
         df_base_calc['TRS LÍQUIDO (%)'] = 0
         df_base_calc['META'] = 0
@@ -1259,12 +1353,12 @@ elif aba_selecionada == 'SOPRO':
                 if mt > 0:
                     melhores_trs_historico[ref] = mt
 
-    # ── Sidebar filtros SOPRO ──
+    # Sidebar filtros SOPRO
     with st.sidebar:
         st.markdown(f"<div style='font-family:JetBrains Mono,monospace;font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:{THEME['accent_lime']};margin:20px 0 10px;border-top:1px solid {THEME['border_bright']};padding-top:16px'>▸ Filtros · Sopro</div>", unsafe_allow_html=True)
         filtro_melhores_trs = st.checkbox("Melhores TRS Líquido por Referência", value=False, key="sopro_melhores")
         data_ini = st.date_input("Data inicial", value=None, key="sopro_data_ini")
-        data_fim = st.date_input("Data final",   value=None, key="sopro_data_fim")
+        data_fim = st.date_input("Data final", value=None, key="sopro_data_fim")
         if 'TURNO' in df_base.columns:
             turnos_disp = ["(Todos)"] + sorted(df_base['TURNO'].dropna().unique().tolist())
             turno = st.selectbox("Turno", options=turnos_disp, key="sopro_turno")
@@ -1279,7 +1373,7 @@ elif aba_selecionada == 'SOPRO':
         mostrar_defeitos = st.checkbox("Somatório de Defeitos", value=True, key="sopro_defeitos")
         qtd = st.number_input("Linhas na tabela (0 = todas)", min_value=0, max_value=5000, value=0, step=10, key="sopro_qtd")
 
-    # ── Filtros ──
+    # Filtros
     df = df_base.copy()
     if data_ini: df = df[df['DATA'] >= pd.to_datetime(data_ini)]
     if data_fim: df = df[df['DATA'] <= pd.to_datetime(data_fim)]
@@ -1294,131 +1388,76 @@ elif aba_selecionada == 'SOPRO':
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
-    total_prod   = int(df['PRODUZIDO'].sum()) if 'PRODUZIDO' in df.columns else 0
-    total_refugo = int(df['REFUGADO'].sum())  if 'REFUGADO'  in df.columns else 0
-    total_apro   = int(df['APROVADO'].sum())  if 'APROVADO'  in df.columns else 0
-    trs_liq_med  = df['TRS_BRUTO'].mean() * 100 if 'TRS_BRUTO' in df.columns and not df.empty else 0
+    total_prod = int(df['PRODUZIDO'].sum()) if 'PRODUZIDO' in df.columns else 0
+    total_refugo = int(df['REFUGADO'].sum()) if 'REFUGADO' in df.columns else 0
+    total_apro = int(df['APROVADO'].sum()) if 'APROVADO' in df.columns else 0
+    trs_liq_med = df['TRS_BRUTO'].mean() * 100 if 'TRS_BRUTO' in df.columns and not df.empty else 0
     
-    # Calcular META total usando a fórmula: META = APROVADO / (TRS_LIQUIDO / 100)
     if not df.empty and 'TRS_BRUTO' in df.columns and 'APROVADO' in df.columns:
-        # Média ponderada da META
         df['TRS_LIQUIDO_PCT'] = df['TRS_BRUTO'] * 100
-        df['META_CALC'] = df.apply(
-            lambda row: (row['APROVADO'] / (row['TRS_LIQUIDO_PCT'] / 100)) if row['TRS_LIQUIDO_PCT'] > 0 else row['APROVADO'], axis=1
-        )
+        df['META_CALC'] = df.apply(lambda row: (row['APROVADO'] / (row['TRS_LIQUIDO_PCT'] / 100)) if row['TRS_LIQUIDO_PCT'] > 0 else row['APROVADO'], axis=1)
         total_meta = int(df['META_CALC'].sum())
     else:
         total_meta = 0
 
-    # ── Page header ──
-    render_page_header(
-        "SOPRO",
-        f"Industrial · {len(df):,} registros carregados · Atualizado {get_horario_brasilia()}",
-        THEME['accent_lime']
-    )
+    # Page header
+    render_page_header("SOPRO", f"Industrial · {len(df):,} registros carregados · Atualizado {get_horario_brasilia()}", THEME['accent_lime'])
 
-    # ── KPIs (5 cards) ──
+    # KPIs (5 cards)
     c1, c2, c3, c4, c5 = st.columns(5)
-
-    with c1: 
-        render_kpi_card("Produzido", f"{total_prod:,}".replace(",","."), THEME['accent_cyan'], "◈")
-
-    with c2: 
-        render_kpi_card("Aprovado", f"{total_apro:,}".replace(",","."), THEME['accent_lime'], "◈")
-
-    with c3: 
-        render_kpi_card("Meta (TRS 100%)", f"{total_meta:,}".replace(",","."), THEME['accent_purple'], "◈")
-
-    with c4: 
-        render_kpi_card("Refugo", f"{total_refugo:,}".replace(",","."), THEME['accent_orange'], "◈")
-
+    with c1: render_kpi_card("Produzido", f"{total_prod:,}".replace(",","."), THEME['accent_cyan'], "◈")
+    with c2: render_kpi_card("Aprovado", f"{total_apro:,}".replace(",","."), THEME['accent_lime'], "◈")
+    with c3: render_kpi_card("Meta (TRS 100%)", f"{total_meta:,}".replace(",","."), THEME['accent_purple'], "◈")
+    with c4: render_kpi_card("Refugo", f"{total_refugo:,}".replace(",","."), THEME['accent_orange'], "◈")
     with c5:
         trs_c = THEME['accent_lime'] if trs_liq_med >= 85 else THEME['accent_orange'] if trs_liq_med >= 70 else THEME['accent_red']
         render_kpi_card("TRS Líquido Médio", f"{trs_liq_med:.1f}%", trs_c, "◎")
 
-    # ── Tabela ──
+    # Tabela
     render_section_header("Tabela de Produção", "▸", THEME['accent_lime'])
-
     if not df.empty and 'TRS_BRUTO' in df.columns:
         df['TRS LÍQUIDO (%)'] = (df['TRS_BRUTO'] * 100).round(2)
-        # Calcular META para cada linha
-        df['META'] = df.apply(
-            lambda row: int(round(row['APROVADO'] / (row['TRS LÍQUIDO (%)'] / 100))) if row['TRS LÍQUIDO (%)'] > 0 else int(row['APROVADO']), axis=1
-        )
-
+        df['META'] = df.apply(lambda row: int(round(row['APROVADO'] / (row['TRS LÍQUIDO (%)'] / 100))) if row['TRS LÍQUIDO (%)'] > 0 else int(row['APROVADO']), axis=1)
     df_sorted = df.sort_values(by="DATA", ascending=False).reset_index(drop=True)
-
     if filtro_melhores_trs and not df_sorted.empty and 'REFERÊNCIA' in df_sorted.columns and 'TRS LÍQUIDO (%)' in df_sorted.columns:
-        df_sorted = df_sorted[df_sorted.apply(
-            lambda r: r['REFERÊNCIA'] in melhores_trs_historico and
-                      abs(r['TRS LÍQUIDO (%)'] - melhores_trs_historico[r['REFERÊNCIA']]) < 0.01, axis=1
-        )].reset_index(drop=True)
+        df_sorted = df_sorted[df_sorted.apply(lambda r: r['REFERÊNCIA'] in melhores_trs_historico and abs(r['TRS LÍQUIDO (%)'] - melhores_trs_historico[r['REFERÊNCIA']]) < 0.01, axis=1)].reset_index(drop=True)
         if not df_sorted.empty:
             st.info(f"Exibindo {len(df_sorted)} registro(s) — Melhor TRS Líquido Histórico por referência")
-        else:
-            st.warning("Nenhum registro encontrado")
-
     df_view = df_sorted if qtd == 0 else df_sorted.head(qtd)
-
     if not df_view.empty:
         df_display = df_view.copy()
         df_display['DATA'] = pd.to_datetime(df_display['DATA']).dt.strftime('%d/%m/%Y')
-        
         for col in ['PRODUZIDO', 'APROVADO', 'REFUGADO', 'META']:
             if col in df_display.columns:
                 df_display[col] = df_display[col].apply(lambda x: int(round(x)) if pd.notnull(x) else 0)
-                df_display[col] = df_display[col].apply(lambda x: f"{x:,}".replace(",","."))
-        
+                df_display[col] = df_display[col].apply(lambda x: f"{x:,}".replace(",", "."))
         if 'TRS LÍQUIDO (%)' in df_display.columns:
             df_display['TRS LÍQUIDO (%)'] = df_display['TRS LÍQUIDO (%)'].apply(lambda x: f"{x:.2f}%")
-
         colunas_exibir = ['DATA','TURNO','PRAÇA','REFERÊNCIA','PRODUZIDO','META','APROVADO','REFUGADO','TRS LÍQUIDO (%)']
         colunas_exibir = [c for c in colunas_exibir if c in df_display.columns]
-
-        def destacar_sopro(row):
-            ref = row.get('REFERÊNCIA', '')
-            if ref in melhores_trs_historico:
-                tv = row.get('TRS LÍQUIDO (%)', '0')
-                if isinstance(tv, str): 
-                    tv = float(tv.replace('%','').replace(',','.'))
-                if abs(tv - melhores_trs_historico[ref]) < 0.01:
-                    return ['background-color: #FFF4E6; color: #D48806; font-weight: 600;'] * len(row)
-            return [''] * len(row)
-
-        styled = df_display[colunas_exibir].style.apply(destacar_sopro, axis=1)
-        st.dataframe(styled, use_container_width=True, height=400)
+        st.dataframe(df_display[colunas_exibir], use_container_width=True, height=400)
         if not filtro_melhores_trs:
             st.caption("▸ Dourado: Melhor TRS Líquido Histórico por referência")
     else:
         st.warning("Nenhum dado encontrado com os filtros selecionados.")
 
-    # ── TRS Líquido Diário ──
+    # TRS Líquido Diário
     render_section_header("Evolução Diária do TRS Líquido", "▸", THEME['accent_lime'])
     if not df.empty and 'TRS_BRUTO' in df.columns:
-        res_dia = df.groupby(df['DATA'].dt.date).agg({
-            'TRS_BRUTO': 'mean', 
-            'PRODUZIDO': 'sum', 
-            'APROVADO': 'sum'
-        }).reset_index()
+        res_dia = df.groupby(df['DATA'].dt.date).agg({'TRS_BRUTO': 'mean', 'PRODUZIDO': 'sum', 'APROVADO': 'sum'}).reset_index()
         res_dia['DATA'] = pd.to_datetime(res_dia['DATA'])
         res_dia['TRS Líquido (%)'] = res_dia['TRS_BRUTO'] * 100
         res_dia = res_dia.sort_values('DATA')
-        
         if not res_dia.empty:
             fig, ax = plt.subplots(figsize=(14, 5), facecolor=THEME['bg_card'])
             apply_chart_style(ax, fig, "TRS Líquido Diário — Período Selecionado", ylabel="TRS Líquido (%)")
             ax.fill_between(res_dia['DATA'], 0, res_dia['TRS Líquido (%)'], alpha=0.12, color=THEME['accent_lime'])
-            ax.plot(res_dia['DATA'], res_dia['TRS Líquido (%)'],
-                    marker='o', markersize=6, linewidth=2.5, color=THEME['accent_lime'], alpha=0.95,
-                    label='TRS Líquido', markerfacecolor=THEME['bg_card'],
-                    markeredgecolor=THEME['accent_lime'], markeredgewidth=2)
+            ax.plot(res_dia['DATA'], res_dia['TRS Líquido (%)'], marker='o', markersize=6, linewidth=2.5, color=THEME['accent_lime'], alpha=0.95, label='TRS Líquido')
             if len(res_dia) > 1:
                 mm = res_dia['TRS Líquido (%)'].rolling(window=min(3, len(res_dia)), min_periods=1).mean()
-                ax.plot(res_dia['DATA'], mm, color=THEME['accent_yellow'], alpha=0.8,
-                        linewidth=1.8, linestyle='--', label='Média 3 dias')
+                ax.plot(res_dia['DATA'], mm, color=THEME['accent_yellow'], alpha=0.8, linewidth=1.8, linestyle='--', label='Média 3 dias')
             ax.axhline(y=85, color=THEME['accent_red'], linestyle=':', alpha=0.7, linewidth=1.5, label='Meta 85%')
-            ax.legend(framealpha=0.15, facecolor=THEME['bg_card'], edgecolor=THEME['border_bright'],
-                      labelcolor=THEME['text_primary'], fontsize=9)
+            ax.legend(framealpha=0.15, facecolor=THEME['bg_card'], edgecolor=THEME['border_bright'], labelcolor=THEME['text_primary'], fontsize=9)
             plt.setp(ax.xaxis.get_majorticklabels(), rotation=35, ha='right', fontsize=8, color=THEME['text_muted'])
             fig.tight_layout(pad=1.5)
             st.pyplot(fig)
@@ -1426,29 +1465,20 @@ elif aba_selecionada == 'SOPRO':
 
     st.markdown("<hr>", unsafe_allow_html=True)
 
-    # ── Por Praça ──
+    # Por Praça
     if 'PRAÇA' in df.columns and not df.empty and 'TRS_BRUTO' in df.columns:
         render_section_header("TRS Líquido por Praça", "▸", THEME['accent_lime'])
-        res_praca = df.groupby('PRAÇA').agg({
-            'TRS_BRUTO': 'mean', 
-            'PRODUZIDO': 'sum',
-            'APROVADO': 'sum'
-        }).reset_index()
+        res_praca = df.groupby('PRAÇA').agg({'TRS_BRUTO': 'mean', 'PRODUZIDO': 'sum', 'APROVADO': 'sum'}).reset_index()
         res_praca['TRS Líquido (%)'] = res_praca['TRS_BRUTO'] * 100
         res_praca = res_praca.sort_values('TRS Líquido (%)', ascending=False)
-        
         if not res_praca.empty:
             fig, ax = plt.subplots(figsize=(10, 5), facecolor=THEME['bg_card'])
             apply_chart_style(ax, fig, "TRS Líquido Médio por Praça", ylabel="TRS Líquido (%)")
-            bar_cols = [THEME['accent_lime'] if v >= 85 else THEME['accent_orange'] if v >= 70 else THEME['accent_red']
-                        for v in res_praca['TRS Líquido (%)']]
-            bars = ax.bar(range(len(res_praca)), res_praca['TRS Líquido (%)'], color=bar_cols,
-                          alpha=0.88, edgecolor=THEME['bg_card'], linewidth=1.5, width=0.6)
+            bar_cols = [THEME['accent_lime'] if v >= 85 else THEME['accent_orange'] if v >= 70 else THEME['accent_red'] for v in res_praca['TRS Líquido (%)']]
+            bars = ax.bar(range(len(res_praca)), res_praca['TRS Líquido (%)'], color=bar_cols, alpha=0.88, edgecolor=THEME['bg_card'], linewidth=1.5, width=0.6)
             ax.axhline(y=85, color=THEME['accent_red'], linestyle='--', alpha=0.4, linewidth=1.5)
             for bar, v in zip(bars, res_praca['TRS Líquido (%)']):
-                ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1,
-                        f'{v:.1f}%', ha='center', va='bottom', fontsize=9,
-                        color=THEME['text_primary'], fontweight='bold')
+                ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1, f'{v:.1f}%', ha='center', va='bottom', fontsize=9, color=THEME['text_primary'], fontweight='bold')
             ax.set_xticks(range(len(res_praca)))
             ax.set_xticklabels(res_praca['PRAÇA'], rotation=40, ha='right', fontsize=9)
             fig.tight_layout(pad=1.5)
@@ -1457,29 +1487,20 @@ elif aba_selecionada == 'SOPRO':
 
     st.markdown("<hr>", unsafe_allow_html=True)
 
-    # ── Mensal ──
+    # Mensal
     render_section_header("TRS Líquido Mensal", "▸", THEME['accent_lime'])
     if not df.empty and 'ANO_MES' in df.columns and 'TRS_BRUTO' in df.columns:
-        res_mes = df.groupby('ANO_MES').agg({
-            'TRS_BRUTO': 'mean', 
-            'PRODUZIDO': 'sum', 
-            'APROVADO': 'sum'
-        }).reset_index()
+        res_mes = df.groupby('ANO_MES').agg({'TRS_BRUTO': 'mean', 'PRODUZIDO': 'sum', 'APROVADO': 'sum'}).reset_index()
         res_mes['TRS Líquido (%)'] = res_mes['TRS_BRUTO'] * 100
         res_mes = res_mes.sort_values('ANO_MES')
-        
         if not res_mes.empty:
             fig, ax = plt.subplots(figsize=(12, 5), facecolor=THEME['bg_card'])
             apply_chart_style(ax, fig, "TRS Líquido Mensal", ylabel="TRS Líquido (%)")
-            bar_cols = [THEME['accent_lime'] if v >= 85 else THEME['accent_orange'] if v >= 70 else THEME['accent_red']
-                        for v in res_mes['TRS Líquido (%)']]
-            bars = ax.bar(range(len(res_mes)), res_mes['TRS Líquido (%)'], color=bar_cols,
-                          alpha=0.88, edgecolor=THEME['bg_card'], linewidth=1.5, width=0.65)
+            bar_cols = [THEME['accent_lime'] if v >= 85 else THEME['accent_orange'] if v >= 70 else THEME['accent_red'] for v in res_mes['TRS Líquido (%)']]
+            bars = ax.bar(range(len(res_mes)), res_mes['TRS Líquido (%)'], color=bar_cols, alpha=0.88, edgecolor=THEME['bg_card'], linewidth=1.5, width=0.65)
             ax.axhline(y=85, color=THEME['accent_red'], linestyle='--', alpha=0.4, linewidth=1.5)
             for bar, v in zip(bars, res_mes['TRS Líquido (%)']):
-                ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1,
-                        f'{v:.1f}%', ha='center', va='bottom', fontsize=10,
-                        color=THEME['text_primary'], fontweight='bold')
+                ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1, f'{v:.1f}%', ha='center', va='bottom', fontsize=10, color=THEME['text_primary'], fontweight='bold')
             meses_fmt = []
             for m in res_mes['ANO_MES']:
                 ms = str(m)
@@ -1492,7 +1513,7 @@ elif aba_selecionada == 'SOPRO':
 
     st.markdown("<hr>", unsafe_allow_html=True)
 
-    # ── Por Turno ──
+    # Por Turno
     if not df.empty and 'TURNO' in df.columns and 'TRS_BRUTO' in df.columns:
         render_section_header("TRS Líquido por Turno", "▸", THEME['accent_lime'])
         turno_data = [{'Turno': t, 'TRS Líquido': df[df['TURNO'] == t]['TRS_BRUTO'].mean() * 100} for t in df['TURNO'].unique()]
@@ -1500,11 +1521,9 @@ elif aba_selecionada == 'SOPRO':
         if not df_tt.empty:
             fig, ax = plt.subplots(figsize=(8, 4), facecolor=THEME['bg_card'])
             apply_chart_style(ax, fig, "TRS Líquido por Turno", ylabel="TRS Líquido (%)")
-            cores_t = {'M': THEME['accent_cyan'], 'T': THEME['accent_orange'], 'N': THEME['accent_lime'],
-                       'A': THEME['accent_cyan'], 'B': THEME['accent_orange'], 'C': THEME['accent_lime']}
+            cores_t = {'M': THEME['accent_cyan'], 'T': THEME['accent_orange'], 'N': THEME['accent_lime'], 'A': THEME['accent_cyan'], 'B': THEME['accent_orange'], 'C': THEME['accent_lime']}
             bc = [cores_t.get(t, THEME['text_muted']) for t in df_tt['Turno']]
-            ax.bar(range(len(df_tt)), df_tt['TRS Líquido'], color=bc, alpha=0.88,
-                   edgecolor=THEME['bg_card'], linewidth=1.5, width=0.55)
+            ax.bar(range(len(df_tt)), df_tt['TRS Líquido'], color=bc, alpha=0.88, edgecolor=THEME['bg_card'], linewidth=1.5, width=0.55)
             ax.axhline(y=85, color=THEME['accent_red'], linestyle='--', alpha=0.5, linewidth=1.5)
             for i, v in enumerate(df_tt['TRS Líquido']):
                 ax.text(i, v + 1, f"{v:.1f}%", ha='center', va='bottom', fontweight='bold', fontsize=11, color=THEME['text_primary'])
@@ -1515,14 +1534,10 @@ elif aba_selecionada == 'SOPRO':
             st.pyplot(fig)
             plt.close(fig)
 
-    # ── Defeitos ──
+    # Defeitos
     if mostrar_defeitos:
         render_section_header("Estratificação de Defeitos", "▸", THEME['accent_lime'])
-        colunas_defeitos = [
-            'BOLHA','PEDRA','CALCINADO','BALANÇANDO','AMASSADO','OVAL','CORTE','QUEBRADA',
-            'VIDRO GRUDADO','CORDA','FORMA','RISCO','TORTO','RUGA','GABARITO','SUJEIRA',
-            'EMPENO','MARCAS','FALHADA','DOBRA','CHUPADO','ARREADO','GOSMA','BARRO','CROMO','MACHO'
-        ]
+        colunas_defeitos = ['BOLHA','PEDRA','CALCINADO','BALANÇANDO','AMASSADO','OVAL','CORTE','QUEBRADA','VIDRO GRUDADO','CORDA','FORMA','RISCO','TORTO','RUGA','GABARITO','SUJEIRA','EMPENO','MARCAS','FALHADA','DOBRA','CHUPADO','ARREADO','GOSMA','BARRO','CROMO','MACHO']
         def_exist = []
         for defeito in colunas_defeitos:
             for col in df.columns:
@@ -1536,16 +1551,12 @@ elif aba_selecionada == 'SOPRO':
             if not df_def_s.empty:
                 fig, ax = plt.subplots(figsize=(12, 4), facecolor=THEME['bg_card'])
                 apply_chart_style(ax, fig, "Defeitos — Somatório", ylabel="Quantidade")
-                bars = ax.bar(range(len(df_def_s)), df_def_s.values,
-                              color=THEME['accent_red'], alpha=0.8,
-                              edgecolor=THEME['bg_card'], linewidth=1.2)
+                bars = ax.bar(range(len(df_def_s)), df_def_s.values, color=THEME['accent_red'], alpha=0.8, edgecolor=THEME['bg_card'], linewidth=1.2)
                 ax.set_xticks(range(len(df_def_s)))
                 ax.set_xticklabels(df_def_s.index, rotation=40, ha='right', fontsize=9, color=THEME['text_muted'])
                 for bar, val in zip(bars, df_def_s.values):
                     if val > 0:
-                        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() * 1.02,
-                                f"{int(val):,}".replace(",","."), ha='center', va='bottom',
-                                fontsize=8, color=THEME['text_primary'])
+                        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() * 1.02, f"{int(val):,}".replace(",","."), ha='center', va='bottom', fontsize=8, color=THEME['text_primary'])
                 fig.tight_layout(pad=1.5)
                 st.pyplot(fig)
                 plt.close(fig)
@@ -1558,6 +1569,7 @@ elif aba_selecionada == 'SOPRO':
         TRS DASHBOARD · SOPRO · {get_horario_brasilia()}
     </div>
     """, unsafe_allow_html=True)
+
 
 # ==================================================================================================
 # TÊMPERA
@@ -2658,3 +2670,348 @@ elif aba_selecionada == 'TÊMPERA':
             st.info("Dados insuficientes para análise diária (mínimo 2 dias).")
     else:
         st.info("Sem dados disponíveis para análise.")
+
+
+# ==================================================================================================
+# AVISO DE REJEIÇÃO (AR)
+# ==================================================================================================
+elif aba_selecionada == 'AVISO DE REJEIÇÃO':
+    render_page_header("AVISO DE REJEIÇÃO", f"CQ-018 REV004 · Atualizado {get_horario_brasilia()}", THEME['accent_red'])
+    
+    with st.container():
+        st.markdown(f"""
+        <div style="background: linear-gradient(135deg, {THEME['bg_card']} 0%, {THEME['bg_card2']} 100%); padding: 15px 20px; border-radius: 10px; border-left: 4px solid {THEME['accent_red']}; margin: 20px 0;">
+            <span style="font-size: 20px; margin-right: 10px;">📋</span>
+            <span style="font-family: 'Rajdhani', sans-serif; font-size: 18px; font-weight: bold; color: {THEME['accent_red']};">AVISO DE REJEIÇÃO - CQ-018</span>
+            <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: {THEME['text_muted']}; margin-left: 15px;">Sistema de Gestão da Qualidade</span>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        menu_ar = st.radio("Opções do AR:", ["📝 Novo Registro", "📊 Visualizar Registros", "🔍 Buscar/Editar/Excluir"], horizontal=True, key="menu_ar_principal")
+        
+        if 'ar_pdf_bytes' not in st.session_state:
+            st.session_state.ar_pdf_bytes = None
+        if 'ar_pdf_nome' not in st.session_state:
+            st.session_state.ar_pdf_nome = None
+        if 'ar_mostrar_pdf' not in st.session_state:
+            st.session_state.ar_mostrar_pdf = False
+        if 'ar_ultimo_registro' not in st.session_state:
+            st.session_state.ar_ultimo_registro = None
+        if 'ar_etapa_confirmacao' not in st.session_state:
+            st.session_state.ar_etapa_confirmacao = 1
+        if 'ar_confirmar_email' not in st.session_state:
+            st.session_state.ar_confirmar_email = None
+        if 'ar_confirmar_imprimir' not in st.session_state:
+            st.session_state.ar_confirmar_imprimir = None
+        
+        def imprimir_pdf_ar(pdf_bytes: bytes, nome_arquivo: str):
+            try:
+                import sys
+                if not nome_arquivo.lower().endswith('.pdf'):
+                    nome_arquivo = nome_arquivo + '.pdf'
+                temp_path = os.path.join(CAMINHO_PDF_AR, nome_arquivo)
+                with open(temp_path, 'wb') as f:
+                    f.write(pdf_bytes)
+                if not os.path.exists(temp_path):
+                    return False, "Erro ao salvar arquivo temporário"
+                if sys.platform == "win32":
+                    try:
+                        os.startfile(temp_path, "print")
+                        return True, "PDF enviado para impressão"
+                    except Exception as e:
+                        os.startfile(temp_path)
+                        return True, f"PDF aberto. Por favor, clique em Imprimir (Ctrl+P)."
+                else:
+                    return False, "Impressão automática disponível apenas no Windows"
+            except Exception as e:
+                return False, f"Erro ao imprimir: {str(e)}"
+        
+        if menu_ar == "📝 Novo Registro":
+            st.subheader("Novo Aviso de Rejeição")
+            st.info("⚠️ Data e hora serão preenchidas automaticamente no salvamento")
+            
+            if st.session_state.ar_mostrar_pdf and st.session_state.ar_pdf_bytes:
+                st.success(f"✅ Registro salvo com sucesso!")
+                if st.session_state.ar_ultimo_registro:
+                    reg = st.session_state.ar_ultimo_registro
+                    with st.expander("📋 Ver detalhes do registro salvo", expanded=True):
+                        col_d1, col_d2 = st.columns(2)
+                        with col_d1:
+                            st.write(f"**Número:** {reg.numero}")
+                            st.write(f"**Data:** {reg.data.strftime('%d/%m/%Y') if reg.data else '-'}")
+                            st.write(f"**Hora:** {reg.hora}")
+                            st.write(f"**Turno:** {reg.turno}")
+                            st.write(f"**Código:** {reg.codigo}")
+                        with col_d2:
+                            st.write(f"**Emissor:** {reg.emissor}")
+                            st.write(f"**Referência:** {reg.referencia[:50]}...")
+                            st.write(f"**Decisão:** {reg.decisao}")
+                            st.write(f"**Status:** {reg.status}")
+                st.markdown("---")
+                st.subheader("📋 Confirmações")
+                
+                if st.session_state.ar_etapa_confirmacao == 1:
+                    st.markdown("#### 📧 Etapa 1 de 2")
+                    st.write("Deseja enviar este documento por E-MAIL?")
+                    col_btn1, col_btn2 = st.columns(2)
+                    with col_btn1:
+                        if st.button("✅ Sim, enviar e-mail", use_container_width=True):
+                            st.session_state.ar_confirmar_email = True
+                            st.session_state.ar_etapa_confirmacao = 2
+                            st.rerun()
+                    with col_btn2:
+                        if st.button("❌ Não, pular", use_container_width=True):
+                            st.session_state.ar_confirmar_email = False
+                            st.session_state.ar_etapa_confirmacao = 2
+                            st.rerun()
+                elif st.session_state.ar_etapa_confirmacao == 2:
+                    if st.session_state.ar_confirmar_email:
+                        with st.spinner("Enviando e-mail..."):
+                            assunto = f"Aviso de Rejeição - AR {st.session_state.ar_ultimo_registro.numero if st.session_state.ar_ultimo_registro else ''} - {datetime.now().strftime('%d/%m/%Y')}"
+                            corpo = f"""Prezados,\n\nSegue em anexo o Aviso de Rejeição.\n\nNúmero: {st.session_state.ar_ultimo_registro.numero if st.session_state.ar_ultimo_registro else ''}\nData: {datetime.now().strftime('%d/%m/%Y')}\nReferência: {st.session_state.ar_ultimo_registro.referencia if st.session_state.ar_ultimo_registro else ''}\n\nAtenciosamente,\nSistema de Gestão da Qualidade - Luvidarte"""
+                            if enviar_email_ar(EMAIL_CONFIG_AR["destinatarios"], assunto, corpo, st.session_state.ar_pdf_bytes, st.session_state.ar_pdf_nome):
+                                st.success("📧 E-mail enviado com sucesso!")
+                            else:
+                                st.error("❌ Erro ao enviar e-mail")
+                    import time
+                    time.sleep(1)
+                    st.session_state.ar_etapa_confirmacao = 3
+                    st.rerun()
+                elif st.session_state.ar_etapa_confirmacao == 3:
+                    st.markdown("#### 🖨️ Etapa 2 de 2")
+                    st.write("Deseja IMPRIMIR uma cópia deste documento?")
+                    col_btn1, col_btn2 = st.columns(2)
+                    with col_btn1:
+                        if st.button("✅ Sim, imprimir", use_container_width=True):
+                            st.session_state.ar_confirmar_imprimir = True
+                            st.session_state.ar_etapa_confirmacao = 4
+                            st.rerun()
+                    with col_btn2:
+                        if st.button("❌ Não, pular", use_container_width=True):
+                            st.session_state.ar_confirmar_imprimir = False
+                            st.session_state.ar_etapa_confirmacao = 4
+                            st.rerun()
+                elif st.session_state.ar_etapa_confirmacao == 4:
+                    if st.session_state.ar_confirmar_imprimir:
+                        with st.spinner("Enviando para impressora..."):
+                            success, msg = imprimir_pdf_ar(st.session_state.ar_pdf_bytes, st.session_state.ar_pdf_nome)
+                            if success:
+                                st.success(f"🖨️ {msg}")
+                            else:
+                                st.warning(f"⚠️ {msg}")
+                    st.markdown("---")
+                    st.subheader("✅ Processo concluído!")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.download_button(label="📥 Baixar PDF do Registro", data=st.session_state.ar_pdf_bytes, file_name=st.session_state.ar_pdf_nome, mime="application/pdf", use_container_width=True)
+                    with col2:
+                        if st.button("➕ Novo Registro", use_container_width=True):
+                            st.session_state.ar_pdf_bytes = None
+                            st.session_state.ar_pdf_nome = None
+                            st.session_state.ar_mostrar_pdf = False
+                            st.session_state.ar_ultimo_registro = None
+                            st.session_state.ar_etapa_confirmacao = 1
+                            st.session_state.ar_confirmar_email = None
+                            st.session_state.ar_confirmar_imprimir = None
+                            st.rerun()
+            else:
+                with st.form("novo_registro_ar_principal"):
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        proximo = obter_proximo_numero_ar()
+                        st.info(f"📌 Próximo número disponível: {proximo}")
+                        usar_auto = st.checkbox("Usar número automático", value=True)
+                        if usar_auto:
+                            numero = proximo
+                            st.text_input("Número do AR", value=str(numero), disabled=True)
+                        else:
+                            numero = st.number_input("Número do AR", min_value=1, step=1)
+                        turno = st.selectbox("Turno", OPCOES_TURNO_AR)
+                    with col2:
+                        codigo = st.text_input("Código*")
+                        emissor = st.text_input("Emissor*")
+                        referencia = st.text_area("Referência*", height=100)
+                        decisao = st.selectbox("Decisão*", OPCOES_DECISAO_AR)
+                    with col3:
+                        status = st.selectbox("Status*", OPCOES_STATUS_AR)
+                        descricao = st.text_area("Descrição do Problema*", height=150)
+                        disposicao = st.text_area("Disposição", height=100)
+                        data_finalizacao = st.date_input("Data de Finalização", datetime.now())
+                    submitted = st.form_submit_button("💾 SALVAR REGISTRO", type="primary", use_container_width=True)
+                    if submitted:
+                        if not codigo or not emissor or not referencia or not descricao:
+                            st.error("❌ Preencha todos os campos obrigatórios (*)")
+                        else:
+                            registro = RegistroAR(numero=numero, data=datetime.now().date(), hora=datetime.now().strftime("%H:%M:%S"), codigo=codigo, emissor=emissor, referencia=referencia, decisao=decisao, descricao=descricao, status=status, disposicao=disposicao, data_finalizacao=data_finalizacao, turno=turno)
+                            if salvar_registro_ar(registro, eh_alteracao=False):
+                                st.success(f"✅ Registro {numero} salvo com sucesso!")
+                                pdf_bytes = gerar_pdf_ar(registro)
+                                if pdf_bytes:
+                                    st.session_state.ar_pdf_bytes = pdf_bytes
+                                    st.session_state.ar_pdf_nome = sanitize_filename_ar(f"AR_{numero}_{referencia[:30]}") + ".pdf"
+                                    st.session_state.ar_mostrar_pdf = True
+                                    st.session_state.ar_ultimo_registro = registro
+                                    st.session_state.ar_etapa_confirmacao = 1
+                                    st.rerun()
+        
+        elif menu_ar == "📊 Visualizar Registros":
+            st.subheader("Registros de Aviso de Rejeição")
+            with st.spinner("Carregando registros..."):
+                registros = carregar_registros_ar()
+            if registros:
+                col_f1, col_f2, col_f3 = st.columns(3)
+                with col_f1:
+                    filtro_status = st.selectbox("Filtrar por Status", ["Todos"] + OPCOES_STATUS_AR)
+                with col_f2:
+                    filtro_decisao = st.selectbox("Filtrar por Decisão", ["Todos"] + OPCOES_DECISAO_AR)
+                with col_f3:
+                    filtro_numero = st.number_input("Filtrar por Nº", min_value=0, step=1, value=0)
+                registros_filtrados = registros
+                if filtro_status != "Todos":
+                    registros_filtrados = [r for r in registros_filtrados if r.status == filtro_status]
+                if filtro_decisao != "Todos":
+                    registros_filtrados = [r for r in registros_filtrados if r.decisao == filtro_decisao]
+                if filtro_numero > 0:
+                    registros_filtrados = [r for r in registros_filtrados if r.numero == filtro_numero]
+                col_e1, col_e2, col_e3, col_e4 = st.columns(4)
+                with col_e1:
+                    st.metric("Total Registros", len(registros))
+                with col_e2:
+                    st.metric("Em Aberto", len([r for r in registros if r.status == "ABERTO"]))
+                with col_e3:
+                    st.metric("Finalizados", len([r for r in registros if r.status == "FINALIZADO"]))
+                with col_e4:
+                    st.metric("Aprovados Cond.", len([r for r in registros if r.decisao == "APROVADO CONDICIONAL"]))
+                dados = []
+                for reg in registros_filtrados[:100]:
+                    dados.append({"Nº": reg.numero, "Data": reg.data.strftime("%d/%m/%Y") if reg.data else "-", "Hora": reg.hora, "Código": reg.codigo, "Emissor": reg.emissor, "Referência": reg.referencia[:40] + "..." if len(reg.referencia) > 40 else reg.referencia, "Decisão": reg.decisao, "Status": reg.status, "Turno": reg.turno})
+                df = pd.DataFrame(dados)
+                st.dataframe(df, use_container_width=True, height=400)
+            else:
+                st.info("📭 Nenhum registro encontrado na planilha.")
+        
+        elif menu_ar == "🔍 Buscar/Editar/Excluir":
+            st.subheader("Buscar, Editar ou Excluir Registro")
+            col_b1, col_b2 = st.columns([2, 1])
+            with col_b1:
+                numero_busca = st.number_input("Digite o número do AR", min_value=1, step=1, key="busca_ar_principal")
+            with col_b2:
+                st.markdown("<br>", unsafe_allow_html=True)
+                buscar_clicked = st.button("🔍 Buscar", key="buscar_ar_principal_btn", use_container_width=True)
+            if buscar_clicked and numero_busca:
+                with st.spinner("Buscando..."):
+                    registros = carregar_registros_ar({"numero": numero_busca})
+                if registros:
+                    reg = registros[0]
+                    st.success(f"✅ Registro Nº {reg.numero} encontrado!")
+                    with st.expander("📋 Dados completos do registro", expanded=True):
+                        col_d1, col_d2 = st.columns(2)
+                        with col_d1:
+                            st.write("**📅 Datas e Horários:**")
+                            st.write(f"- Data: {reg.data.strftime('%d/%m/%Y') if reg.data else '-'}")
+                            st.write(f"- Hora: {reg.hora}")
+                            st.write(f"- Turno: {reg.turno}")
+                            st.write(f"- Data Finalização: {reg.data_finalizacao.strftime('%d/%m/%Y') if reg.data_finalizacao else '-'}")
+                            st.write("**📝 Informações do Produto:**")
+                            st.write(f"- Código: {reg.codigo}")
+                            st.write(f"- Emissor: {reg.emissor}")
+                            st.write(f"- Referência: {reg.referencia}")
+                        with col_d2:
+                            st.write("**⚖️ Decisão e Status:**")
+                            st.write(f"- Decisão: {reg.decisao}")
+                            st.write(f"- Status: {reg.status}")
+                            st.write("**📋 Descrições:**")
+                            st.write(f"- Problema: {reg.descricao[:150]}...")
+                            st.write(f"- Disposição: {reg.disposicao[:150]}...")
+                    tab_editar, tab_excluir, tab_acoes = st.tabs(["✏️ Editar Registro", "🗑️ Excluir Registro", "📄 Ações do PDF"])
+                    with tab_editar:
+                        with st.form("editar_ar_principal"):
+                            col_e1, col_e2, col_e3 = st.columns(3)
+                            with col_e1:
+                                data_edt = st.date_input("Data", reg.data if reg.data else datetime.now())
+                                hora_edt = st.text_input("Hora", reg.hora)
+                                turno_edt = st.selectbox("Turno", OPCOES_TURNO_AR, index=OPCOES_TURNO_AR.index(reg.turno) if reg.turno in OPCOES_TURNO_AR else 0)
+                            with col_e2:
+                                codigo_edt = st.text_input("Código", reg.codigo)
+                                emissor_edt = st.text_input("Emissor", reg.emissor)
+                                referencia_edt = st.text_area("Referência", reg.referencia, height=80)
+                                decisao_edt = st.selectbox("Decisão", OPCOES_DECISAO_AR, index=OPCOES_DECISAO_AR.index(reg.decisao) if reg.decisao in OPCOES_DECISAO_AR else 0)
+                            with col_e3:
+                                status_edt = st.selectbox("Status", OPCOES_STATUS_AR, index=OPCOES_STATUS_AR.index(reg.status) if reg.status in OPCOES_STATUS_AR else 0)
+                                descricao_edt = st.text_area("Descrição", reg.descricao, height=80)
+                                disposicao_edt = st.text_area("Disposição", reg.disposicao, height=80)
+                                data_fim_edt = st.date_input("Data Finalização", reg.data_finalizacao if reg.data_finalizacao else datetime.now())
+                            submitted_edit = st.form_submit_button("💾 SALVAR ALTERAÇÕES", type="primary", use_container_width=True)
+                            if submitted_edit:
+                                if not codigo_edt or not emissor_edt or not referencia_edt or not descricao_edt:
+                                    st.error("❌ Preencha todos os campos obrigatórios")
+                                else:
+                                    registro_atualizado = RegistroAR(numero=reg.numero, data=data_edt, hora=hora_edt, codigo=codigo_edt, emissor=emissor_edt, referencia=referencia_edt, decisao=decisao_edt, descricao=descricao_edt, status=status_edt, disposicao=disposicao_edt, data_finalizacao=data_fim_edt, turno=turno_edt)
+                                    if salvar_registro_ar(registro_atualizado, eh_alteracao=True):
+                                        st.success(f"✅ Registro {reg.numero} atualizado com sucesso!")
+                                        st.rerun()
+                    with tab_excluir:
+                        st.error(f"⚠️ **ATENÇÃO!** Exclusão do Registro Nº {reg.numero}")
+                        st.warning("Esta ação é **IRREVERSÍVEL** e não pode ser desfeita!")
+                        st.write("**Dados do registro que será excluído:**")
+                        st.write(f"- Código: {reg.codigo}")
+                        st.write(f"- Emissor: {reg.emissor}")
+                        st.write(f"- Referência: {reg.referencia[:50]}...")
+                        st.write(f"- Data: {reg.data.strftime('%d/%m/%Y') if reg.data else '-'}")
+                        confirmar = st.checkbox(f"✅ Confirmo que desejo EXCLUIR permanentemente o Registro Nº {reg.numero}")
+                        if confirmar:
+                            if st.button("🗑️ CONFIRMAR EXCLUSÃO", type="primary", use_container_width=True):
+                                with st.spinner(f"Excluindo registro {reg.numero}..."):
+                                    if excluir_registro_ar(reg.numero):
+                                        st.success(f"✅ Registro {reg.numero} excluído com sucesso!")
+                                        st.balloons()
+                                        st.rerun()
+                                    else:
+                                        st.error(f"❌ Erro ao excluir registro {reg.numero}")
+                    with tab_acoes:
+                        st.subheader("Ações para este Registro")
+                        if st.button("📄 Gerar PDF", use_container_width=True):
+                            pdf_bytes = gerar_pdf_ar(reg)
+                            if pdf_bytes:
+                                nome_pdf = sanitize_filename_ar(f"AR_{reg.numero}_{reg.referencia[:30]}") + ".pdf"
+                                st.session_state.ar_pdf_bytes = pdf_bytes
+                                st.session_state.ar_pdf_nome = nome_pdf
+                                st.session_state.ar_ultimo_registro = reg
+                                st.session_state.ar_etapa_confirmacao = 1
+                                st.session_state.ar_mostrar_pdf = True
+                                st.rerun()
+                        if st.session_state.ar_mostrar_pdf and st.session_state.ar_pdf_bytes:
+                            st.markdown("---")
+                            st.success("✅ PDF gerado com sucesso!")
+                            st.markdown("#### 📧 Enviar por E-mail")
+                            if st.button("Enviar este PDF por E-mail", use_container_width=True):
+                                with st.spinner("Enviando e-mail..."):
+                                    assunto = f"Aviso de Rejeição - AR {reg.numero} - {datetime.now().strftime('%d/%m/%Y')}"
+                                    corpo = f"""Prezados,\n\nSegue em anexo o Aviso de Rejeição.\n\nNúmero: {reg.numero}\nData: {reg.data.strftime('%d/%m/%Y') if reg.data else '-'}\nReferência: {reg.referencia}\n\nAtenciosamente,\nSistema de Gestão da Qualidade - Luvidarte"""
+                                    if enviar_email_ar(EMAIL_CONFIG_AR["destinatarios"], assunto, corpo, st.session_state.ar_pdf_bytes, st.session_state.ar_pdf_nome):
+                                        st.success("📧 E-mail enviado com sucesso!")
+                                    else:
+                                        st.error("❌ Erro ao enviar e-mail")
+                            st.markdown("#### 🖨️ Imprimir")
+                            if st.button("Imprimir este PDF", use_container_width=True):
+                                with st.spinner("Enviando para impressora..."):
+                                    success, msg = imprimir_pdf_ar(st.session_state.ar_pdf_bytes, st.session_state.ar_pdf_nome)
+                                    if success:
+                                        st.success(f"🖨️ {msg}")
+                                    else:
+                                        st.warning(f"⚠️ {msg}")
+                            st.markdown("#### 📥 Salvar PDF")
+                            st.download_button(label="Baixar PDF", data=st.session_state.ar_pdf_bytes, file_name=st.session_state.ar_pdf_nome, mime="application/pdf", use_container_width=True)
+                else:
+                    st.error(f"❌ Registro Nº {numero_busca} não encontrado!")
+    
+    st.markdown(f"""
+    <div style="text-align:right;padding:16px 0 8px;
+        font-family:'JetBrains Mono',monospace;font-size:10px;
+        color:{THEME['text_muted']};letter-spacing:.1em;">
+        AVISO DE REJEIÇÃO · {get_horario_brasilia()}
+    </div>
+    """, unsafe_allow_html=True)
+
+if aba_selecionada not in ['AVISO DE REJEIÇÃO']:
+    pass
