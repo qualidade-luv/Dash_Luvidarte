@@ -18,6 +18,7 @@ from email.mime.application import MIMEApplication
 import traceback
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
+import time
 
 # ======================
 # CONFIGURAÇÕES
@@ -2879,6 +2880,85 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
             st.session_state.ar_confirmar_email = None
         if 'ar_confirmar_imprimir' not in st.session_state:
             st.session_state.ar_confirmar_imprimir = None
+        if 'ar_registro_editando' not in st.session_state:
+            st.session_state.ar_registro_editando = None
+        
+        # Função para obter horário de Brasília
+        def get_horario_brasilia_ar():
+            from datetime import timezone, timedelta
+            utc_now = datetime.now(timezone.utc)
+            brasilia_offset = timezone(timedelta(hours=-3))
+            agora_brasilia = utc_now.astimezone(brasilia_offset)
+            return agora_brasilia
+        
+        # Função para EXCLUIR registro do Google Sheets
+        def excluir_registro_ar(numero: int) -> bool:
+            """Exclui registro do Google Sheets"""
+            try:
+                client = get_gspread_client()
+                if client is None:
+                    st.error("❌ Não foi possível conectar ao Google Sheets")
+                    return False
+                
+                sheet = client.open_by_key(ID_PLANILHA_AR).worksheet(ABA_AR)
+                
+                # Buscar o número na coluna A (primeira coluna)
+                celula = sheet.find(str(numero), in_column=1)
+                if celula:
+                    sheet.delete_rows(celula.row)
+                    return True
+                else:
+                    st.warning(f"⚠️ Registro Nº {numero} não encontrado no Google Sheets")
+                    return False
+                    
+            except Exception as e:
+                st.error(f"❌ Erro ao excluir registro: {str(e)}")
+                return False
+        
+        # Função para ALTERAR registro no Google Sheets
+        def atualizar_registro_ar(registro: RegistroAR) -> bool:
+            """Atualiza registro existente no Google Sheets"""
+            try:
+                client = get_gspread_client()
+                if client is None:
+                    st.error("❌ Não foi possível conectar ao Google Sheets")
+                    return False
+                
+                sheet = client.open_by_key(ID_PLANILHA_AR).worksheet(ABA_AR)
+                
+                # Buscar o número na coluna A
+                celula = sheet.find(str(registro.numero), in_column=1)
+                if celula:
+                    linha = celula.row
+                    
+                    # Preparar os dados
+                    dados = [
+                        str(registro.numero),
+                        registro.data.strftime("%d/%m/%Y") if registro.data else "",
+                        registro.hora,
+                        registro.codigo,
+                        registro.emissor,
+                        registro.referencia,
+                        registro.decisao,
+                        registro.descricao,
+                        registro.status,
+                        registro.disposicao,
+                        registro.data_finalizacao.strftime("%d/%m/%Y") if registro.data_finalizacao else "",
+                        registro.turno
+                    ]
+                    
+                    # Atualizar cada célula
+                    for col, valor in enumerate(dados, start=1):
+                        sheet.update_cell(linha, col, valor)
+                    
+                    return True
+                else:
+                    st.warning(f"⚠️ Registro Nº {registro.numero} não encontrado para atualização")
+                    return False
+                    
+            except Exception as e:
+                st.error(f"❌ Erro ao atualizar registro: {str(e)}")
+                return False
         
         def imprimir_pdf_ar(pdf_bytes: bytes, nome_arquivo: str):
             try:
@@ -2904,7 +2984,7 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
         
         if menu_ar == "📝 Novo Registro":
             st.subheader("Novo Aviso de Rejeição")
-            st.info("⚠️ Data e hora serão preenchidas automaticamente no salvamento")
+            st.info("⚠️ Data e hora serão preenchidas automaticamente no salvamento (Horário de Brasília)")
             
             if st.session_state.ar_mostrar_pdf and st.session_state.ar_pdf_bytes:
                 st.success(f"✅ Registro salvo com sucesso!")
@@ -2949,8 +3029,9 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                                 st.success("📧 E-mail enviado com sucesso!")
                             else:
                                 st.error("❌ Erro ao enviar e-mail")
-                    import time
-                    time.sleep(1)
+                    # Pequeno delay para garantir que o e-mail foi processado
+                    import time as time_module
+                    time_module.sleep(1)
                     st.session_state.ar_etapa_confirmacao = 3
                     st.rerun()
                 elif st.session_state.ar_etapa_confirmacao == 3:
@@ -3018,9 +3099,25 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                         if not codigo or not emissor or not referencia or not descricao:
                             st.error("❌ Preencha todos os campos obrigatórios (*)")
                         else:
-                            registro = RegistroAR(numero=numero, data=datetime.now().date(), hora=datetime.now().strftime("%H:%M:%S"), codigo=codigo, emissor=emissor, referencia=referencia, decisao=decisao, descricao=descricao, status=status, disposicao=disposicao, data_finalizacao=data_finalizacao, turno=turno)
+                            agora_brasilia = get_horario_brasilia_ar()
+                            registro = RegistroAR(
+                                numero=numero, 
+                                data=agora_brasilia.date(), 
+                                hora=agora_brasilia.strftime("%H:%M:%S"), 
+                                codigo=codigo, 
+                                emissor=emissor, 
+                                referencia=referencia, 
+                                decisao=decisao, 
+                                descricao=descricao, 
+                                status=status, 
+                                disposicao=disposicao, 
+                                data_finalizacao=data_finalizacao, 
+                                turno=turno
+                            )
                             if salvar_registro_ar(registro, eh_alteracao=False):
                                 st.success(f"✅ Registro {numero} salvo com sucesso!")
+                                st.info(f"📅 Data: {agora_brasilia.strftime('%d/%m/%Y')} | ⏰ Hora: {agora_brasilia.strftime('%H:%M:%S')} (Horário de Brasília)")
+                                
                                 pdf_bytes = gerar_pdf_ar(registro)
                                 if pdf_bytes:
                                     st.session_state.ar_pdf_bytes = pdf_bytes
@@ -3068,118 +3165,163 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
         
         elif menu_ar == "🔍 Buscar/Editar/Excluir":
             st.subheader("Buscar, Editar ou Excluir Registro")
+            
             col_b1, col_b2 = st.columns([2, 1])
             with col_b1:
                 numero_busca = st.number_input("Digite o número do AR", min_value=1, step=1, key="busca_ar_principal")
             with col_b2:
                 st.markdown("<br>", unsafe_allow_html=True)
                 buscar_clicked = st.button("🔍 Buscar", key="buscar_ar_principal_btn", use_container_width=True)
+            
             if buscar_clicked and numero_busca:
                 with st.spinner("Buscando..."):
                     registros = carregar_registros_ar({"numero": numero_busca})
                 if registros:
-                    reg = registros[0]
-                    st.success(f"✅ Registro Nº {reg.numero} encontrado!")
-                    with st.expander("📋 Dados completos do registro", expanded=True):
-                        col_d1, col_d2 = st.columns(2)
-                        with col_d1:
-                            st.write("**📅 Datas e Horários:**")
-                            st.write(f"- Data: {reg.data.strftime('%d/%m/%Y') if reg.data else '-'}")
-                            st.write(f"- Hora: {reg.hora}")
-                            st.write(f"- Turno: {reg.turno}")
-                            st.write(f"- Data Finalização: {reg.data_finalizacao.strftime('%d/%m/%Y') if reg.data_finalizacao else '-'}")
-                            st.write("**📝 Informações do Produto:**")
-                            st.write(f"- Código: {reg.codigo}")
-                            st.write(f"- Emissor: {reg.emissor}")
-                            st.write(f"- Referência: {reg.referencia}")
-                        with col_d2:
-                            st.write("**⚖️ Decisão e Status:**")
-                            st.write(f"- Decisão: {reg.decisao}")
-                            st.write(f"- Status: {reg.status}")
-                            st.write("**📋 Descrições:**")
-                            st.write(f"- Problema: {reg.descricao[:150]}...")
-                            st.write(f"- Disposição: {reg.disposicao[:150]}...")
-                    tab_editar, tab_excluir, tab_acoes = st.tabs(["✏️ Editar Registro", "🗑️ Excluir Registro", "📄 Ações do PDF"])
-                    with tab_editar:
-                        with st.form("editar_ar_principal"):
-                            col_e1, col_e2, col_e3 = st.columns(3)
-                            with col_e1:
-                                data_edt = st.date_input("Data", reg.data if reg.data else datetime.now())
-                                hora_edt = st.text_input("Hora", reg.hora)
-                                turno_edt = st.selectbox("Turno", OPCOES_TURNO_AR, index=OPCOES_TURNO_AR.index(reg.turno) if reg.turno in OPCOES_TURNO_AR else 0)
-                            with col_e2:
-                                codigo_edt = st.text_input("Código", reg.codigo)
-                                emissor_edt = st.text_input("Emissor", reg.emissor)
-                                referencia_edt = st.text_area("Referência", reg.referencia, height=80)
-                                decisao_edt = st.selectbox("Decisão", OPCOES_DECISAO_AR, index=OPCOES_DECISAO_AR.index(reg.decisao) if reg.decisao in OPCOES_DECISAO_AR else 0)
-                            with col_e3:
-                                status_edt = st.selectbox("Status", OPCOES_STATUS_AR, index=OPCOES_STATUS_AR.index(reg.status) if reg.status in OPCOES_STATUS_AR else 0)
-                                descricao_edt = st.text_area("Descrição", reg.descricao, height=80)
-                                disposicao_edt = st.text_area("Disposição", reg.disposicao, height=80)
-                                data_fim_edt = st.date_input("Data Finalização", reg.data_finalizacao if reg.data_finalizacao else datetime.now())
-                            submitted_edit = st.form_submit_button("💾 SALVAR ALTERAÇÕES", type="primary", use_container_width=True)
-                            if submitted_edit:
-                                if not codigo_edt or not emissor_edt or not referencia_edt or not descricao_edt:
-                                    st.error("❌ Preencha todos os campos obrigatórios")
-                                else:
-                                    registro_atualizado = RegistroAR(numero=reg.numero, data=data_edt, hora=hora_edt, codigo=codigo_edt, emissor=emissor_edt, referencia=referencia_edt, decisao=decisao_edt, descricao=descricao_edt, status=status_edt, disposicao=disposicao_edt, data_finalizacao=data_fim_edt, turno=turno_edt)
-                                    if salvar_registro_ar(registro_atualizado, eh_alteracao=True):
-                                        st.success(f"✅ Registro {reg.numero} atualizado com sucesso!")
-                                        st.rerun()
-                    with tab_excluir:
-                        st.error(f"⚠️ **ATENÇÃO!** Exclusão do Registro Nº {reg.numero}")
-                        st.warning("Esta ação é **IRREVERSÍVEL** e não pode ser desfeita!")
-                        st.write("**Dados do registro que será excluído:**")
+                    st.session_state.ar_registro_editando = registros[0]
+                    st.rerun()
+            
+            if st.session_state.ar_registro_editando:
+                reg = st.session_state.ar_registro_editando
+                st.success(f"✅ Registro Nº {reg.numero} encontrado!")
+                
+                with st.expander("📋 Dados completos do registro", expanded=True):
+                    col_d1, col_d2 = st.columns(2)
+                    with col_d1:
+                        st.write("**📅 Datas e Horários:**")
+                        st.write(f"- Data: {reg.data.strftime('%d/%m/%Y') if reg.data else '-'}")
+                        st.write(f"- Hora: {reg.hora}")
+                        st.write(f"- Turno: {reg.turno}")
+                        st.write(f"- Data Finalização: {reg.data_finalizacao.strftime('%d/%m/%Y') if reg.data_finalizacao else '-'}")
+                        st.write("**📝 Informações do Produto:**")
                         st.write(f"- Código: {reg.codigo}")
                         st.write(f"- Emissor: {reg.emissor}")
-                        st.write(f"- Referência: {reg.referencia[:50]}...")
-                        st.write(f"- Data: {reg.data.strftime('%d/%m/%Y') if reg.data else '-'}")
-                        confirmar = st.checkbox(f"✅ Confirmo que desejo EXCLUIR permanentemente o Registro Nº {reg.numero}")
-                        if confirmar:
-                            if st.button("🗑️ CONFIRMAR EXCLUSÃO", type="primary", use_container_width=True):
-                                with st.spinner(f"Excluindo registro {reg.numero}..."):
-                                    if excluir_registro_ar(reg.numero):
-                                        st.success(f"✅ Registro {reg.numero} excluído com sucesso!")
-                                        st.balloons()
-                                        st.rerun()
-                                    else:
-                                        st.error(f"❌ Erro ao excluir registro {reg.numero}")
-                    with tab_acoes:
-                        st.subheader("Ações para este Registro")
-                        if st.button("📄 Gerar PDF", use_container_width=True):
-                            pdf_bytes = gerar_pdf_ar(reg)
-                            if pdf_bytes:
-                                nome_pdf = sanitize_filename_ar(f"AR_{reg.numero}_{reg.referencia[:30]}") + ".pdf"
-                                st.session_state.ar_pdf_bytes = pdf_bytes
-                                st.session_state.ar_pdf_nome = nome_pdf
-                                st.session_state.ar_ultimo_registro = reg
-                                st.session_state.ar_etapa_confirmacao = 1
-                                st.session_state.ar_mostrar_pdf = True
-                                st.rerun()
-                        if st.session_state.ar_mostrar_pdf and st.session_state.ar_pdf_bytes:
-                            st.markdown("---")
-                            st.success("✅ PDF gerado com sucesso!")
-                            st.markdown("#### 📧 Enviar por E-mail")
-                            if st.button("Enviar este PDF por E-mail", use_container_width=True):
-                                with st.spinner("Enviando e-mail..."):
-                                    assunto = f"Aviso de Rejeição - AR {reg.numero} - {datetime.now().strftime('%d/%m/%Y')}"
-                                    corpo = f"""Prezados,\n\nSegue em anexo o Aviso de Rejeição.\n\nNúmero: {reg.numero}\nData: {reg.data.strftime('%d/%m/%Y') if reg.data else '-'}\nReferência: {reg.referencia}\n\nAtenciosamente,\nSistema de Gestão da Qualidade - Luvidarte"""
-                                    if enviar_email_ar(EMAIL_CONFIG_AR["destinatarios"], assunto, corpo, st.session_state.ar_pdf_bytes, st.session_state.ar_pdf_nome):
-                                        st.success("📧 E-mail enviado com sucesso!")
-                                    else:
-                                        st.error("❌ Erro ao enviar e-mail")
-                            st.markdown("#### 🖨️ Imprimir")
-                            if st.button("Imprimir este PDF", use_container_width=True):
-                                with st.spinner("Enviando para impressora..."):
-                                    success, msg = imprimir_pdf_ar(st.session_state.ar_pdf_bytes, st.session_state.ar_pdf_nome)
-                                    if success:
-                                        st.success(f"🖨️ {msg}")
-                                    else:
-                                        st.warning(f"⚠️ {msg}")
-                            st.markdown("#### 📥 Salvar PDF")
-                            st.download_button(label="Baixar PDF", data=st.session_state.ar_pdf_bytes, file_name=st.session_state.ar_pdf_nome, mime="application/pdf", use_container_width=True)
-                else:
-                    st.error(f"❌ Registro Nº {numero_busca} não encontrado!")
+                        st.write(f"- Referência: {reg.referencia}")
+                    with col_d2:
+                        st.write("**⚖️ Decisão e Status:**")
+                        st.write(f"- Decisão: {reg.decisao}")
+                        st.write(f"- Status: {reg.status}")
+                        st.write("**📋 Descrições:**")
+                        st.write(f"- Problema: {reg.descricao[:150]}...")
+                        st.write(f"- Disposição: {reg.disposicao[:150]}...")
+                
+                tab_editar, tab_excluir, tab_acoes = st.tabs(["✏️ Editar Registro", "🗑️ Excluir Registro", "📄 Ações do PDF"])
+                
+                with tab_editar:
+                    st.subheader("Editar Registro")
+                    with st.form("editar_ar_principal"):
+                        col_e1, col_e2, col_e3 = st.columns(3)
+                        with col_e1:
+                            data_edt = st.date_input("Data", reg.data if reg.data else datetime.now())
+                            hora_edt = st.text_input("Hora", reg.hora)
+                            turno_edt = st.selectbox("Turno", OPCOES_TURNO_AR, index=OPCOES_TURNO_AR.index(reg.turno) if reg.turno in OPCOES_TURNO_AR else 0)
+                        with col_e2:
+                            codigo_edt = st.text_input("Código", reg.codigo)
+                            emissor_edt = st.text_input("Emissor", reg.emissor)
+                            referencia_edt = st.text_area("Referência", reg.referencia, height=80)
+                            decisao_edt = st.selectbox("Decisão", OPCOES_DECISAO_AR, index=OPCOES_DECISAO_AR.index(reg.decisao) if reg.decisao in OPCOES_DECISAO_AR else 0)
+                        with col_e3:
+                            status_edt = st.selectbox("Status", OPCOES_STATUS_AR, index=OPCOES_STATUS_AR.index(reg.status) if reg.status in OPCOES_STATUS_AR else 0)
+                            descricao_edt = st.text_area("Descrição", reg.descricao, height=80)
+                            disposicao_edt = st.text_area("Disposição", reg.disposicao, height=80)
+                            data_fim_edt = st.date_input("Data Finalização", reg.data_finalizacao if reg.data_finalizacao else datetime.now())
+                        
+                        submitted_edit = st.form_submit_button("💾 SALVAR ALTERAÇÕES", type="primary", use_container_width=True)
+                        
+                        if submitted_edit:
+                            if not codigo_edt or not emissor_edt or not referencia_edt or not descricao_edt:
+                                st.error("❌ Preencha todos os campos obrigatórios")
+                            else:
+                                registro_atualizado = RegistroAR(
+                                    numero=reg.numero, 
+                                    data=data_edt, 
+                                    hora=hora_edt, 
+                                    codigo=codigo_edt, 
+                                    emissor=emissor_edt, 
+                                    referencia=referencia_edt, 
+                                    decisao=decisao_edt, 
+                                    descricao=descricao_edt, 
+                                    status=status_edt, 
+                                    disposicao=disposicao_edt, 
+                                    data_finalizacao=data_fim_edt, 
+                                    turno=turno_edt
+                                )
+                                if atualizar_registro_ar(registro_atualizado):
+                                    st.success(f"✅ Registro {reg.numero} atualizado com sucesso!")
+                                    st.session_state.ar_registro_editando = None
+                                    st.rerun()
+                                else:
+                                    st.error("❌ Erro ao atualizar registro")
+                
+                with tab_excluir:
+                    st.subheader("Excluir Registro")
+                    st.error(f"⚠️ **ATENÇÃO!** Exclusão do Registro Nº {reg.numero}")
+                    st.warning("Esta ação é **IRREVERSÍVEL** e não pode ser desfeita!")
+                    
+                    st.write("**Dados do registro que será excluído:**")
+                    st.write(f"- Código: {reg.codigo}")
+                    st.write(f"- Emissor: {reg.emissor}")
+                    st.write(f"- Referência: {reg.referencia[:50]}...")
+                    st.write(f"- Data: {reg.data.strftime('%d/%m/%Y') if reg.data else '-'}")
+                    
+                    confirmar = st.checkbox(f"✅ Confirmo que desejo EXCLUIR permanentemente o Registro Nº {reg.numero}")
+                    
+                    if confirmar:
+                        if st.button("🗑️ CONFIRMAR EXCLUSÃO", type="primary", use_container_width=True):
+                            with st.spinner(f"Excluindo registro {reg.numero}..."):
+                                if excluir_registro_ar(reg.numero):
+                                    st.success(f"✅ Registro {reg.numero} excluído com sucesso!")
+                                    st.balloons()
+                                    st.session_state.ar_registro_editando = None
+                                    st.rerun()
+                                else:
+                                    st.error(f"❌ Erro ao excluir registro {reg.numero}")
+                    else:
+                        st.info("Marque a caixa de confirmação para habilitar a exclusão.")
+                
+                with tab_acoes:
+                    st.subheader("Ações para este Registro")
+                    
+                    if st.button("📄 Gerar PDF", use_container_width=True):
+                        pdf_bytes = gerar_pdf_ar(reg)
+                        if pdf_bytes:
+                            nome_pdf = sanitize_filename_ar(f"AR_{reg.numero}_{reg.referencia[:30]}") + ".pdf"
+                            st.session_state.ar_pdf_bytes = pdf_bytes
+                            st.session_state.ar_pdf_nome = nome_pdf
+                            st.session_state.ar_ultimo_registro = reg
+                            st.session_state.ar_etapa_confirmacao = 1
+                            st.session_state.ar_mostrar_pdf = True
+                            st.rerun()
+                    
+                    if st.session_state.ar_mostrar_pdf and st.session_state.ar_pdf_bytes:
+                        st.markdown("---")
+                        st.success("✅ PDF gerado com sucesso!")
+                        
+                        st.markdown("#### 📧 Enviar por E-mail")
+                        if st.button("Enviar este PDF por E-mail", use_container_width=True):
+                            with st.spinner("Enviando e-mail..."):
+                                assunto = f"Aviso de Rejeição - AR {reg.numero} - {datetime.now().strftime('%d/%m/%Y')}"
+                                corpo = f"""Prezados,\n\nSegue em anexo o Aviso de Rejeição.\n\nNúmero: {reg.numero}\nData: {reg.data.strftime('%d/%m/%Y') if reg.data else '-'}\nReferência: {reg.referencia}\n\nAtenciosamente,\nSistema de Gestão da Qualidade - Luvidarte"""
+                                if enviar_email_ar(EMAIL_CONFIG_AR["destinatarios"], assunto, corpo, st.session_state.ar_pdf_bytes, st.session_state.ar_pdf_nome):
+                                    st.success("📧 E-mail enviado com sucesso!")
+                                else:
+                                    st.error("❌ Erro ao enviar e-mail")
+                        
+                        st.markdown("#### 🖨️ Imprimir")
+                        if st.button("Imprimir este PDF", use_container_width=True):
+                            with st.spinner("Enviando para impressora..."):
+                                success, msg = imprimir_pdf_ar(st.session_state.ar_pdf_bytes, st.session_state.ar_pdf_nome)
+                                if success:
+                                    st.success(f"🖨️ {msg}")
+                                else:
+                                    st.warning(f"⚠️ {msg}")
+                        
+                        st.markdown("#### 📥 Salvar PDF")
+                        st.download_button(label="Baixar PDF", data=st.session_state.ar_pdf_bytes, file_name=st.session_state.ar_pdf_nome, mime="application/pdf", use_container_width=True)
+                
+                # Botão para limpar e voltar
+                if st.button("🔍 Nova Busca", use_container_width=True):
+                    st.session_state.ar_registro_editando = None
+                    st.rerun()
     
     st.markdown(f"""
     <div style="text-align:right;padding:16px 0 8px;
