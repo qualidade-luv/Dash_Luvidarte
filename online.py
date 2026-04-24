@@ -2960,27 +2960,58 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                 st.error(f"❌ Erro ao atualizar registro: {str(e)}")
                 return False
         
+        # Função de impressão universal (funciona em Windows, Linux e Cloud)
         def imprimir_pdf_ar(pdf_bytes: bytes, nome_arquivo: str):
+            """Função universal para impressão - compatível com Windows, Linux e Cloud"""
             try:
-                import sys
+                import platform
+                
                 if not nome_arquivo.lower().endswith('.pdf'):
                     nome_arquivo = nome_arquivo + '.pdf'
+                
+                # Salvar temporariamente
                 temp_path = os.path.join(CAMINHO_PDF_AR, nome_arquivo)
                 with open(temp_path, 'wb') as f:
                     f.write(pdf_bytes)
+                
                 if not os.path.exists(temp_path):
                     return False, "Erro ao salvar arquivo temporário"
-                if sys.platform == "win32":
+                
+                sistema = platform.system()
+                
+                if sistema == "Windows":
                     try:
+                        # Tenta imprimir diretamente no Windows
                         os.startfile(temp_path, "print")
                         return True, "PDF enviado para impressão"
                     except Exception as e:
+                        # Se falhar, abre o PDF
                         os.startfile(temp_path)
-                        return True, f"PDF aberto. Por favor, clique em Imprimir (Ctrl+P)."
-                else:
-                    return False, "Impressão automática disponível apenas no Windows"
+                        return True, f"PDF aberto. Use Ctrl+P para imprimir."
+                
+                elif sistema == "Linux":
+                    # No Linux (incluindo Streamlit Cloud)
+                    try:
+                        # Tenta usar o comando lp (CUPS)
+                        import subprocess
+                        result = subprocess.run(['lp', temp_path], capture_output=True, text=True)
+                        if result.returncode == 0:
+                            return True, "PDF enviado para impressão"
+                        else:
+                            return True, "PDF salvo. Faça o download e imprima manualmente."
+                    except:
+                        return True, "PDF salvo. Faça o download e imprima manualmente (Ctrl+P no navegador)."
+                
+                else:  # MacOS
+                    try:
+                        import subprocess
+                        subprocess.run(['open', temp_path])
+                        return True, "PDF aberto. Use Cmd+P para imprimir."
+                    except:
+                        return True, "PDF salvo. Faça o download e imprima manualmente."
+                        
             except Exception as e:
-                return False, f"Erro ao imprimir: {str(e)}"
+                return False, f"Erro ao processar PDF: {str(e)}"
         
         if menu_ar == "📝 Novo Registro":
             st.subheader("Novo Aviso de Rejeição")
@@ -3029,7 +3060,7 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                                 st.success("📧 E-mail enviado com sucesso!")
                             else:
                                 st.error("❌ Erro ao enviar e-mail")
-                    # Pequeno delay para garantir que o e-mail foi processado
+                    # Pequeno delay
                     import time as time_module
                     time_module.sleep(1)
                     st.session_state.ar_etapa_confirmacao = 3
@@ -3050,7 +3081,7 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                             st.rerun()
                 elif st.session_state.ar_etapa_confirmacao == 4:
                     if st.session_state.ar_confirmar_imprimir:
-                        with st.spinner("Enviando para impressora..."):
+                        with st.spinner("Processando PDF..."):
                             success, msg = imprimir_pdf_ar(st.session_state.ar_pdf_bytes, st.session_state.ar_pdf_nome)
                             if success:
                                 st.success(f"🖨️ {msg}")
@@ -3308,7 +3339,7 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                         
                         st.markdown("#### 🖨️ Imprimir")
                         if st.button("Imprimir este PDF", use_container_width=True):
-                            with st.spinner("Enviando para impressora..."):
+                            with st.spinner("Processando PDF..."):
                                 success, msg = imprimir_pdf_ar(st.session_state.ar_pdf_bytes, st.session_state.ar_pdf_nome)
                                 if success:
                                     st.success(f"🖨️ {msg}")
