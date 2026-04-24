@@ -5,4 +5,4 @@ gspread
 oauth2client
 numpy
 pytz
-load_workbook
+openpyxl
