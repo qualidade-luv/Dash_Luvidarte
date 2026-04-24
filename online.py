@@ -25,6 +25,11 @@ from dataclasses import dataclass
 ID_PLANILHA_PRENSADOS_SOPRO = '1Hjy4UGtgwIPJgqmcv46LyXNWOrYk_oeJWWV5vlfKF2k'
 ID_PLANILHA_TEMPERA = '1GJegUHosaQLEJVMCH6QVuKjSjuaxrWkgzNEr9vM5Yio'
 
+# Configurações do AR no Google Sheets
+ID_PLANILHA_AR = '12pz6EE1KDo41szDyGEyTyK27mAOb9F1FyU77_M1kL0o'
+ABA_AR = 'AR'
+EMAIL_SERVICE_ACCOUNT = 'script-atualizacao@dashboard-gerencial-492613.iam.gserviceaccount.com'
+
 PRACAS_NAO_SOPRO = ['GIL', 'GILSIMAR', 'ED CARLOS', 'EDI CARLOS', 'ROBÔ 2', 'ROBÔ-2', 'ROBÔ', 'ROBO']
 
 ABAS = {
@@ -35,8 +40,6 @@ ABAS = {
 }
 
 # Configurações do Sistema de Aviso de Rejeição (AR)
-CAMINHO_PLANILHA_AR = r"\\srv-luvidarte\dados\DOC\Engenharia_Luvidarte\SGQ - LUVIDARTE - ALTERADAS\0-AVISO DE REJEIÇÃO\CQ - 018  AVISO DE REJEIÇÃO.xlsm"
-ABA_AR = "HISTORICO"
 CAMINHO_PDF_AR = r"\\srv-luvidarte\dados\DOC\Engenharia_Luvidarte\SGQ - LUVIDARTE - ALTERADAS\0-AVISO DE REJEIÇÃO\1-PDF"
 CAMINHO_PDF_RELATORIO_AR = r"\\srv-luvidarte\dados\DOC\Engenharia_Luvidarte\SGQ - LUVIDARTE - ALTERADAS\0-AVISO DE REJEIÇÃO\2-PDF"
 
@@ -255,7 +258,7 @@ def converter_tempo_para_minutos(valor):
     return 0
 
 # ======================
-# FUNÇÕES DE CARREGAMENTO DE DADOS (DEFINIDAS GLOBALMENTE)
+# FUNÇÕES DE CARREGAMENTO DE DADOS
 # ======================
 @st.cache_data(ttl=300)
 def carregar_dados_prensados():
@@ -491,7 +494,7 @@ def carregar_dados_tempera():
         return pd.DataFrame()
 
 # ======================
-# FUNÇÕES DO SISTEMA AR (AVISO DE REJEIÇÃO)
+# FUNÇÕES DO SISTEMA AR (AVISO DE REJEIÇÃO) - USANDO GOOGLE SHEETS
 # ======================
 @dataclass
 class RegistroAR:
@@ -514,122 +517,162 @@ def sanitize_filename_ar(filename: str) -> str:
     return filename[:50]
 
 def obter_proximo_numero_ar():
+    """Obtém o próximo número disponível do Google Sheets"""
     try:
-        wb = load_workbook(CAMINHO_PLANILHA_AR, keep_vba=True, data_only=True)
-        ws = wb[ABA_AR]
+        client = get_gspread_client()
+        if client is None:
+            return 1
+        
+        sheet = client.open_by_key(ID_PLANILHA_AR).worksheet(ABA_AR)
+        todos_dados = sheet.get_all_values()
+        
+        if len(todos_dados) < 2:
+            return 1
+        
         numeros = []
-        for row in range(6, ws.max_row + 1):
-            valor = ws[f"A{row}"].value
-            if isinstance(valor, (int, float)):
-                numeros.append(valor)
-        wb.close()
+        for row in todos_dados[1:]:
+            if len(row) > 0 and row[0]:
+                try:
+                    num = int(float(row[0]))
+                    numeros.append(num)
+                except:
+                    pass
+        
         if not numeros:
             return 1
-        return int(max(numeros)) + 1
+        return max(numeros) + 1
     except Exception as e:
+        st.error(f"Erro ao obter próximo número: {e}")
         return 1
 
 def carregar_registros_ar(filtros: Dict[str, Any] = None) -> List[RegistroAR]:
+    """Carrega registros do Google Sheets"""
     registros = []
     try:
-        wb = load_workbook(CAMINHO_PLANILHA_AR, keep_vba=True, data_only=True)
-        ws = wb[ABA_AR]
-        for row in range(6, ws.max_row + 1):
-            numero = ws[f"A{row}"].value
-            data = ws[f"B{row}"].value
-            if not data or not numero:
+        client = get_gspread_client()
+        if client is None:
+            st.error("Não foi possível conectar ao Google Sheets")
+            return registros
+        
+        sheet = client.open_by_key(ID_PLANILHA_AR).worksheet(ABA_AR)
+        todos_dados = sheet.get_all_values()
+        
+        if len(todos_dados) < 2:
+            return registros
+        
+        for row in todos_dados[1:]:
+            if len(row) < 12:
                 continue
-            registro = RegistroAR()
-            registro.numero = numero
-            registro.data = data if isinstance(data, datetime) else None
-            registro.hora = str(ws[f"C{row}"].value or "")
-            registro.codigo = str(ws[f"D{row}"].value or "")
-            registro.emissor = str(ws[f"E{row}"].value or "")
-            registro.referencia = str(ws[f"F{row}"].value or "")
-            registro.decisao = str(ws[f"G{row}"].value or "")
-            registro.descricao = str(ws[f"H{row}"].value or "")
-            registro.status = str(ws[f"I{row}"].value or "ABERTO")
-            registro.disposicao = str(ws[f"J{row}"].value or "")
-            registro.data_finalizacao = ws[f"K{row}"].value if isinstance(ws[f"K{row}"].value, datetime) else None
-            registro.turno = str(ws[f"L{row}"].value or "")
             
-            if filtros:
-                incluir = True
-                if filtros.get('numero') and filtros['numero'] != registro.numero:
-                    incluir = False
-                if filtros.get('codigo') and filtros['codigo'].lower() not in registro.codigo.lower():
-                    incluir = False
-                if filtros.get('emissor') and filtros['emissor'].lower() not in registro.emissor.lower():
-                    incluir = False
-                if filtros.get('status') and filtros['status'].upper() != registro.status.upper():
-                    incluir = False
-                if filtros.get('decisao') and filtros['decisao'].upper() != registro.decisao.upper():
-                    incluir = False
+            numero_str = row[0].strip() if len(row) > 0 else ""
+            data_str = row[1].strip() if len(row) > 1 else ""
             
-            if not filtros or incluir:
-                registros.append(registro)
-        wb.close()
+            if not data_str or not numero_str:
+                continue
+            
+            try:
+                registro = RegistroAR()
+                registro.numero = int(float(numero_str)) if numero_str else None
+                registro.data = converter_data_br(data_str)
+                registro.hora = row[2] if len(row) > 2 else ""
+                registro.codigo = row[3] if len(row) > 3 else ""
+                registro.emissor = row[4] if len(row) > 4 else ""
+                registro.referencia = row[5] if len(row) > 5 else ""
+                registro.decisao = row[6] if len(row) > 6 else ""
+                registro.descricao = row[7] if len(row) > 7 else ""
+                registro.status = row[8] if len(row) > 8 else "ABERTO"
+                registro.disposicao = row[9] if len(row) > 9 else ""
+                registro.data_finalizacao = converter_data_br(row[10]) if len(row) > 10 else None
+                registro.turno = row[11] if len(row) > 11 else ""
+                
+                if filtros:
+                    incluir = True
+                    if filtros.get('numero') and filtros['numero'] != registro.numero:
+                        incluir = False
+                    if filtros.get('codigo') and filtros['codigo'].lower() not in registro.codigo.lower():
+                        incluir = False
+                    if filtros.get('emissor') and filtros['emissor'].lower() not in registro.emissor.lower():
+                        incluir = False
+                    if filtros.get('status') and filtros['status'].upper() != registro.status.upper():
+                        incluir = False
+                    if filtros.get('decisao') and filtros['decisao'].upper() != registro.decisao.upper():
+                        incluir = False
+                
+                if not filtros or incluir:
+                    registros.append(registro)
+            except Exception as e:
+                continue
+        
         registros.sort(key=lambda x: x.data if x.data else datetime.min, reverse=True)
+        
     except Exception as e:
         st.error(f"Erro ao carregar registros AR: {e}")
+    
     return registros
 
 def salvar_registro_ar(registro: RegistroAR, eh_alteracao: bool = False) -> bool:
+    """Salva registro no Google Sheets"""
     try:
-        wb = load_workbook(CAMINHO_PLANILHA_AR, keep_vba=True, data_only=True)
-        ws = wb[ABA_AR]
+        client = get_gspread_client()
+        if client is None:
+            st.error("Não foi possível conectar ao Google Sheets")
+            return False
+        
+        sheet = client.open_by_key(ID_PLANILHA_AR).worksheet(ABA_AR)
+        
+        # Preparar os dados
+        dados = [
+            str(registro.numero),
+            registro.data.strftime("%d/%m/%Y") if registro.data else "",
+            registro.hora,
+            registro.codigo,
+            registro.emissor,
+            registro.referencia,
+            registro.decisao,
+            registro.descricao,
+            registro.status,
+            registro.disposicao,
+            registro.data_finalizacao.strftime("%d/%m/%Y") if registro.data_finalizacao else "",
+            registro.turno
+        ]
         
         if eh_alteracao:
-            linha_encontrada = None
-            for row in range(6, ws.max_row + 1):
-                if ws[f"A{row}"].value == registro.numero:
-                    linha_encontrada = row
-                    break
-            if linha_encontrada:
-                linha = linha_encontrada
+            # Encontrar linha para alterar
+            cell = sheet.find(str(registro.numero), in_column=1)
+            if cell:
+                row_num = cell.row
+                for col, valor in enumerate(dados, start=1):
+                    sheet.update_cell(row_num, col, valor)
             else:
-                ws.insert_rows(6)
-                linha = 6
+                # Se não encontrou, adiciona no final
+                sheet.append_row(dados)
         else:
-            ws.insert_rows(6)
-            linha = 6
+            # Inserir na linha 2 (após o cabeçalho)
+            sheet.insert_row(dados, index=2)
         
-        ws[f"A{linha}"] = registro.numero
-        ws[f"B{linha}"] = registro.data
-        ws[f"C{linha}"] = registro.hora
-        ws[f"D{linha}"] = registro.codigo
-        ws[f"E{linha}"] = registro.emissor
-        ws[f"F{linha}"] = registro.referencia
-        ws[f"G{linha}"] = registro.decisao
-        ws[f"H{linha}"] = registro.descricao
-        ws[f"I{linha}"] = registro.status
-        ws[f"J{linha}"] = registro.disposicao
-        ws[f"K{linha}"] = registro.data_finalizacao
-        ws[f"L{linha}"] = registro.turno
-        
-        wb.save(CAMINHO_PLANILHA_AR)
-        wb.close()
         return True
+        
     except Exception as e:
         st.error(f"Erro ao salvar registro AR: {e}")
         return False
 
 def excluir_registro_ar(numero: int) -> bool:
+    """Exclui registro do Google Sheets"""
     try:
-        wb = load_workbook(CAMINHO_PLANILHA_AR, keep_vba=True, data_only=True)
-        ws = wb[ABA_AR]
-        linha_encontrada = None
-        for row in range(6, ws.max_row + 1):
-            if ws[f"A{row}"].value == numero:
-                linha_encontrada = row
-                break
-        if linha_encontrada:
-            ws.delete_rows(linha_encontrada)
-            wb.save(CAMINHO_PLANILHA_AR)
-            wb.close()
+        client = get_gspread_client()
+        if client is None:
+            st.error("Não foi possível conectar ao Google Sheets")
+            return False
+        
+        sheet = client.open_by_key(ID_PLANILHA_AR).worksheet(ABA_AR)
+        
+        cell = sheet.find(str(numero), in_column=1)
+        if cell:
+            sheet.delete_rows(cell.row)
             return True
-        wb.close()
+        
         return False
+        
     except Exception as e:
         st.error(f"Erro ao excluir registro AR: {e}")
         return False
@@ -1077,55 +1120,78 @@ if aba_selecionada == 'PRENSADOS':
         df_sorted = df_sorted[df_sorted.apply(lambda row: row['REFERÊNCIA'] in melhores_trs_historico and abs(row['TRS FINAL (%)'] - melhores_trs_historico[row['REFERÊNCIA']]) < 0.01, axis=1)].reset_index(drop=True)
         if not df_sorted.empty:
             st.info(f"Exibindo {len(df_sorted)} registro(s) — Melhor TRS Final Histórico por referência")
+        else:
+            st.warning("Nenhum registro encontrado com Melhor TRS Final Histórico")
 
     df_view = df_sorted if qtd == 0 else df_sorted.head(qtd)
 
     if not df_view.empty:
         df_display = df_view.copy()
         df_display['DATA'] = pd.to_datetime(df_display['DATA']).dt.strftime('%d/%m/%Y')
+
         for col in ['PRODUZIDO', 'APROVADO', 'EMBALADO', 'REFUGADO', 'TRS 100%']:
             if col in df_display.columns:
                 df_display[col] = df_display[col].apply(lambda x: int(round(x)) if pd.notnull(x) else 0)
                 df_display[col] = df_display[col].apply(lambda x: f"{x:,}".replace(",", "."))
+        
         if 'TRS 1ª ESCOLHA (%)' in df_display.columns:
             df_display['TRS 1ª ESCOLHA (%)'] = df_display['TRS 1ª ESCOLHA (%)'].apply(lambda x: f"{x:.2f}%")
         if 'TRS FINAL (%)' in df_display.columns:
             df_display['TRS FINAL (%)'] = df_display['TRS FINAL (%)'].apply(lambda x: f"{x:.2f}%")
+
         colunas_exibir = ['DATA', 'REFERÊNCIA', 'TURNO', 'PRODUZIDO', 'APROVADO', 'TRS 100%', 'EMBALADO', 'REFUGADO', 'TRS 1ª ESCOLHA (%)', 'TRS FINAL (%)']
         if 'ANALISE' in df_display.columns:
             colunas_exibir.append('ANALISE')
         colunas_exibir = [col for col in colunas_exibir if col in df_display.columns]
+
         st.dataframe(df_display[colunas_exibir], use_container_width=True, height=400)
+
+        if not filtro_melhores_trs:
+            st.caption("▸ Dourado: Melhor TRS Final Histórico por referência   ▸ Verde: Análise registrada")
 
     # Gráfico TRS Diário
     render_section_header("Evolução Diária do TRS", "▸")
+
     if not df.empty and 'TRS 100%' in df.columns:
         colunas_agg = {}
         for col in ['PRODUZIDO', 'APROVADO', 'EMBALADO', 'TRS 100%']:
             if col in df.columns:
                 colunas_agg[col] = 'sum'
+        
         if colunas_agg:
             resumo_dia = df.groupby(df['DATA'].dt.date).agg(colunas_agg).reset_index()
             resumo_dia['DATA'] = pd.to_datetime(resumo_dia['DATA'])
+            
             if 'APROVADO' in resumo_dia.columns and 'TRS 100%' in resumo_dia.columns:
                 resumo_dia['TRS 1ª ESCOLHA (%)'] = (resumo_dia['APROVADO'] / resumo_dia['TRS 100%'].replace(0, 1) * 100).fillna(0)
+            
             if 'EMBALADO' in resumo_dia.columns and 'TRS 100%' in resumo_dia.columns:
                 resumo_dia['TRS FINAL (%)'] = (resumo_dia['EMBALADO'] / resumo_dia['TRS 100%'].replace(0, 1) * 100).fillna(0)
+            
             resumo_dia = resumo_dia.sort_values('DATA')
+
             if not resumo_dia.empty and ('TRS 1ª ESCOLHA (%)' in resumo_dia.columns or 'TRS FINAL (%)' in resumo_dia.columns):
                 fig, ax = plt.subplots(figsize=(14, 5), facecolor=THEME['bg_card'])
                 apply_chart_style(ax, fig, "TRS Diário — Período Selecionado", ylabel="TRS (%)")
+
                 if 'TRS 1ª ESCOLHA (%)' in resumo_dia.columns:
                     ax.plot(resumo_dia['DATA'], resumo_dia['TRS 1ª ESCOLHA (%)'],
                             marker='o', markersize=6, linewidth=2.5,
-                            color=THEME['accent_cyan'], alpha=0.95, label='TRS 1ª Escolha')
+                            color=THEME['accent_cyan'], alpha=0.95, label='TRS 1ª Escolha',
+                            markerfacecolor=THEME['bg_card'], markeredgecolor=THEME['accent_cyan'], markeredgewidth=2)
+
                 if 'TRS FINAL (%)' in resumo_dia.columns:
                     ax.plot(resumo_dia['DATA'], resumo_dia['TRS FINAL (%)'],
                             marker='s', markersize=6, linewidth=2.5,
-                            color=THEME['accent_orange'], alpha=0.95, label='TRS Final')
+                            color=THEME['accent_orange'], alpha=0.95, label='TRS Final',
+                            markerfacecolor=THEME['bg_card'], markeredgecolor=THEME['accent_orange'], markeredgewidth=2)
+
                 ax.axhline(y=85, color=THEME['accent_red'], linestyle=':', alpha=0.7, linewidth=1.5, label='Meta 85%')
-                ax.legend(framealpha=0.15, facecolor=THEME['bg_card'], edgecolor=THEME['border_bright'], labelcolor=THEME['text_primary'], fontsize=9)
-                plt.setp(ax.xaxis.get_majorticklabels(), rotation=35, ha='right', fontsize=8, color=THEME['text_muted'])
+
+                ax.legend(framealpha=0.15, facecolor=THEME['bg_card'], edgecolor=THEME['border_bright'],
+                          labelcolor=THEME['text_primary'], fontsize=9)
+                plt.setp(ax.xaxis.get_majorticklabels(), rotation=35, ha='right', fontsize=8,
+                         color=THEME['text_muted'])
                 fig.tight_layout(pad=1.5)
                 st.pyplot(fig)
                 plt.close(fig)
@@ -1135,8 +1201,10 @@ if aba_selecionada == 'PRENSADOS':
     # Manual vs Automática
     render_section_header("Desempenho por Tipo de Prensa", "▸")
     col1, col2 = st.columns(2)
+
     with col1:
-        st.markdown(f"""<div style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:{THEME['text_muted']};margin-bottom:8px">▸ Semi-Automática (Manual)</div>""", unsafe_allow_html=True)
+        st.markdown(f"""<div style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.2em;
+            text-transform:uppercase;color:{THEME['text_muted']};margin-bottom:8px">▸ Semi-Automática (Manual)</div>""", unsafe_allow_html=True)
         if 'BOQUETA' in df.columns:
             df_manual = df[df['BOQUETA'] == 1]
             if not df_manual.empty:
@@ -1146,13 +1214,16 @@ if aba_selecionada == 'PRENSADOS':
                 trs1_m = (t_ap_m / t_mt_m * 100) if t_mt_m > 0 else 0
                 trs_final_m = (t_emb_m / t_mt_m * 100) if t_mt_m > 0 else 0
                 prod_m = df_manual['PRODUZIDO'].sum()
+                
                 trs_color_m = THEME['accent_lime'] if trs1_m >= 85 else THEME['accent_orange'] if trs1_m >= 70 else THEME['accent_red']
                 render_kpi_card("TRS 1ª Escolha — Manual", f"{trs1_m:.1f}%", trs_color_m)
                 st.caption(f"TRS Final: {trs_final_m:.1f}% | Produção: {prod_m:,.0f} un".replace(",","."))
             else:
                 st.info("Sem dados para Prensa Manual")
+
     with col2:
-        st.markdown(f"""<div style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:{THEME['text_muted']};margin-bottom:8px">▸ Automática</div>""", unsafe_allow_html=True)
+        st.markdown(f"""<div style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.2em;
+            text-transform:uppercase;color:{THEME['text_muted']};margin-bottom:8px">▸ Automática</div>""", unsafe_allow_html=True)
         if 'BOQUETA' in df.columns:
             df_auto = df[df['BOQUETA'] == 2]
             if not df_auto.empty:
@@ -1162,6 +1233,7 @@ if aba_selecionada == 'PRENSADOS':
                 trs1_a = (t_ap_a / t_mt_a * 100) if t_mt_a > 0 else 0
                 trs_final_a = (t_emb_a / t_mt_a * 100) if t_mt_a > 0 else 0
                 prod_a = df_auto['PRODUZIDO'].sum()
+                
                 trs_color_a = THEME['accent_lime'] if trs1_a >= 85 else THEME['accent_orange'] if trs1_a >= 70 else THEME['accent_red']
                 render_kpi_card("TRS 1ª Escolha — Automática", f"{trs1_a:.1f}%", trs_color_a)
                 st.caption(f"TRS Final: {trs_final_a:.1f}% | Produção: {prod_a:,.0f} un".replace(",","."))
@@ -1172,19 +1244,23 @@ if aba_selecionada == 'PRENSADOS':
 
     # Análise de Paradas
     render_section_header("Análise de Paradas", "▸")
+
     horas_trabalhadas = 0
     total_acertos = 0
     total_manut = 0
+
     if 'HORAS_TOTAIS_MIN' in df.columns:
         horas_trabalhadas = df['HORAS_TOTAIS_MIN'].sum()
     else:
         dias_uteis = df[~df['IS_SABADO']]['DATA'].nunique() if 'IS_SABADO' in df.columns else 0
         dias_sabado = df[df['IS_SABADO']]['DATA'].nunique() if 'IS_SABADO' in df.columns else 0
         horas_trabalhadas = (dias_uteis * 8 * 60) + (dias_sabado * 6 * 60)
+
     total_acertos = df['ACERTOS_MIN_AJUSTADO'].sum() if 'ACERTOS_MIN_AJUSTADO' in df.columns else 0
     total_manut = df['MANUT_MIN'].sum() if 'MANUT_MIN' in df.columns else 0
     total_paradas = total_acertos + total_manut
     horas_produtivas = max(0, horas_trabalhadas - total_paradas)
+
     p1, p2, p3, p4 = st.columns(4)
     with p1: render_kpi_card("Horas Trabalhadas", minutos_para_horas_str(horas_trabalhadas), THEME['accent_cyan'])
     with p2: render_kpi_card("Acertos", minutos_para_horas_str(total_acertos), THEME['accent_yellow'])
@@ -1192,6 +1268,7 @@ if aba_selecionada == 'PRENSADOS':
     with p4: render_kpi_card("Horas Produtivas", minutos_para_horas_str(horas_produtivas), THEME['accent_lime'])
 
     col1, col2 = st.columns(2)
+
     with col1:
         if 'BOQUETA' in df.columns:
             df_manual_p = df[df['BOQUETA'] == 1]
@@ -1200,43 +1277,62 @@ if aba_selecionada == 'PRENSADOS':
             manut_m = df_manual_p['MANUT_MIN'].sum() if 'MANUT_MIN' in df.columns else 0
             acertos_a = df_auto_p['ACERTOS_MIN_AJUSTADO'].sum() if 'ACERTOS_MIN_AJUSTADO' in df.columns else 0
             manut_a = df_auto_p['MANUT_MIN'].sum() if 'MANUT_MIN' in df.columns else 0
+
             categorias = ['Manual', 'Automática']
             acertos_v = [acertos_m, acertos_a]
             manut_v = [manut_m, manut_a]
+
             fig, ax = plt.subplots(figsize=(7, 5), facecolor=THEME['bg_card'])
             apply_chart_style(ax, fig, "Composição das Paradas", ylabel="Minutos")
+
             x = np.arange(len(categorias))
             w = 0.55
             ax.bar(x, acertos_v, w, label='Acertos', color=THEME['accent_yellow'], alpha=0.88, edgecolor=THEME['bg_card'], linewidth=1.5)
             ax.bar(x, manut_v, w, bottom=acertos_v, label='Manutenção', color=THEME['accent_red'], alpha=0.88, edgecolor=THEME['bg_card'], linewidth=1.5)
+
             for i, (a, m) in enumerate(zip(acertos_v, manut_v)):
                 total = a + m
                 if a > 0: ax.text(i, a/2, minutos_para_horas_str(a), ha='center', va='center', color='black', fontweight='bold', fontsize=10)
                 if m > 0: ax.text(i, a + m/2, minutos_para_horas_str(m), ha='center', va='center', color='black', fontweight='bold', fontsize=10)
                 if total > 0:
-                    ax.text(i, total * 1.05, minutos_para_horas_str(total), ha='center', va='bottom', color=THEME['text_primary'], fontweight='bold', fontsize=11)
+                    ax.text(i, total * 1.05, minutos_para_horas_str(total),
+                            ha='center', va='bottom', color=THEME['text_primary'], fontweight='bold', fontsize=11)
+
             ax.set_xticks(x)
             ax.set_xticklabels(categorias, fontsize=10, color=THEME['text_muted'])
-            ax.legend(framealpha=0.15, facecolor=THEME['bg_card'], edgecolor=THEME['border_bright'], labelcolor=THEME['text_primary'], fontsize=9)
+            ax.legend(framealpha=0.15, facecolor=THEME['bg_card'], edgecolor=THEME['border_bright'],
+                      labelcolor=THEME['text_primary'], fontsize=9)
             fig.tight_layout(pad=1.5)
             st.pyplot(fig)
             plt.close(fig)
+
     with col2:
         if horas_trabalhadas > 0:
             labels_p = ['Produtivas', 'Acertos', 'Manutenção']
             vals_p = [horas_produtivas, total_acertos, total_manut]
             cores_p = [THEME['accent_lime'], THEME['accent_yellow'], THEME['accent_red']]
             lf, vf, cf = zip(*[(l, v, c) for l, v, c in zip(labels_p, vals_p, cores_p) if v > 0]) if any(v > 0 for v in vals_p) else ([], [], [])
+
             if vf:
                 fig, ax = plt.subplots(figsize=(7, 5), facecolor=THEME['bg_card'])
                 fig.patch.set_facecolor(THEME['bg_card'])
                 ax.set_facecolor(THEME['bg_card'])
-                wedges, texts, autotexts = ax.pie(vf, labels=lf, colors=cf, autopct='%1.1f%%', startangle=90, textprops={'color': THEME['text_primary'], 'fontsize': 10}, wedgeprops={'edgecolor': THEME['bg_card'], 'linewidth': 2})
+
+                wedges, texts, autotexts = ax.pie(
+                    vf, labels=lf, colors=cf,
+                    autopct='%1.1f%%', startangle=90,
+                    textprops={'color': THEME['text_primary'], 'fontsize': 10},
+                    wedgeprops={'edgecolor': THEME['bg_card'], 'linewidth': 2}
+                )
                 for at in autotexts:
                     at.set_color('black')
                     at.set_fontweight('bold')
                     at.set_fontsize(10)
-                ax.set_title(f"Distribuição do Tempo\n{minutos_para_horas_str(horas_trabalhadas)} trabalhadas", fontsize=13, fontweight='bold', color=THEME['text_primary'], pad=14)
+
+                ax.set_title(
+                    f"Distribuição do Tempo\n{minutos_para_horas_str(horas_trabalhadas)} trabalhadas",
+                    fontsize=13, fontweight='bold', color=THEME['text_primary'], pad=14
+                )
                 fig.tight_layout(pad=1.5)
                 st.pyplot(fig)
                 plt.close(fig)
@@ -1254,26 +1350,37 @@ if aba_selecionada == 'PRENSADOS':
             te = df_t['EMBALADO'].sum() if 'EMBALADO' in df_t.columns else 0
             ta = df_t['APROVADO'].sum()
             tm = df_t['TRS 100%'].sum()
-            turno_data.append({'Turno': t, 'TRS 1ª Escolha': (ta/tm*100) if tm > 0 else 0, 'TRS Final': (te/tm*100) if tm > 0 else 0})
+            turno_data.append({
+                'Turno': t, 
+                'TRS 1ª Escolha': (ta/tm*100) if tm > 0 else 0,
+                'TRS Final': (te/tm*100) if tm > 0 else 0
+            })
         df_tt = pd.DataFrame(turno_data)
         if not df_tt.empty:
             fig, ax = plt.subplots(figsize=(10, 5), facecolor=THEME['bg_card'])
             apply_chart_style(ax, fig, "TRS por Turno", ylabel="TRS (%)")
+            
             x = np.arange(len(df_tt))
             width = 0.35
+            
             bars1 = ax.bar(x - width/2, df_tt['TRS 1ª Escolha'], width, label='TRS 1ª Escolha', color=THEME['accent_cyan'], alpha=0.88, edgecolor=THEME['bg_card'], linewidth=1.5)
             bars2 = ax.bar(x + width/2, df_tt['TRS Final'], width, label='TRS Final', color=THEME['accent_orange'], alpha=0.88, edgecolor=THEME['bg_card'], linewidth=1.5)
+            
             ax.axhline(y=85, color=THEME['accent_red'], linestyle='--', alpha=0.5, linewidth=1.5, label='Meta 85%')
+            
             for bar in bars1:
                 h = bar.get_height()
                 ax.text(bar.get_x() + bar.get_width()/2, h + 1, f'{h:.1f}%', ha='center', va='bottom', fontsize=8, color=THEME['accent_cyan'])
+            
             for bar in bars2:
                 h = bar.get_height()
                 ax.text(bar.get_x() + bar.get_width()/2, h + 1, f'{h:.1f}%', ha='center', va='bottom', fontsize=8, color=THEME['accent_orange'])
+            
             ax.set_xticks(x)
             ax.set_xticklabels(df_tt['Turno'], fontsize=11)
             ax.legend(loc='upper right', fontsize=9)
             ax.set_ylim(0, 105)
+            
             fig.tight_layout(pad=1.5)
             st.pyplot(fig)
             plt.close(fig)
@@ -1281,18 +1388,23 @@ if aba_selecionada == 'PRENSADOS':
     # Defeitos de Prensados
     if mostrar_defeitos:
         render_section_header("Estratificação de Defeitos - Prensados", "▸")
-        colunas_defeitos_prensados = ['TRINCA', 'RUGAS', 'DOBRA', 'SUJEIRA', 'FALHAS', 'CHUPADO', 'CROMO', 'BARRO', 'EMPENO', 'OUTROS', 'REMANEJAMENTO']
+        colunas_defeitos_prensados = [
+            'TRINCA', 'RUGAS', 'DOBRA', 'SUJEIRA', 'FALHAS', 'CHUPADO',
+            'CROMO', 'BARRO', 'EMPENO', 'OUTROS', 'REMANEJAMENTO'
+        ]
         defeitos_existentes = []
         for defeito in colunas_defeitos_prensados:
             for col in df.columns:
                 if col.upper() == defeito.upper():
                     defeitos_existentes.append(col)
                     break
+        
         if not defeitos_existentes:
             for col in df.columns:
                 col_upper = col.upper()
                 if col_upper in ['TRINCA', 'RUGAS', 'DOBRA', 'SUJEIRA', 'FALHAS', 'CHUPADO', 'CROMO', 'BARRO', 'EMPENO', 'OUTROS']:
                     defeitos_existentes.append(col)
+        
         if defeitos_existentes:
             df_def = df[defeitos_existentes].apply(pd.to_numeric, errors='coerce').fillna(0)
             df_def_sum = df_def.sum().sort_values(ascending=False)
@@ -1300,12 +1412,17 @@ if aba_selecionada == 'PRENSADOS':
             if not df_def_sum.empty:
                 fig, ax = plt.subplots(figsize=(12, 4), facecolor=THEME['bg_card'])
                 apply_chart_style(ax, fig, "Defeitos — Somatório", ylabel="Quantidade")
-                bars = ax.bar(range(len(df_def_sum)), df_def_sum.values, color=THEME['accent_red'], alpha=0.8, edgecolor=THEME['bg_card'], linewidth=1.2)
+                bars = ax.bar(range(len(df_def_sum)), df_def_sum.values,
+                              color=THEME['accent_red'], alpha=0.8,
+                              edgecolor=THEME['bg_card'], linewidth=1.2)
                 ax.set_xticks(range(len(df_def_sum)))
-                ax.set_xticklabels(df_def_sum.index, rotation=40, ha='right', fontsize=9, color=THEME['text_muted'])
+                ax.set_xticklabels(df_def_sum.index, rotation=40, ha='right',
+                                   fontsize=9, color=THEME['text_muted'])
                 for bar, val in zip(bars, df_def_sum.values):
                     if val > 0:
-                        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() * 1.02, f"{int(val):,}".replace(",","."), ha='center', va='bottom', fontsize=8, color=THEME['text_primary'])
+                        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() * 1.02,
+                                f"{int(val):,}".replace(",","."), ha='center', va='bottom',
+                                fontsize=8, color=THEME['text_primary'])
                 fig.tight_layout(pad=1.5)
                 st.pyplot(fig)
                 plt.close(fig)
@@ -1339,7 +1456,9 @@ elif aba_selecionada == 'SOPRO':
     df_base_calc = df_base.copy()
     if 'TRS_BRUTO' in df_base_calc.columns:
         df_base_calc['TRS LÍQUIDO (%)'] = (df_base_calc['TRS_BRUTO'] * 100).round(2)
-        df_base_calc['META'] = df_base_calc.apply(lambda row: (row['APROVADO'] / (row['TRS LÍQUIDO (%)'] / 100)) if row['TRS LÍQUIDO (%)'] > 0 else row['APROVADO'], axis=1).round(0)
+        df_base_calc['META'] = df_base_calc.apply(
+            lambda row: (row['APROVADO'] / (row['TRS LÍQUIDO (%)'] / 100)) if row['TRS LÍQUIDO (%)'] > 0 else row['APROVADO'], axis=1
+        ).round(0)
     else:
         df_base_calc['TRS LÍQUIDO (%)'] = 0
         df_base_calc['META'] = 0
@@ -1358,7 +1477,7 @@ elif aba_selecionada == 'SOPRO':
         st.markdown(f"<div style='font-family:JetBrains Mono,monospace;font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:{THEME['accent_lime']};margin:20px 0 10px;border-top:1px solid {THEME['border_bright']};padding-top:16px'>▸ Filtros · Sopro</div>", unsafe_allow_html=True)
         filtro_melhores_trs = st.checkbox("Melhores TRS Líquido por Referência", value=False, key="sopro_melhores")
         data_ini = st.date_input("Data inicial", value=None, key="sopro_data_ini")
-        data_fim = st.date_input("Data final", value=None, key="sopro_data_fim")
+        data_fim = st.date_input("Data final",   value=None, key="sopro_data_fim")
         if 'TURNO' in df_base.columns:
             turnos_disp = ["(Todos)"] + sorted(df_base['TURNO'].dropna().unique().tolist())
             turno = st.selectbox("Turno", options=turnos_disp, key="sopro_turno")
@@ -1388,14 +1507,16 @@ elif aba_selecionada == 'SOPRO':
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
-    total_prod = int(df['PRODUZIDO'].sum()) if 'PRODUZIDO' in df.columns else 0
-    total_refugo = int(df['REFUGADO'].sum()) if 'REFUGADO' in df.columns else 0
-    total_apro = int(df['APROVADO'].sum()) if 'APROVADO' in df.columns else 0
-    trs_liq_med = df['TRS_BRUTO'].mean() * 100 if 'TRS_BRUTO' in df.columns and not df.empty else 0
+    total_prod   = int(df['PRODUZIDO'].sum()) if 'PRODUZIDO' in df.columns else 0
+    total_refugo = int(df['REFUGADO'].sum())  if 'REFUGADO'  in df.columns else 0
+    total_apro   = int(df['APROVADO'].sum())  if 'APROVADO'  in df.columns else 0
+    trs_liq_med  = df['TRS_BRUTO'].mean() * 100 if 'TRS_BRUTO' in df.columns and not df.empty else 0
     
     if not df.empty and 'TRS_BRUTO' in df.columns and 'APROVADO' in df.columns:
         df['TRS_LIQUIDO_PCT'] = df['TRS_BRUTO'] * 100
-        df['META_CALC'] = df.apply(lambda row: (row['APROVADO'] / (row['TRS_LIQUIDO_PCT'] / 100)) if row['TRS_LIQUIDO_PCT'] > 0 else row['APROVADO'], axis=1)
+        df['META_CALC'] = df.apply(
+            lambda row: (row['APROVADO'] / (row['TRS_LIQUIDO_PCT'] / 100)) if row['TRS_LIQUIDO_PCT'] > 0 else row['APROVADO'], axis=1
+        )
         total_meta = int(df['META_CALC'].sum())
     else:
         total_meta = 0
@@ -1405,6 +1526,7 @@ elif aba_selecionada == 'SOPRO':
 
     # KPIs (5 cards)
     c1, c2, c3, c4, c5 = st.columns(5)
+
     with c1: render_kpi_card("Produzido", f"{total_prod:,}".replace(",","."), THEME['accent_cyan'], "◈")
     with c2: render_kpi_card("Aprovado", f"{total_apro:,}".replace(",","."), THEME['accent_lime'], "◈")
     with c3: render_kpi_card("Meta (TRS 100%)", f"{total_meta:,}".replace(",","."), THEME['accent_purple'], "◈")
@@ -1415,26 +1537,42 @@ elif aba_selecionada == 'SOPRO':
 
     # Tabela
     render_section_header("Tabela de Produção", "▸", THEME['accent_lime'])
+
     if not df.empty and 'TRS_BRUTO' in df.columns:
         df['TRS LÍQUIDO (%)'] = (df['TRS_BRUTO'] * 100).round(2)
-        df['META'] = df.apply(lambda row: int(round(row['APROVADO'] / (row['TRS LÍQUIDO (%)'] / 100))) if row['TRS LÍQUIDO (%)'] > 0 else int(row['APROVADO']), axis=1)
+        df['META'] = df.apply(
+            lambda row: int(round(row['APROVADO'] / (row['TRS LÍQUIDO (%)'] / 100))) if row['TRS LÍQUIDO (%)'] > 0 else int(row['APROVADO']), axis=1
+        )
+
     df_sorted = df.sort_values(by="DATA", ascending=False).reset_index(drop=True)
+
     if filtro_melhores_trs and not df_sorted.empty and 'REFERÊNCIA' in df_sorted.columns and 'TRS LÍQUIDO (%)' in df_sorted.columns:
-        df_sorted = df_sorted[df_sorted.apply(lambda r: r['REFERÊNCIA'] in melhores_trs_historico and abs(r['TRS LÍQUIDO (%)'] - melhores_trs_historico[r['REFERÊNCIA']]) < 0.01, axis=1)].reset_index(drop=True)
+        df_sorted = df_sorted[df_sorted.apply(
+            lambda r: r['REFERÊNCIA'] in melhores_trs_historico and
+                      abs(r['TRS LÍQUIDO (%)'] - melhores_trs_historico[r['REFERÊNCIA']]) < 0.01, axis=1
+        )].reset_index(drop=True)
         if not df_sorted.empty:
             st.info(f"Exibindo {len(df_sorted)} registro(s) — Melhor TRS Líquido Histórico por referência")
+        else:
+            st.warning("Nenhum registro encontrado")
+
     df_view = df_sorted if qtd == 0 else df_sorted.head(qtd)
+
     if not df_view.empty:
         df_display = df_view.copy()
         df_display['DATA'] = pd.to_datetime(df_display['DATA']).dt.strftime('%d/%m/%Y')
+        
         for col in ['PRODUZIDO', 'APROVADO', 'REFUGADO', 'META']:
             if col in df_display.columns:
                 df_display[col] = df_display[col].apply(lambda x: int(round(x)) if pd.notnull(x) else 0)
                 df_display[col] = df_display[col].apply(lambda x: f"{x:,}".replace(",", "."))
+        
         if 'TRS LÍQUIDO (%)' in df_display.columns:
             df_display['TRS LÍQUIDO (%)'] = df_display['TRS LÍQUIDO (%)'].apply(lambda x: f"{x:.2f}%")
+
         colunas_exibir = ['DATA','TURNO','PRAÇA','REFERÊNCIA','PRODUZIDO','META','APROVADO','REFUGADO','TRS LÍQUIDO (%)']
         colunas_exibir = [c for c in colunas_exibir if c in df_display.columns]
+
         st.dataframe(df_display[colunas_exibir], use_container_width=True, height=400)
         if not filtro_melhores_trs:
             st.caption("▸ Dourado: Melhor TRS Líquido Histórico por referência")
@@ -1444,20 +1582,30 @@ elif aba_selecionada == 'SOPRO':
     # TRS Líquido Diário
     render_section_header("Evolução Diária do TRS Líquido", "▸", THEME['accent_lime'])
     if not df.empty and 'TRS_BRUTO' in df.columns:
-        res_dia = df.groupby(df['DATA'].dt.date).agg({'TRS_BRUTO': 'mean', 'PRODUZIDO': 'sum', 'APROVADO': 'sum'}).reset_index()
+        res_dia = df.groupby(df['DATA'].dt.date).agg({
+            'TRS_BRUTO': 'mean', 
+            'PRODUZIDO': 'sum', 
+            'APROVADO': 'sum'
+        }).reset_index()
         res_dia['DATA'] = pd.to_datetime(res_dia['DATA'])
         res_dia['TRS Líquido (%)'] = res_dia['TRS_BRUTO'] * 100
         res_dia = res_dia.sort_values('DATA')
+        
         if not res_dia.empty:
             fig, ax = plt.subplots(figsize=(14, 5), facecolor=THEME['bg_card'])
             apply_chart_style(ax, fig, "TRS Líquido Diário — Período Selecionado", ylabel="TRS Líquido (%)")
             ax.fill_between(res_dia['DATA'], 0, res_dia['TRS Líquido (%)'], alpha=0.12, color=THEME['accent_lime'])
-            ax.plot(res_dia['DATA'], res_dia['TRS Líquido (%)'], marker='o', markersize=6, linewidth=2.5, color=THEME['accent_lime'], alpha=0.95, label='TRS Líquido')
+            ax.plot(res_dia['DATA'], res_dia['TRS Líquido (%)'],
+                    marker='o', markersize=6, linewidth=2.5, color=THEME['accent_lime'], alpha=0.95,
+                    label='TRS Líquido', markerfacecolor=THEME['bg_card'],
+                    markeredgecolor=THEME['accent_lime'], markeredgewidth=2)
             if len(res_dia) > 1:
                 mm = res_dia['TRS Líquido (%)'].rolling(window=min(3, len(res_dia)), min_periods=1).mean()
-                ax.plot(res_dia['DATA'], mm, color=THEME['accent_yellow'], alpha=0.8, linewidth=1.8, linestyle='--', label='Média 3 dias')
+                ax.plot(res_dia['DATA'], mm, color=THEME['accent_yellow'], alpha=0.8,
+                        linewidth=1.8, linestyle='--', label='Média 3 dias')
             ax.axhline(y=85, color=THEME['accent_red'], linestyle=':', alpha=0.7, linewidth=1.5, label='Meta 85%')
-            ax.legend(framealpha=0.15, facecolor=THEME['bg_card'], edgecolor=THEME['border_bright'], labelcolor=THEME['text_primary'], fontsize=9)
+            ax.legend(framealpha=0.15, facecolor=THEME['bg_card'], edgecolor=THEME['border_bright'],
+                      labelcolor=THEME['text_primary'], fontsize=9)
             plt.setp(ax.xaxis.get_majorticklabels(), rotation=35, ha='right', fontsize=8, color=THEME['text_muted'])
             fig.tight_layout(pad=1.5)
             st.pyplot(fig)
@@ -1468,17 +1616,26 @@ elif aba_selecionada == 'SOPRO':
     # Por Praça
     if 'PRAÇA' in df.columns and not df.empty and 'TRS_BRUTO' in df.columns:
         render_section_header("TRS Líquido por Praça", "▸", THEME['accent_lime'])
-        res_praca = df.groupby('PRAÇA').agg({'TRS_BRUTO': 'mean', 'PRODUZIDO': 'sum', 'APROVADO': 'sum'}).reset_index()
+        res_praca = df.groupby('PRAÇA').agg({
+            'TRS_BRUTO': 'mean', 
+            'PRODUZIDO': 'sum',
+            'APROVADO': 'sum'
+        }).reset_index()
         res_praca['TRS Líquido (%)'] = res_praca['TRS_BRUTO'] * 100
         res_praca = res_praca.sort_values('TRS Líquido (%)', ascending=False)
+        
         if not res_praca.empty:
             fig, ax = plt.subplots(figsize=(10, 5), facecolor=THEME['bg_card'])
             apply_chart_style(ax, fig, "TRS Líquido Médio por Praça", ylabel="TRS Líquido (%)")
-            bar_cols = [THEME['accent_lime'] if v >= 85 else THEME['accent_orange'] if v >= 70 else THEME['accent_red'] for v in res_praca['TRS Líquido (%)']]
-            bars = ax.bar(range(len(res_praca)), res_praca['TRS Líquido (%)'], color=bar_cols, alpha=0.88, edgecolor=THEME['bg_card'], linewidth=1.5, width=0.6)
+            bar_cols = [THEME['accent_lime'] if v >= 85 else THEME['accent_orange'] if v >= 70 else THEME['accent_red']
+                        for v in res_praca['TRS Líquido (%)']]
+            bars = ax.bar(range(len(res_praca)), res_praca['TRS Líquido (%)'], color=bar_cols,
+                          alpha=0.88, edgecolor=THEME['bg_card'], linewidth=1.5, width=0.6)
             ax.axhline(y=85, color=THEME['accent_red'], linestyle='--', alpha=0.4, linewidth=1.5)
             for bar, v in zip(bars, res_praca['TRS Líquido (%)']):
-                ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1, f'{v:.1f}%', ha='center', va='bottom', fontsize=9, color=THEME['text_primary'], fontweight='bold')
+                ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1,
+                        f'{v:.1f}%', ha='center', va='bottom', fontsize=9,
+                        color=THEME['text_primary'], fontweight='bold')
             ax.set_xticks(range(len(res_praca)))
             ax.set_xticklabels(res_praca['PRAÇA'], rotation=40, ha='right', fontsize=9)
             fig.tight_layout(pad=1.5)
@@ -1490,17 +1647,26 @@ elif aba_selecionada == 'SOPRO':
     # Mensal
     render_section_header("TRS Líquido Mensal", "▸", THEME['accent_lime'])
     if not df.empty and 'ANO_MES' in df.columns and 'TRS_BRUTO' in df.columns:
-        res_mes = df.groupby('ANO_MES').agg({'TRS_BRUTO': 'mean', 'PRODUZIDO': 'sum', 'APROVADO': 'sum'}).reset_index()
+        res_mes = df.groupby('ANO_MES').agg({
+            'TRS_BRUTO': 'mean', 
+            'PRODUZIDO': 'sum', 
+            'APROVADO': 'sum'
+        }).reset_index()
         res_mes['TRS Líquido (%)'] = res_mes['TRS_BRUTO'] * 100
         res_mes = res_mes.sort_values('ANO_MES')
+        
         if not res_mes.empty:
             fig, ax = plt.subplots(figsize=(12, 5), facecolor=THEME['bg_card'])
             apply_chart_style(ax, fig, "TRS Líquido Mensal", ylabel="TRS Líquido (%)")
-            bar_cols = [THEME['accent_lime'] if v >= 85 else THEME['accent_orange'] if v >= 70 else THEME['accent_red'] for v in res_mes['TRS Líquido (%)']]
-            bars = ax.bar(range(len(res_mes)), res_mes['TRS Líquido (%)'], color=bar_cols, alpha=0.88, edgecolor=THEME['bg_card'], linewidth=1.5, width=0.65)
+            bar_cols = [THEME['accent_lime'] if v >= 85 else THEME['accent_orange'] if v >= 70 else THEME['accent_red']
+                        for v in res_mes['TRS Líquido (%)']]
+            bars = ax.bar(range(len(res_mes)), res_mes['TRS Líquido (%)'], color=bar_cols,
+                          alpha=0.88, edgecolor=THEME['bg_card'], linewidth=1.5, width=0.65)
             ax.axhline(y=85, color=THEME['accent_red'], linestyle='--', alpha=0.4, linewidth=1.5)
             for bar, v in zip(bars, res_mes['TRS Líquido (%)']):
-                ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1, f'{v:.1f}%', ha='center', va='bottom', fontsize=10, color=THEME['text_primary'], fontweight='bold')
+                ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1,
+                        f'{v:.1f}%', ha='center', va='bottom', fontsize=10,
+                        color=THEME['text_primary'], fontweight='bold')
             meses_fmt = []
             for m in res_mes['ANO_MES']:
                 ms = str(m)
@@ -1521,9 +1687,11 @@ elif aba_selecionada == 'SOPRO':
         if not df_tt.empty:
             fig, ax = plt.subplots(figsize=(8, 4), facecolor=THEME['bg_card'])
             apply_chart_style(ax, fig, "TRS Líquido por Turno", ylabel="TRS Líquido (%)")
-            cores_t = {'M': THEME['accent_cyan'], 'T': THEME['accent_orange'], 'N': THEME['accent_lime'], 'A': THEME['accent_cyan'], 'B': THEME['accent_orange'], 'C': THEME['accent_lime']}
+            cores_t = {'M': THEME['accent_cyan'], 'T': THEME['accent_orange'], 'N': THEME['accent_lime'],
+                       'A': THEME['accent_cyan'], 'B': THEME['accent_orange'], 'C': THEME['accent_lime']}
             bc = [cores_t.get(t, THEME['text_muted']) for t in df_tt['Turno']]
-            ax.bar(range(len(df_tt)), df_tt['TRS Líquido'], color=bc, alpha=0.88, edgecolor=THEME['bg_card'], linewidth=1.5, width=0.55)
+            ax.bar(range(len(df_tt)), df_tt['TRS Líquido'], color=bc, alpha=0.88,
+                   edgecolor=THEME['bg_card'], linewidth=1.5, width=0.55)
             ax.axhline(y=85, color=THEME['accent_red'], linestyle='--', alpha=0.5, linewidth=1.5)
             for i, v in enumerate(df_tt['TRS Líquido']):
                 ax.text(i, v + 1, f"{v:.1f}%", ha='center', va='bottom', fontweight='bold', fontsize=11, color=THEME['text_primary'])
@@ -1537,7 +1705,11 @@ elif aba_selecionada == 'SOPRO':
     # Defeitos
     if mostrar_defeitos:
         render_section_header("Estratificação de Defeitos", "▸", THEME['accent_lime'])
-        colunas_defeitos = ['BOLHA','PEDRA','CALCINADO','BALANÇANDO','AMASSADO','OVAL','CORTE','QUEBRADA','VIDRO GRUDADO','CORDA','FORMA','RISCO','TORTO','RUGA','GABARITO','SUJEIRA','EMPENO','MARCAS','FALHADA','DOBRA','CHUPADO','ARREADO','GOSMA','BARRO','CROMO','MACHO']
+        colunas_defeitos = [
+            'BOLHA','PEDRA','CALCINADO','BALANÇANDO','AMASSADO','OVAL','CORTE','QUEBRADA',
+            'VIDRO GRUDADO','CORDA','FORMA','RISCO','TORTO','RUGA','GABARITO','SUJEIRA',
+            'EMPENO','MARCAS','FALHADA','DOBRA','CHUPADO','ARREADO','GOSMA','BARRO','CROMO','MACHO'
+        ]
         def_exist = []
         for defeito in colunas_defeitos:
             for col in df.columns:
@@ -1551,12 +1723,16 @@ elif aba_selecionada == 'SOPRO':
             if not df_def_s.empty:
                 fig, ax = plt.subplots(figsize=(12, 4), facecolor=THEME['bg_card'])
                 apply_chart_style(ax, fig, "Defeitos — Somatório", ylabel="Quantidade")
-                bars = ax.bar(range(len(df_def_s)), df_def_s.values, color=THEME['accent_red'], alpha=0.8, edgecolor=THEME['bg_card'], linewidth=1.2)
+                bars = ax.bar(range(len(df_def_s)), df_def_s.values,
+                              color=THEME['accent_red'], alpha=0.8,
+                              edgecolor=THEME['bg_card'], linewidth=1.2)
                 ax.set_xticks(range(len(df_def_s)))
                 ax.set_xticklabels(df_def_s.index, rotation=40, ha='right', fontsize=9, color=THEME['text_muted'])
                 for bar, val in zip(bars, df_def_s.values):
                     if val > 0:
-                        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() * 1.02, f"{int(val):,}".replace(",","."), ha='center', va='bottom', fontsize=8, color=THEME['text_primary'])
+                        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() * 1.02,
+                                f"{int(val):,}".replace(",","."), ha='center', va='bottom',
+                                fontsize=8, color=THEME['text_primary'])
                 fig.tight_layout(pad=1.5)
                 st.pyplot(fig)
                 plt.close(fig)
