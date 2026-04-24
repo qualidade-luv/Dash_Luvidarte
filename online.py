@@ -2960,58 +2960,135 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                 st.error(f"❌ Erro ao atualizar registro: {str(e)}")
                 return False
         
-        # Função de impressão universal (funciona em Windows, Linux e Cloud)
+        # Função para abrir PDF no navegador e imprimir
         def imprimir_pdf_ar(pdf_bytes: bytes, nome_arquivo: str):
-            """Função universal para impressão - compatível com Windows, Linux e Cloud"""
+            """Abre o PDF em nova aba para impressão via navegador"""
             try:
-                import platform
+                import base64
+                import webbrowser
+                from datetime import datetime
                 
                 if not nome_arquivo.lower().endswith('.pdf'):
                     nome_arquivo = nome_arquivo + '.pdf'
                 
-                # Salvar temporariamente
-                temp_path = os.path.join(CAMINHO_PDF_AR, nome_arquivo)
-                with open(temp_path, 'wb') as f:
-                    f.write(pdf_bytes)
+                # Converter PDF para base64 para abrir no navegador
+                pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
                 
-                if not os.path.exists(temp_path):
-                    return False, "Erro ao salvar arquivo temporário"
+                # Criar HTML com o PDF embutido e botão de impressão
+                html_content = f"""
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>{nome_arquivo}</title>
+                    <meta charset="UTF-8">
+                    <style>
+                        body {{
+                            margin: 0;
+                            padding: 0;
+                            height: 100vh;
+                            display: flex;
+                            flex-direction: column;
+                            font-family: Arial, sans-serif;
+                        }}
+                        .toolbar {{
+                            background: #2c3e50;
+                            padding: 12px 20px;
+                            text-align: center;
+                            border-bottom: 2px solid #3498db;
+                            display: flex;
+                            justify-content: center;
+                            gap: 15px;
+                            flex-wrap: wrap;
+                        }}
+                        button {{
+                            padding: 10px 24px;
+                            margin: 0 5px;
+                            cursor: pointer;
+                            background: #3498db;
+                            color: white;
+                            border: none;
+                            border-radius: 6px;
+                            font-size: 14px;
+                            font-weight: bold;
+                            transition: all 0.3s ease;
+                        }}
+                        button:hover {{
+                            background: #2980b9;
+                            transform: scale(1.02);
+                        }}
+                        .info {{
+                            background: #ecf0f1;
+                            padding: 8px 16px;
+                            border-radius: 6px;
+                            color: #2c3e50;
+                            font-size: 13px;
+                            display: flex;
+                            align-items: center;
+                            gap: 10px;
+                        }}
+                        .info span {{
+                            font-weight: bold;
+                        }}
+                        embed {{
+                            width: 100%;
+                            height: calc(100vh - 70px);
+                        }}
+                        @media print {{
+                            .toolbar {{
+                                display: none;
+                            }}
+                            embed {{
+                                height: 100vh;
+                            }}
+                        }}
+                    </style>
+                </head>
+                <body>
+                    <div class="toolbar">
+                        <button onclick="window.print()">🖨️ IMPRIMIR (Ctrl+P)</button>
+                        <button onclick="window.close()">❌ FECHAR</button>
+                        <div class="info">
+                            <span>📄 {nome_arquivo}</span>
+                            <span>|</span>
+                            <span>💡 Pressione Ctrl+P para imprimir</span>
+                        </div>
+                    </div>
+                    <embed src="data:application/pdf;base64,{pdf_base64}" type="application/pdf">
+                    <script>
+                        // Tentar abrir a impressão automaticamente após 1 segundo
+                        setTimeout(function() {{
+                            window.print();
+                        }}, 1000);
+                    </script>
+                </body>
+                </html>
+                """
                 
-                sistema = platform.system()
+                # Salvar HTML temporário
+                temp_html = os.path.join(CAMINHO_PDF_AR, f"temp_print_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html")
+                with open(temp_html, 'w', encoding='utf-8') as f:
+                    f.write(html_content)
                 
-                if sistema == "Windows":
+                # Abrir no navegador padrão
+                webbrowser.open(f'file://{temp_html}')
+                
+                # Limpar arquivo temporário após alguns segundos
+                import threading
+                def limpar_arquivo():
+                    import time
+                    time.sleep(30)
                     try:
-                        # Tenta imprimir diretamente no Windows
-                        os.startfile(temp_path, "print")
-                        return True, "PDF enviado para impressão"
-                    except Exception as e:
-                        # Se falhar, abre o PDF
-                        os.startfile(temp_path)
-                        return True, f"PDF aberto. Use Ctrl+P para imprimir."
-                
-                elif sistema == "Linux":
-                    # No Linux (incluindo Streamlit Cloud)
-                    try:
-                        # Tenta usar o comando lp (CUPS)
-                        import subprocess
-                        result = subprocess.run(['lp', temp_path], capture_output=True, text=True)
-                        if result.returncode == 0:
-                            return True, "PDF enviado para impressão"
-                        else:
-                            return True, "PDF salvo. Faça o download e imprima manualmente."
+                        if os.path.exists(temp_html):
+                            os.remove(temp_html)
                     except:
-                        return True, "PDF salvo. Faça o download e imprima manualmente (Ctrl+P no navegador)."
+                        pass
                 
-                else:  # MacOS
-                    try:
-                        import subprocess
-                        subprocess.run(['open', temp_path])
-                        return True, "PDF aberto. Use Cmd+P para imprimir."
-                    except:
-                        return True, "PDF salvo. Faça o download e imprima manualmente."
-                        
+                threading.Thread(target=limpar_arquivo, daemon=True).start()
+                
+                return True, "PDF aberto no navegador. A impressão será iniciada automaticamente ou pressione Ctrl+P."
+                
             except Exception as e:
-                return False, f"Erro ao processar PDF: {str(e)}"
+                return False, f"Erro ao abrir PDF: {str(e)}"
         
         if menu_ar == "📝 Novo Registro":
             st.subheader("Novo Aviso de Rejeição")
@@ -3060,7 +3137,6 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                                 st.success("📧 E-mail enviado com sucesso!")
                             else:
                                 st.error("❌ Erro ao enviar e-mail")
-                    # Pequeno delay
                     import time as time_module
                     time_module.sleep(1)
                     st.session_state.ar_etapa_confirmacao = 3
@@ -3081,7 +3157,7 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                             st.rerun()
                 elif st.session_state.ar_etapa_confirmacao == 4:
                     if st.session_state.ar_confirmar_imprimir:
-                        with st.spinner("Processando PDF..."):
+                        with st.spinner("Abrindo PDF para impressão..."):
                             success, msg = imprimir_pdf_ar(st.session_state.ar_pdf_bytes, st.session_state.ar_pdf_nome)
                             if success:
                                 st.success(f"🖨️ {msg}")
@@ -3339,7 +3415,7 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                         
                         st.markdown("#### 🖨️ Imprimir")
                         if st.button("Imprimir este PDF", use_container_width=True):
-                            with st.spinner("Processando PDF..."):
+                            with st.spinner("Abrindo PDF para impressão..."):
                                 success, msg = imprimir_pdf_ar(st.session_state.ar_pdf_bytes, st.session_state.ar_pdf_nome)
                                 if success:
                                     st.success(f"🖨️ {msg}")
