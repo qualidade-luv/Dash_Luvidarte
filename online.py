@@ -4612,7 +4612,7 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
     """, unsafe_allow_html=True)
     
 # ==================================================================================================
-# FECHAMENTO TURNO - VERSÃO GOOGLE SHEETS
+# FECHAMENTO TURNO - VERSÃO GOOGLE SHEETS (COM TRS BRUTO)
 # ==================================================================================================
 elif aba_selecionada == 'FECHAMENTO TURNO':
     render_page_header("FECHAMENTO DE TURNO", f"Controle de Produção · Atualizado {get_horario_brasilia()}", THEME['accent_purple'])
@@ -4620,47 +4620,46 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
     # ======================
     # CONFIGURAÇÕES DAS PLANILHAS ONLINE
     # ======================
-    ID_PLANILHA_FECHAMENTO = '1_HKkTRCSg24wDJ47v5wSd-UPBkbalLd6plV9IvlTY64'
-    ID_PLANILHA_PROGRAMACAO = '1kdsQrTH_vdEa6oqV1AVjqf8JFCAp1OybubnMHFro5lI'
+    ID_PLANILHA_FECHAMENTO = '1_HkKTRCSg24wDJ47v5wSd-UPBkbalLd6plV9IvlTY64'
     ID_PLANILHA_FALTAS = '1D4Wqixy60ZW5WPqO026rc1PTHjlVboq9ka0I3VktzDs'
     
     NOME_ABA_PRODUCAO = "PRODUÇÕES"
-    NOME_ABA_PROGRAMACAO = "PRODUÇÕES"
     NOME_ABA_CHECKLIST = "CHECK"
     NOME_ABA_FALTAS = "Controle de Faltas"
     
     # ======================
-    # FUNÇÕES AUXILIARES DO FECHAMENTO
+    # FUNÇÕES AUXILIARES
     # ======================
-    def excel_to_date_ft(valor):
-        """Converte valor do Excel/Google Sheets para data"""
-        if valor is None:
+    def converter_data_sheets(data_str):
+        """Converte string de data do Google Sheets para objeto date"""
+        if data_str is None:
             return None
-        if isinstance(valor, (datetime, pd.Timestamp)):
-            return valor.date() if hasattr(valor, 'date') else valor
-        if isinstance(valor, date):
-            return valor
-        if isinstance(valor, str):
+        if isinstance(data_str, (datetime, pd.Timestamp, date)):
+            return data_str.date() if hasattr(data_str, 'date') else data_str
+        
+        data_str = str(data_str).strip()
+        
+        formatos = [
+            "%d/%m/%Y",
+            "%Y-%m-%d", 
+            "%d-%m-%Y",
+            "%m/%d/%Y",
+        ]
+        
+        for fmt in formatos:
             try:
-                for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
-                    try:
-                        return datetime.strptime(valor.split()[0], fmt).date()
-                    except:
-                        continue
+                return datetime.strptime(data_str, fmt).date()
             except:
-                pass
+                continue
+        
         return None
     
     def time_to_str_ft(t):
-        """Converte time para string HH:MM"""
         if t is None:
             return ""
-        if isinstance(t, (datetime, time)):
-            return t.strftime("%H:%M")
         return str(t) if t else ""
     
     def str_time_to_minutes_ft(time_str: str) -> int:
-        """Converte string HH:MM para minutos totais"""
         try:
             if not time_str or time_str == "00:00":
                 return 0
@@ -4674,11 +4673,11 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
             return 0
     
     # ======================
-    # FUNÇÕES DE CARREGAMENTO (GOOGLE SHEETS)
+    # FUNÇÕES DE CARREGAMENTO
     # ======================
     @st.cache_data(ttl=300)
     def carregar_producoes_fechamento(data_selecionada: date):
-        """Carrega produções do Google Sheets para a data selecionada"""
+        """Carrega produções do Google Sheets"""
         producoes = []
         try:
             client = get_gspread_client()
@@ -4686,104 +4685,58 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
                 st.error("❌ Erro ao conectar ao Google Sheets")
                 return producoes
             
-            try:
-                sheet = client.open_by_key(ID_PLANILHA_FECHAMENTO).worksheet(NOME_ABA_PRODUCAO)
-                todos_dados = sheet.get_all_values()
+            spreadsheet = client.open("Fechamento diario")
+            sheet = spreadsheet.worksheet(NOME_ABA_PRODUCAO)
+            todos_dados = sheet.get_all_values()
+            
+            if len(todos_dados) < 2:
+                return producoes
+            
+            for row in todos_dados[1:]:
+                if len(row) < 2:
+                    continue
                 
-                if len(todos_dados) < 2:
-                    return producoes
+                data_str = row[1] if len(row) > 1 else ""
+                data_registro = converter_data_sheets(data_str)
                 
-                # Pular cabeçalho (linha 0)
-                for row in todos_dados[1:]:
-                    if len(row) >= 2 and row[1]:  # Coluna B (DATA)
-                        data_registro = converter_data_br(row[1])
-                        if data_registro and data_registro.date() == data_selecionada:
-                            producoes.append({
-                                'id': row[0] if len(row) > 0 else None,
-                                'data': data_registro,
-                                'referencia': row[2] if len(row) > 2 else "",
-                                'inicio': row[3] if len(row) > 3 else "",
-                                'fim': row[4] if len(row) > 4 else "",
-                                'produzido': int(row[5]) if len(row) > 5 and row[5] else 0,
-                                'observacoes': row[6] if len(row) > 6 else "",
-                                'meta': int(row[7]) if len(row) > 7 and row[7] else 0,
-                                'id_prog': row[8] if len(row) > 8 else None,
-                                'justificativa': row[9] if len(row) > 9 else "",
-                                'setup': row[10] if len(row) > 10 else "",
-                                'manut': row[11] if len(row) > 11 else ""
-                            })
-            except Exception as e:
-                st.warning(f"Aba '{NOME_ABA_PRODUCAO}' não encontrada na planilha de fechamento: {e}")
-                
+                if data_registro and data_registro == data_selecionada:
+                    try:
+                        produzido_val = int(float(row[5])) if len(row) > 5 and row[5] else 0
+                    except:
+                        produzido_val = 0
+                    
+                    try:
+                        meta_val = int(float(row[7])) if len(row) > 7 and row[7] else 0
+                    except:
+                        meta_val = 0
+                    
+                    # TRS BRUTO = (Produzido / Meta) * 100
+                    trs_bruto = round((produzido_val / meta_val * 100), 1) if meta_val > 0 else 0
+                    
+                    producoes.append({
+                        'id': row[0] if len(row) > 0 else "",
+                        'data': data_registro,
+                        'referencia': row[2] if len(row) > 2 else "",
+                        'inicio': row[3] if len(row) > 3 else "",
+                        'fim': row[4] if len(row) > 4 else "",
+                        'produzido': produzido_val,
+                        'observacoes': row[6] if len(row) > 6 else "",
+                        'meta': meta_val,
+                        'id_prog': row[8] if len(row) > 8 else "",
+                        'justificativa': row[9] if len(row) > 9 else "",
+                        'setup': row[10] if len(row) > 10 else "",
+                        'manut': row[11] if len(row) > 11 else "",
+                        'trs_bruto': trs_bruto
+                    })
+            
         except Exception as e:
             st.error(f"Erro ao carregar produções: {e}")
         
         return producoes
     
     @st.cache_data(ttl=300)
-    def carregar_programacao_fechamento(data_selecionada: date):
-        """Carrega programação PCP do Google Sheets para a data selecionada"""
-        programacao = []
-        try:
-            client = get_gspread_client()
-            if client is None:
-                return programacao
-            
-            try:
-                sheet = client.open_by_key(ID_PLANILHA_PROGRAMACAO).worksheet(NOME_ABA_PROGRAMACAO)
-                todos_dados = sheet.get_all_values()
-                
-                if len(todos_dados) < 5:
-                    return programacao
-                
-                # Procurar índices das colunas (cabeçalho)
-                cabecalho = todos_dados[4] if len(todos_dados) > 4 else []
-                idx_data = -1
-                idx_praca = -1
-                idx_ref = -1
-                idx_meta = -1
-                
-                for i, col in enumerate(cabecalho):
-                    if col and "DATA PRODUÇÃO" in str(col).upper():
-                        idx_data = i
-                    elif col and "PRAÇA" in str(col).upper():
-                        idx_praca = i
-                    elif col and "REFERÊNCIA DA PEÇA" in str(col).upper():
-                        idx_ref = i
-                    elif col and "META" in str(col).upper():
-                        idx_meta = i
-                
-                if idx_data == -1:
-                    return programacao
-                
-                # Processar linhas (começar da linha 6)
-                for row in todos_dados[5:]:
-                    if len(row) <= max(idx_data, idx_praca, idx_ref, idx_meta):
-                        continue
-                    if idx_praca >= 0 and not row[idx_praca]:
-                        continue
-                    if not row[idx_data]:
-                        continue
-                    
-                    data_linha = converter_data_br(row[idx_data])
-                    if data_linha and data_linha.date() == data_selecionada:
-                        programacao.append({
-                            'id_prog': row[0] if len(row) > 0 else None,
-                            'praca': str(row[idx_praca]).upper().strip() if idx_praca >= 0 else "",
-                            'referencia': str(row[idx_ref] or "").strip() if idx_ref >= 0 else "",
-                            'meta': int(row[idx_meta]) if idx_meta >= 0 and row[idx_meta] else 0
-                        })
-            except Exception as e:
-                st.warning(f"Aba '{NOME_ABA_PROGRAMACAO}' não encontrada na planilha de programação: {e}")
-                
-        except Exception as e:
-            st.error(f"Erro ao carregar programação: {e}")
-        
-        return programacao
-    
-    @st.cache_data(ttl=300)
     def carregar_checklists_fechamento(data_selecionada: date):
-        """Carrega checklists do Google Sheets para a data selecionada"""
+        """Carrega checklists do Google Sheets"""
         checklists = {"manha": False, "tarde": False, "noite": False}
         detalhes = []
         
@@ -4792,31 +4745,31 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
             if client is None:
                 return checklists, detalhes
             
-            try:
-                sheet = client.open_by_key(ID_PLANILHA_FECHAMENTO).worksheet(NOME_ABA_CHECKLIST)
-                todos_dados = sheet.get_all_values()
+            spreadsheet = client.open("Fechamento diario")
+            sheet = spreadsheet.worksheet(NOME_ABA_CHECKLIST)
+            todos_dados = sheet.get_all_values()
+            
+            if len(todos_dados) < 2:
+                return checklists, detalhes
+            
+            for row in todos_dados[1:]:
+                if len(row) < 2 or not row[0]:
+                    continue
                 
-                if len(todos_dados) < 2:
-                    return checklists, detalhes
-                
-                for row in todos_dados[1:]:
-                    if len(row) >= 2 and row[0]:
-                        data_registro = converter_data_br(row[0])
-                        if data_registro and data_registro.date() == data_selecionada:
-                            turno = str(row[1]).lower().strip() if len(row) > 1 else ""
-                            if turno in checklists:
-                                checklists[turno] = True
-                            detalhes.append({
-                                'turno': row[1] if len(row) > 1 else "",
-                                'faltas': row[2] if len(row) > 2 else "",
-                                'temp_forno': row[4] if len(row) > 4 else "",
-                                'temp_obs': row[5] if len(row) > 5 else "",
-                                'aspecto_vidro': row[6] if len(row) > 6 else "",
-                                'aspecto_obs': row[7] if len(row) > 7 else ""
-                            })
-            except Exception as e:
-                st.warning(f"Aba '{NOME_ABA_CHECKLIST}' não encontrada na planilha de fechamento: {e}")
-                
+                data_registro = converter_data_sheets(row[0])
+                if data_registro and data_registro == data_selecionada:
+                    turno = str(row[1]).lower().strip() if len(row) > 1 else ""
+                    if turno in checklists:
+                        checklists[turno] = True
+                    detalhes.append({
+                        'turno': row[1] if len(row) > 1 else "",
+                        'faltas': row[2] if len(row) > 2 else "",
+                        'temp_forno': row[4] if len(row) > 4 else "",
+                        'temp_obs': row[5] if len(row) > 5 else "",
+                        'aspecto_vidro': row[6] if len(row) > 6 else "",
+                        'aspecto_obs': row[7] if len(row) > 7 else ""
+                    })
+            
         except Exception as e:
             st.error(f"Erro ao carregar checklists: {e}")
         
@@ -4824,34 +4777,35 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
     
     @st.cache_data(ttl=300)
     def carregar_faltas_fechamento(data_selecionada: date):
-        """Carrega faltas do Google Sheets para a data selecionada"""
+        """Carrega faltas do Google Sheets"""
         faltas = []
         try:
             client = get_gspread_client()
             if client is None:
                 return faltas
             
-            try:
-                sheet = client.open_by_key(ID_PLANILHA_FALTAS).worksheet(NOME_ABA_FALTAS)
-                todos_dados = sheet.get_all_values()
+            sheet = client.open_by_key(ID_PLANILHA_FALTAS).worksheet(NOME_ABA_FALTAS)
+            todos_dados = sheet.get_all_values()
+            
+            if len(todos_dados) < 2:
+                return faltas
+            
+            for row in todos_dados[1:]:
+                if len(row) < 7:
+                    continue
                 
-                if len(todos_dados) < 2:
-                    return faltas
+                data_falta = converter_data_sheets(row[6]) if len(row) > 6 else None
                 
-                for row in todos_dados[1:]:
-                    if len(row) >= 6 and row[5]:  # Coluna 5 = Data
-                        data_falta = converter_data_br(row[5])
-                        if data_falta and data_falta.date() == data_selecionada:
-                            faltas.append({
-                                'id': row[0] if len(row) > 0 else "",
-                                'chapa': row[1] if len(row) > 1 else "",
-                                'nome': row[2] if len(row) > 2 else "",
-                                'motivo': row[3] if len(row) > 3 else "",
-                                'justificativa': row[6] if len(row) > 6 else ""
-                            })
-            except Exception as e:
-                st.warning(f"Aba '{NOME_ABA_FALTAS}' não encontrada na planilha de faltas: {e}")
-                
+                if data_falta and data_falta == data_selecionada:
+                    faltas.append({
+                        'id': row[1] if len(row) > 1 else "",
+                        'chapa': row[2] if len(row) > 2 else "",
+                        'nome': row[3] if len(row) > 3 else "",
+                        'motivo': row[4] if len(row) > 4 else "",
+                        'horas': row[5] if len(row) > 5 else "",
+                        'justificativa': row[7] if len(row) > 7 else ""
+                    })
+            
         except Exception as e:
             st.error(f"Erro ao carregar faltas: {e}")
         
@@ -4871,19 +4825,11 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
             key="fechamento_data"
         )
     
-    with col_data2:
-        st.markdown("""
-        <div style="background: #e8f4fd; padding: 10px; border-radius: 8px; border-left: 4px solid #0078D4;">
-            <small>ℹ️ Os dados são carregados diretamente do Google Sheets.</small>
-        </div>
-        """, unsafe_allow_html=True)
-    
     st.markdown("<hr>", unsafe_allow_html=True)
     
     # Carregar dados
     with st.spinner("Carregando dados do Google Sheets..."):
         producoes = carregar_producoes_fechamento(data_fechamento)
-        programacao = carregar_programacao_fechamento(data_fechamento)
         checklists, checklists_detalhes = carregar_checklists_fechamento(data_fechamento)
         faltas = carregar_faltas_fechamento(data_fechamento)
     
@@ -4912,46 +4858,37 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
     
     st.markdown("<hr>", unsafe_allow_html=True)
     
-    # Tabs para diferentes visualizações
-    tab1, tab2, tab3, tab4 = st.tabs(["📋 Produções do Dia", "📅 Programação PCP", "✅ Checklists Turno", "🟥 Faltas"])
+    # Tabs (apenas 3 - removido Programação PCP)
+    tab1, tab2, tab3 = st.tabs(["📋 Produções do Dia", "✅ Checklists Turno", "🟥 Faltas"])
     
     with tab1:
         st.subheader("Registros de Produção")
-        
         if producoes:
-            # Preparar dados para tabela
-            df_producoes = pd.DataFrame(producoes)
+            df_display = pd.DataFrame(producoes)
             
-            # Verificar se as colunas existem
-            colunas_necessarias = ['referencia', 'inicio', 'fim', 'produzido', 'meta', 'setup', 'manut', 'observacoes', 'justificativa']
-            colunas_existentes = [col for col in colunas_necessarias if col in df_producoes.columns]
+            # Selecionar colunas para exibição com observações, justificativas e TRS Bruto
+            colunas_exibir = ['referencia', 'inicio', 'fim', 'produzido', 'meta', 'setup', 'manut', 'observacoes', 'justificativa', 'trs_bruto']
+            colunas_existentes = [c for c in colunas_exibir if c in df_display.columns]
             
-            df_display = df_producoes[colunas_existentes].copy()
-            df_display.columns = ['Referência', 'Início', 'Fim', 'Produzido', 'Meta', 'Setup', 'Manut.', 'Observações', 'Justificativa'][:len(colunas_existentes)]
-            
-            # Calcular percentual
-            if 'Produzido' in df_display.columns and 'Meta' in df_display.columns:
-                df_display['% Meta'] = df_display.apply(
-                    lambda row: (row['Produzido'] / row['Meta'] * 100) if row['Meta'] > 0 else 0, axis=1
-                )
+            if colunas_existentes:
+                df_display = df_display[colunas_existentes]
+                df_display.columns = ['Referência', 'Início', 'Fim', 'Produzido', 'Meta', 'Setup', 'Manut.', 'Observações', 'Justificativa', 'TRS Bruto (%)'][:len(colunas_existentes)]
                 
-                # Função para colorir
-                def color_eficiencia(val):
+                # Aplicar estilo de cores no TRS Bruto
+                def color_trs(val):
                     if isinstance(val, (int, float)):
                         if val >= 85:
-                            return 'background-color: #d4f5d4'
+                            return 'background-color: #d4f5d4; color: #1e4620; font-weight: bold;'
                         elif val >= 70:
-                            return 'background-color: #fff3cd'
+                            return 'background-color: #fff3cd; color: #856404; font-weight: bold;'
                         else:
-                            return 'background-color: #f8d7da'
+                            return 'background-color: #f8d7da; color: #721c24; font-weight: bold;'
                     return ''
                 
-                styled_df = df_display.style.applymap(
-                    color_eficiencia, subset=['% Meta']
-                ).format({
+                styled_df = df_display.style.map(color_trs, subset=['TRS Bruto (%)']).format({
                     'Produzido': '{:,.0f}'.format,
                     'Meta': '{:,.0f}'.format,
-                    '% Meta': '{:.1f}%'
+                    'TRS Bruto (%)': '{:.1f}%'
                 })
                 
                 st.dataframe(styled_df, use_container_width=True, height=400)
@@ -4961,53 +4898,27 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
             st.info("📭 Nenhuma produção registrada para esta data.")
     
     with tab2:
-        st.subheader("Programação PCP")
-        
-        if programacao:
-            df_programacao = pd.DataFrame(programacao)
-            df_programacao = df_programacao[['praca', 'referencia', 'meta']]
-            df_programacao.columns = ['Praça', 'Referência', 'Meta']
-            
-            # Verificar quais itens já foram produzidos
-            referencias_produzidas = set(p.get('referencia', '') for p in producoes)
-            
-            def status_producao(row):
-                if row['Referência'] in referencias_produzidas:
-                    return '✅ Produzido'
-                return '⏳ Pendente'
-            
-            df_programacao['Status'] = df_programacao.apply(status_producao, axis=1)
-            
-            st.dataframe(df_programacao, use_container_width=True, height=400)
-        else:
-            st.info("📭 Nenhuma programação encontrada para esta data.")
-    
-    with tab3:
         st.subheader("Checklists de Início de Turno")
-        
         col_c1, col_c2, col_c3 = st.columns(3)
-        
         with col_c1:
-            if checklists.get("manha", False):
+            if checklists.get("manha"):
                 st.success("✅ Turno da MANHÃ - Realizado")
             else:
                 st.warning("⏳ Turno da MANHÃ - Pendente")
-        
         with col_c2:
-            if checklists.get("tarde", False):
+            if checklists.get("tarde"):
                 st.success("✅ Turno da TARDE - Realizado")
             else:
                 st.warning("⏳ Turno da TARDE - Pendente")
-        
         with col_c3:
-            if checklists.get("noite", False):
+            if checklists.get("noite"):
                 st.success("✅ Turno da NOITE - Realizado")
             else:
                 st.warning("⏳ Turno da NOITE - Pendente")
         
         if checklists_detalhes:
             st.markdown("---")
-            st.subheader("📋 Detalhes dos Checklists")
+            st.subheader("📋 Detalhes dos Checklists Realizados")
             for checklist in checklists_detalhes:
                 with st.expander(f"📌 Checklist - Turno {checklist['turno']}"):
                     col_d1, col_d2 = st.columns(2)
@@ -5021,32 +4932,32 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
                         if checklist.get('aspecto_obs'):
                             st.write(f"**Obs Aspecto:** {checklist['aspecto_obs']}")
     
-    with tab4:
+    with tab3:
         st.subheader("Registro de Faltas")
-        
         if faltas:
             df_faltas = pd.DataFrame(faltas)
-            colunas_faltas = ['chapa', 'nome', 'motivo', 'justificativa']
-            colunas_existentes = [col for col in colunas_faltas if col in df_faltas.columns]
-            if colunas_existentes:
-                df_faltas = df_faltas[colunas_existentes]
-                df_faltas.columns = ['Chapa', 'Nome', 'Motivo', 'Justificativa'][:len(colunas_existentes)]
-                st.dataframe(df_faltas, use_container_width=True, height=300)
+            colunas_exibir_faltas = ['chapa', 'nome', 'motivo', 'justificativa']
+            colunas_existentes_faltas = [c for c in colunas_exibir_faltas if c in df_faltas.columns]
+            if colunas_existentes_faltas:
+                df_faltas_display = df_faltas[colunas_existentes_faltas]
+                df_faltas_display.columns = ['Chapa', 'Nome', 'Motivo', 'Justificativa'][:len(colunas_existentes_faltas)]
+                st.dataframe(df_faltas_display, use_container_width=True, height=400)
                 st.markdown(f"**Total de faltas no dia:** {len(faltas)}")
+            else:
+                st.dataframe(df_faltas, use_container_width=True, height=400)
         else:
-            st.success("✅ Nenhuma falta registrada para esta data.")
-    
-    st.markdown("<hr>", unsafe_allow_html=True)
+            st.success(f"✅ Nenhuma falta registrada para esta data.")
     
     # ======================
     # GRÁFICOS E ANÁLISES
     # ======================
-    st.subheader("📈 Análise do Dia")
-    
-    col_g1, col_g2 = st.columns(2)
-    
-    with col_g1:
-        if producoes:
+    if producoes:
+        st.markdown("<hr>", unsafe_allow_html=True)
+        st.subheader("📈 Análise do Dia")
+        
+        col_g1, col_g2 = st.columns(2)
+        
+        with col_g1:
             df_grafico = pd.DataFrame(producoes)
             df_grafico = df_grafico[['referencia', 'produzido', 'meta']].head(15)
             
@@ -5066,9 +4977,8 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
             fig.tight_layout()
             st.pyplot(fig)
             plt.close(fig)
-    
-    with col_g2:
-        if producoes:
+        
+        with col_g2:
             df_eficiencia = pd.DataFrame(producoes)
             df_eficiencia['eficiencia'] = df_eficiencia.apply(
                 lambda row: (row['produzido'] / row['meta'] * 100) if row['meta'] > 0 else 0, axis=1
@@ -5095,6 +5005,47 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
             fig.tight_layout()
             st.pyplot(fig)
             plt.close(fig)
+    
+    # ======================
+    # RESUMO EXECUTIVO
+    # ======================
+    st.markdown("<hr>", unsafe_allow_html=True)
+    st.subheader("📋 Resumo Executivo")
+    
+    with st.container():
+        col_r1, col_r2, col_r3 = st.columns(3)
+        
+        with col_r1:
+            st.markdown(f"""
+            <div style="background: {THEME['bg_card']}; padding: 15px; border-radius: 10px; border-left: 4px solid {THEME['accent_cyan']};">
+                <b>🏭 PRODUÇÃO</b><br>
+                • Total Produzido: <b>{total_produzido:,}</b> un<br>
+                • Meta Total: <b>{total_meta:,}</b> un<br>
+                • Eficiência Global: <b>{eficiencia:.1f}%</b>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col_r2:
+            st.markdown(f"""
+            <div style="background: {THEME['bg_card']}; padding: 15px; border-radius: 10px; border-left: 4px solid {THEME['accent_red']};">
+                <b>⚠️ PARADAS</b><br>
+                • Setup Total: <b>{minutos_para_horas_str(total_setup_min)}</b><br>
+                • Manutenção Total: <b>{minutos_para_horas_str(total_manut_min)}</b><br>
+                • Total Paradas: <b>{minutos_para_horas_str(total_setup_min + total_manut_min)}</b>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col_r3:
+            itens_baixa = sum(1 for p in producoes if (p.get('produzido', 0) or 0) / max(p.get('meta', 1), 1) * 100 < 80)
+            
+            st.markdown(f"""
+            <div style="background: {THEME['bg_card']}; padding: 15px; border-radius: 10px; border-left: 4px solid {THEME['accent_lime']};">
+                <b>📊 INDICADORES</b><br>
+                • Itens com baixa prod.: <b>{itens_baixa}</b><br>
+                • Checklists realizados: <b>{sum(1 for v in checklists.values() if v)}/3</b><br>
+                • Total registro faltas: <b>{len(faltas)}</b>
+            </div>
+            """, unsafe_allow_html=True)
     
     st.markdown(f"""
     <div style="text-align:right;padding:16px 0 8px;
