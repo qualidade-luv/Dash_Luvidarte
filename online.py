@@ -876,23 +876,6 @@ class RegistroAR:
     data_finalizacao: Optional[datetime] = None
     turno: str = ""
 
-@dataclass
-class RegistroRM:
-    id: Optional[int] = None
-    data: Optional[datetime] = None
-    hora: str = ""
-    emissor: str = ""
-    equipamento: str = ""
-    setor: str = ""
-    caracter: str = ""
-    setor2: str = ""
-    problema: str = ""
-    trabalho: str = ""
-    analise: str = ""
-    status: str = "ABERTO"
-    data_finalizacao: Optional[datetime] = None
-    emissor2: str = ""
-
 def sanitize_filename_ar(filename: str) -> str:
     filename = unicodedata.normalize("NFKD", filename).encode("ASCII", "ignore").decode("ASCII")
     filename = re.sub(r'[^a-zA-Z0-9_-]', '_', filename)
@@ -1109,6 +1092,23 @@ def enviar_email_ar(destinatarios, assunto, corpo, anexo_bytes=None, nome_anexo=
 # ======================
 # FUNÇÕES DO SISTEMA RM (REQUISIÇÃO MANUTENÇÃO)
 # ======================
+@dataclass
+class RegistroRM:
+    id: Optional[int] = None
+    data: Optional[datetime] = None
+    hora: str = ""
+    emissor: str = ""
+    equipamento: str = ""
+    setor: str = ""
+    caracter: str = ""
+    setor2: str = ""
+    problema: str = ""
+    trabalho: str = ""
+    analise: str = ""
+    status: str = "ABERTO"
+    data_finalizacao: Optional[datetime] = None
+    emissor2: str = ""
+
 OPCOES_CARATER_RM = ["1 - Risco Físico/Segurança", "2 - Impacto Imediato na Produção", "3 - Impacto a Longo Prazo", "4 - Melhoria/Preventiva"]
 OPCOES_SETORES_RM = ["Produção", "Corte", "Vidraria", "Rodaria", "Embalagem", "Expedição", "Qualidade", "Ferramentaria", "Manutenção", "Outros"]
 OPCOES_SETORES2_RM = ["Elétrica", "Mecânica", "Informática", "Ferramentaria", "Manutenção Geral"]
@@ -1536,8 +1536,14 @@ if aba_selecionada == 'PRENSADOS':
         df_base = carregar_dados_prensados()
 
     if df_base.empty:
-        st.warning("Não foi possível carregar os dados.")
+        st.warning("Não foi possível carregar os dados de Prensados. Verifique a planilha.")
         st.stop()
+
+    # ... (restante do código PRENSADOS - é o mesmo que você já tem, sem duplicar)
+
+# ==================================================================================================
+# SOPRO, TÊMPERA, AVISO DE REJEIÇÃO, REQUISIÇÃO MANUTENÇÃO continuam aqui normalmente
+# ==================================================================================================
 
     df_base_calc = df_base.copy()
     colunas_numericas = ['PRODUZIDO', 'APROVADO', 'EMBALADO', 'TRS 100%', 'REFUGADO']
