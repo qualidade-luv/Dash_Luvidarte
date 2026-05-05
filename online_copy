@@ -3963,7 +3963,7 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
 
    
 # ==================================================================================================
-# REQUISIÇÃO DE MANUTENÇÃO (RM) - VERSÃO CORRIGIDA
+# REQUISIÇÃO DE MANUTENÇÃO (RM)
 # ==================================================================================================
 elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
     render_page_header("REQUISIÇÃO DE MANUTENÇÃO", f"MF-001 · Atualizado {get_horario_brasilia()}", THEME['accent_lime'])
@@ -3989,6 +3989,26 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
     os.makedirs(CAMINHO_PDF_RM, exist_ok=True)
     os.makedirs(CAMINHO_PDF_RELATORIO_RM, exist_ok=True)
     
+    # Configurações de e-mail para RM
+    EMAIL_CONFIG_RM = {
+        "usuario": "erp@luvidarte.com.br",
+        "senha": "Qualidade123#",
+        "smtp_server": "email-ssl.com.br",
+        "smtp_port": 465
+    }
+    
+    # Mapeamento de setores para emails
+    EMAILS_SETORES_RM = {
+        "Elétrica": "manutencaoeletrica@luvidarte.com.br",
+        "Mecânica": "manutencao@luvidarte.com.br",
+        "Informática": "alves.marcello@gmail.com",
+        "Ferramentaria": "ferramentaria@luvidarte.com.br",
+        "Manutenção Geral": "manutencaogeral@luvidarte.com.br",
+        "default": "manutencao@luvidarte.com.br"
+    }
+    
+    EMAIL_QUALIDADE_RM = "qualidade@luvidarte.com.br"
+    
     @dataclass
     class RegistroRM:
         id: Optional[int] = None
@@ -4006,12 +4026,86 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
         data_finalizacao: Optional[datetime] = None
         emissor2: str = ""
     
+    def obter_email_setor_rm(setor_destino: str) -> str:
+        return EMAILS_SETORES_RM.get(setor_destino, EMAILS_SETORES_RM["default"])
+    
+    def enviar_email_rm(registro: RegistroRM, acao: str = "CRIAÇÃO", anexo_bytes: bytes = None, nome_anexo: str = None) -> bool:
+        try:
+            email_destino = obter_email_setor_rm(registro.setor2)
+            destinatarios = [email_destino, EMAIL_QUALIDADE_RM, "engenharia@luvidarte.com.br"]
+            destinatarios = list(dict.fromkeys(destinatarios))
+            
+            msg = MIMEMultipart()
+            msg["From"] = EMAIL_CONFIG_RM["usuario"]
+            msg["To"] = ", ".join(destinatarios)
+            
+            data_str = registro.data.strftime("%d/%m/%Y") if registro.data else ""
+            data_fim_str = registro.data_finalizacao.strftime("%d/%m/%Y") if registro.data_finalizacao else ""
+            
+            if acao == "EXCLUSÃO":
+                msg["Subject"] = f"RM {registro.id} - EXCLUÍDA - {registro.equipamento}"
+                corpo = f"""
+                <html><body>
+                <h2 style="color: #E81123;">⚠️ REQUISIÇÃO DE MANUTENÇÃO EXCLUÍDA</h2>
+                <p>A seguinte requisição foi <b>EXCLUÍDA</b> do sistema:</p>
+                <table border="1" cellpadding="5">
+                <tr><td><b>ID:</b></td><td>{registro.id}</td>
+                <td><b>Equipamento:</b></td><td colspan="3">{registro.equipamento}</td></tr>
+                <tr><td><b>Data:</b></td><td>{data_str}</td>
+                <td><b>Hora:</b></td><td>{registro.hora}</td></tr>
+                <tr><td><b>Emissor:</b></td><td>{registro.emissor}</td>
+                <td><b>Setor Destino:</b></td><td>{registro.setor2}</td></tr>
+                </table>
+                <p>Email automático do Sistema de Requisições de Manutenção.</p>
+                </body></html>
+                """
+            else:
+                emoji = "🆕" if acao == "CRIAÇÃO" else "✏️" if acao == "ALTERAÇÃO" else "✅" if acao == "FINALIZAÇÃO" else "📧"
+                cor = "#107C10" if acao == "FINALIZAÇÃO" else "#0078D4"
+                msg["Subject"] = f"RM {registro.id} - {acao} - {registro.equipamento} - {registro.setor2}"
+                corpo = f"""
+                <html><body>
+                <h2 style="color: {cor};">{emoji} REQUISIÇÃO DE MANUTENÇÃO #{registro.id} - {acao}</h2>
+                <table border="1" cellpadding="5">
+                <tr><td><b>ID:</b></td><td>{registro.id}</td><td><b>Data:</b></td><td>{data_str}</td><td><b>Hora:</b></td><td>{registro.hora}</td></tr>
+                <tr><td><b>Emissor:</b></td><td>{registro.emissor}</td><td><b>Equipamento:</b></td><td colspan="3">{registro.equipamento}</td></tr>
+                <tr><td><b>Setor Solicitante:</b></td><td>{registro.setor}</td><td><b>Setor Destino:</b></td><td colspan="3">{registro.setor2}</td></tr>
+                <tr><td><b>Caráter:</b></td><td colspan="5">{registro.caracter}</td></tr>
+                <tr><td><b>Status:</b></td><td colspan="5"><b style="color:{cor};">{registro.status}</b></td></tr>
+                <tr><td colspan="6"><b>📋 DESCRIÇÃO DO PROBLEMA:</b></td></tr>
+                <tr><td colspan="6">{registro.problema or "N/A"}</td></tr>
+                """
+                if registro.trabalho:
+                    corpo += f"<tr><td colspan='6'><b>🔧 TRABALHO REALIZADO:</b></td></tr><tr><td colspan='6'>{registro.trabalho}</td></tr>"
+                if registro.analise:
+                    corpo += f"<tr><td colspan='6'><b>📊 ANÁLISE DO SERVIÇO:</b></td></tr><tr><td colspan='6'>{registro.analise}</td></tr>"
+                if registro.emissor2:
+                    corpo += f"<tr><td><b>Emissor Técnico:</b></td><td colspan='5'>{registro.emissor2}</td></tr>"
+                if data_fim_str:
+                    corpo += f"<tr><td><b>Data Finalização:</b></td><td colspan='5'>{data_fim_str}</td></tr>"
+                corpo += "</table><p>Email automático do Sistema.</p></body></html>"
+            
+            msg.attach(MIMEText(corpo, "html"))
+            
+            if anexo_bytes and nome_anexo:
+                anexo = MIMEApplication(anexo_bytes, _subtype='pdf')
+                anexo.add_header('Content-Disposition', 'attachment', filename=nome_anexo)
+                msg.attach(anexo)
+            
+            with smtplib.SMTP_SSL(EMAIL_CONFIG_RM["smtp_server"], EMAIL_CONFIG_RM["smtp_port"], timeout=30) as server:
+                server.login(EMAIL_CONFIG_RM["usuario"], EMAIL_CONFIG_RM["senha"])
+                server.send_message(msg)
+            return True
+        except Exception as e:
+            st.error(f"Erro ao enviar e-mail RM: {e}")
+            return False
+    
     def obter_proximo_id_rm():
         try:
             client = get_gspread_client()
             if client is None:
                 return 1
-            sheet = client.open_by_key(ID_PLANILHA_RM).worksheet(ABA_RM)
+            sheet = client.open_by_key(ID_PLANILHA_AR).worksheet(ABA_RM)
             todos_dados = sheet.get_all_values()
             if len(todos_dados) < 2:
                 return 1
@@ -4031,48 +4125,15 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
         try:
             client = get_gspread_client()
             if client is None:
-                st.error("❌ Não foi possível conectar ao Google Sheets")
                 return registros
-            
-            # Abrir a aba RM
-            spreadsheet = client.open_by_key(ID_PLANILHA_RM)
-            
-            # Verificar se a aba existe
-            try:
-                sheet = spreadsheet.worksheet(ABA_RM)
-            except Exception as e:
-                st.error(f"❌ Aba '{ABA_RM}' não encontrada! Verifique se o nome da aba está correto.")
-                return registros
-            
-            # Obter todos os dados
+            sheet = client.open_by_key(ID_PLANILHA_AR).worksheet(ABA_RM)
             todos_dados = sheet.get_all_values()
-            
             if len(todos_dados) < 2:
-                st.warning(f"⚠️ Nenhum dado encontrado na aba '{ABA_RM}'. Adicione pelo menos uma linha de dados.")
                 return registros
-            
-            # Processar linhas (pular cabeçalho)
-            for idx, row in enumerate(todos_dados[1:], start=2):
+            for row in todos_dados[1:]:
                 if len(row) < 14:
                     continue
-                
                 try:
-                    # Mapear colunas conforme sua planilha
-                    # Coluna A (0): ID
-                    # Coluna B (1): DATA
-                    # Coluna C (2): HORA
-                    # Coluna D (3): EMISSOR
-                    # Coluna E (4): EQUIPAMENTO
-                    # Coluna F (5): SETOR
-                    # Coluna G (6): CARÁTER
-                    # Coluna H (7): SETOR2
-                    # Coluna I (8): PROBLEMA
-                    # Coluna J (9): TRABALHO
-                    # Coluna K (10): ANÁLISE
-                    # Coluna L (11): STATUS
-                    # Coluna M (12): DATA FINALIZAÇÃO
-                    # Coluna N (13): EMISSOR2
-                    
                     registro = RegistroRM()
                     registro.id = int(row[0]) if row[0].strip() else None
                     registro.data = converter_data_br(row[1])
@@ -4089,7 +4150,6 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
                     registro.data_finalizacao = converter_data_br(row[12]) if len(row) > 12 else None
                     registro.emissor2 = row[13] if len(row) > 13 else ""
                     
-                    # Aplicar filtros
                     if filtros:
                         incluir = True
                         if filtros.get('id') and filtros['id'] != registro.id:
@@ -4103,82 +4163,61 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
                     
                     if incluir and registro.id is not None:
                         registros.append(registro)
-                        
-                except Exception as e:
-                    st.warning(f"Erro ao processar linha {idx}: {e}")
+                except:
                     continue
-            
-            # Ordenar por ID decrescente (mais recente primeiro)
             registros.sort(key=lambda x: x.id if x.id else 0, reverse=True)
-            
-            if registros:
-                st.success(f"✅ {len(registros)} registro(s) carregado(s)")
-            
-        except Exception as e:
-            st.error(f"Erro ao carregar registros RM: {e}")
-            traceback.print_exc()
-        
+        except:
+            pass
         return registros
     
     def salvar_registro_rm(registro: RegistroRM, eh_alteracao: bool = False) -> bool:
         try:
             client = get_gspread_client()
             if client is None:
-                st.error("❌ Não foi possível conectar ao Google Sheets")
                 return False
-            
-            sheet = client.open_by_key(ID_PLANILHA_RM).worksheet(ABA_RM)
-            
+            sheet = client.open_by_key(ID_PLANILHA_AR).worksheet(ABA_RM)
             dados = [
                 str(registro.id) if registro.id else "",
                 registro.data.strftime("%d/%m/%Y") if registro.data else "",
-                registro.hora,
-                registro.emissor,
-                registro.equipamento,
-                registro.setor,
-                registro.caracter,
-                registro.setor2,
-                registro.problema,
-                registro.trabalho,
-                registro.analise,
-                registro.status,
+                registro.hora, registro.emissor, registro.equipamento, registro.setor,
+                registro.caracter, registro.setor2, registro.problema, registro.trabalho,
+                registro.analise, registro.status,
                 registro.data_finalizacao.strftime("%d/%m/%Y") if registro.data_finalizacao else "",
                 registro.emissor2
             ]
-            
             if eh_alteracao:
                 cell = sheet.find(str(registro.id), in_column=1)
                 if cell:
-                    row_num = cell.row
                     for col, valor in enumerate(dados, start=1):
-                        sheet.update_cell(row_num, col, valor)
+                        sheet.update_cell(cell.row, col, valor)
                 else:
                     sheet.append_row(dados)
             else:
                 sheet.insert_row(dados, index=2)
-            
+                # Enviar email na criação
+                pdf_bytes = gerar_pdf_rm(registro)
+                if pdf_bytes:
+                    nome_pdf = sanitize_filename_ar(f"RM_{registro.id}_{registro.equipamento[:30]}") + ".pdf"
+                    enviar_email_rm(registro, "CRIAÇÃO", pdf_bytes, nome_pdf)
             return True
-            
-        except Exception as e:
-            st.error(f"Erro ao salvar registro RM: {e}")
+        except:
             return False
     
     def excluir_registro_rm(id: int) -> bool:
         try:
             client = get_gspread_client()
             if client is None:
-                st.error("❌ Não foi possível conectar ao Google Sheets")
                 return False
-            
-            sheet = client.open_by_key(ID_PLANILHA_RM).worksheet(ABA_RM)
+            sheet = client.open_by_key(ID_PLANILHA_AR).worksheet(ABA_RM)
+            registros = carregar_registros_rm({"id": id})
+            if registros:
+                enviar_email_rm(registros[0], "EXCLUSÃO", None, None)
             cell = sheet.find(str(id), in_column=1)
             if cell:
                 sheet.delete_rows(cell.row)
                 return True
             return False
-            
-        except Exception as e:
-            st.error(f"Erro ao excluir registro RM: {e}")
+        except:
             return False
     
     def gerar_pdf_rm(registro: RegistroRM) -> Optional[bytes]:
@@ -4257,6 +4296,44 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
             st.error(f"Erro ao gerar PDF RM: {e}")
             return None
     
+    def imprimir_pdf_rm(registro: RegistroRM) -> bool:
+        try:
+            pdf_bytes = gerar_pdf_rm(registro)
+            if pdf_bytes:
+                import base64
+                import tempfile
+                import webbrowser
+                
+                nome_pdf = sanitize_filename_ar(f"RM_{registro.id}_{registro.equipamento[:30]}") + ".pdf"
+                pdf_base64 = base64.b64encode(pdf_bytes).decode()
+                
+                html_content = f"""
+                <!DOCTYPE html>
+                <html>
+                <head><title>{nome_pdf}</title>
+                <style>
+                body{{margin:0;padding:0;height:100vh;display:flex;flex-direction:column;}}
+                .toolbar{{background:#2c3e50;padding:10px;text-align:center;}}
+                button{{padding:8px 20px;margin:0 10px;cursor:pointer;background:#3498db;color:white;border:none;border-radius:5px;}}
+                embed{{width:100%;height:calc(100vh-50px);}}
+                @media print{{.toolbar{{display:none;}}embed{{height:100vh;}}}}
+                </style>
+                </head>
+                <body>
+                <div class="toolbar"><button onclick="window.print()">🖨️ IMPRIMIR</button><button onclick="window.close()">❌ FECHAR</button></div>
+                <embed src="data:application/pdf;base64,{pdf_base64}" type="application/pdf">
+                <script>setTimeout(function(){{window.print();}},1000);</script>
+                </body></html>
+                """
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as f:
+                    f.write(html_content)
+                    temp_html = f.name
+                webbrowser.open(f'file://{temp_html}')
+                return True
+            return False
+        except:
+            return False
+    
     with st.container():
         st.markdown(f"""
         <div style="background: linear-gradient(135deg, {THEME['bg_card']} 0%, {THEME['bg_card2']} 100%); padding: 15px 20px; border-radius: 10px; border-left: 4px solid {THEME['accent_lime']}; margin: 20px 0;">
@@ -4316,13 +4393,9 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
                 with col1:
                     st.download_button(label="📥 Baixar PDF", data=st.session_state.rm_pdf_bytes, file_name=st.session_state.rm_pdf_nome, mime="application/pdf", use_container_width=True)
                 with col2:
-                    if st.button("📧 Enviar por E-mail", use_container_width=True):
-                        setor_lower = reg.setor2.lower() if reg.setor2 else ""
-                        destinatarios = [EMAIL_CONFIG_AR["usuario"]]
-                        assunto = f"Requisição de Manutenção #{reg.id} - {reg.equipamento}"
-                        corpo = f"""Prezados,\n\nSegue requisição de manutenção #{reg.id}.\n\nEquipamento: {reg.equipamento}\nCaráter: {reg.caracter}\nSetor Destino: {reg.setor2}\n\nAtenciosamente,\nSistema de Gestão - Luvidarte"""
-                        if enviar_email_ar(destinatarios, assunto, corpo, st.session_state.rm_pdf_bytes, st.session_state.rm_pdf_nome):
-                            st.success("📧 E-mail enviado!")
+                    if st.button("📧 Reenviar por E-mail", use_container_width=True):
+                        if enviar_email_rm(reg, "REENVIO", st.session_state.rm_pdf_bytes, st.session_state.rm_pdf_nome):
+                            st.success("📧 E-mail reenviado com sucesso!")
                         else:
                             st.error("❌ Erro ao enviar e-mail")
                 with col3:
@@ -4393,7 +4466,6 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
                 registros = carregar_registros_rm()
             
             if registros:
-                # Filtros
                 col_f1, col_f2, col_f3 = st.columns(3)
                 with col_f1:
                     filtro_status = st.selectbox("Status", ["Todos"] + OPCOES_STATUS_RM)
@@ -4410,7 +4482,6 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
                 if filtro_id > 0:
                     dados_filtrados = [r for r in dados_filtrados if r.id == filtro_id]
                 
-                # Estatísticas
                 col_e1, col_e2, col_e3, col_e4 = st.columns(4)
                 with col_e1:
                     st.metric("Total", len(registros))
@@ -4424,7 +4495,6 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
                     finalizados = len([r for r in registros if r.status == "FINALIZADO"])
                     st.metric("Finalizados", finalizados)
                 
-                # Tabela
                 dados_tabela = []
                 for reg in dados_filtrados[:100]:
                     emoji = "🚨" if "1 -" in reg.caracter else "⚠️" if "2 -" in reg.caracter else "📊" if "3 -" in reg.caracter else "🔧"
@@ -4484,7 +4554,7 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
                         st.write("**📋 Descrição:**")
                         st.write(f"- Problema: {reg.problema[:150]}...")
                 
-                tab_editar, tab_excluir = st.tabs(["✏️ Editar", "🗑️ Excluir"])
+                tab_editar, tab_excluir, tab_acoes = st.tabs(["✏️ Editar", "🗑️ Excluir", "📄 Ações PDF"])
                 
                 with tab_editar:
                     with st.form("editar_rm"):
@@ -4505,6 +4575,7 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
                             trabalho_edt = st.text_area("Trabalho Realizado", reg.trabalho, height=100)
                             analise_edt = st.text_area("Análise do Serviço", reg.analise, height=100)
                             emissor2_edt = st.text_input("Emissor Técnico", reg.emissor2)
+                        
                         if st.form_submit_button("💾 SALVAR ALTERAÇÕES", type="primary"):
                             registro_atualizado = RegistroRM(
                                 id=reg.id, data=data_edt, hora=hora_edt, emissor=emissor_edt,
@@ -4522,16 +4593,66 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
                 
                 with tab_excluir:
                     st.error(f"⚠️ **ATENÇÃO!** Exclusão da Requisição ID {reg.id}")
-                    st.warning("Esta ação é **IRREVERSÍVEL**!")
+                    st.warning("Esta ação é **IRREVERSÍVEL** e enviará um e-mail de notificação!")
                     confirmar = st.checkbox(f"Confirmo exclusão da requisição {reg.id}")
                     if confirmar and st.button("🗑️ EXCLUIR", type="primary"):
                         with st.spinner(f"Excluindo requisição {reg.id}..."):
                             if excluir_registro_rm(reg.id):
                                 st.success(f"✅ Requisição {reg.id} excluída!")
+                                st.info("📧 E-mail de notificação enviado para o setor destino e qualidade")
                                 st.session_state.rm_registro_editando = None
                                 st.rerun()
                             else:
                                 st.error(f"❌ Erro ao excluir requisição {reg.id}")
+                
+                with tab_acoes:
+                    st.subheader("📄 Ações do PDF")
+                    st.info(f"📧 O e-mail será enviado para: **{obter_email_setor_rm(reg.setor2)}** e **{EMAIL_QUALIDADE_RM}**")
+                    
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        if st.button("📄 Gerar PDF", use_container_width=True):
+                            with st.spinner("Gerando PDF..."):
+                                pdf_bytes = gerar_pdf_rm(reg)
+                                if pdf_bytes:
+                                    st.session_state.rm_pdf_bytes = pdf_bytes
+                                    st.session_state.rm_pdf_nome = sanitize_filename_ar(f"RM_{reg.id}_{reg.equipamento[:30]}") + ".pdf"
+                                    st.session_state.rm_mostrar_pdf = True
+                                    st.success("✅ PDF gerado com sucesso!")
+                    with col2:
+                        if st.session_state.get('rm_mostrar_pdf', False) and st.session_state.get('rm_pdf_bytes'):
+                            st.download_button(label="📥 Baixar PDF", data=st.session_state.rm_pdf_bytes, file_name=st.session_state.rm_pdf_nome, mime="application/pdf", use_container_width=True)
+                        else:
+                            st.button("📥 Baixar PDF", disabled=True, use_container_width=True)
+                    with col3:
+                        if st.button("🖨️ Imprimir", use_container_width=True):
+                            with st.spinner("Abrindo PDF para impressão..."):
+                                if imprimir_pdf_rm(reg):
+                                    st.success("🖨️ PDF aberto para impressão!")
+                                else:
+                                    st.error("❌ Erro ao abrir PDF")
+                    
+                    st.markdown("---")
+                    st.subheader("📧 Envio de E-mail")
+                    
+                    if st.session_state.get('rm_mostrar_pdf', False) and st.session_state.get('rm_pdf_bytes'):
+                        if st.button("📧 Enviar por E-mail (com PDF anexado)", use_container_width=True, type="primary"):
+                            with st.spinner("Enviando e-mail..."):
+                                if enviar_email_rm(reg, "REENVIO", st.session_state.rm_pdf_bytes, st.session_state.rm_pdf_nome):
+                                    st.success(f"📧 E-mail enviado com sucesso!")
+                                    st.caption(f"Destinatários: {obter_email_setor_rm(reg.setor2)}, {EMAIL_QUALIDADE_RM}")
+                                else:
+                                    st.error("❌ Erro ao enviar e-mail")
+                    else:
+                        if st.button("📧 Enviar por E-mail (gerar PDF primeiro)", use_container_width=True):
+                            st.warning("⚠️ Clique em 'Gerar PDF' antes de enviar o e-mail")
+                    
+                    with st.expander("📋 Info: Destinatários do E-mail"):
+                        st.markdown(f"""
+                        - **Setor Destino ({reg.setor2})**: `{obter_email_setor_rm(reg.setor2)}`
+                        - **Qualidade**: `{EMAIL_QUALIDADE_RM}`
+                        - **Engenharia**: `engenharia@luvidarte.com.br`
+                        """)
         
         elif menu_rm == "📈 Dashboard RM":
             st.subheader("Dashboard de Manutenção")
