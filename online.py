@@ -2226,8 +2226,8 @@ elif aba_selecionada == 'SOPRO':
             st.pyplot(fig)
             plt.close(fig)
 
-    # Defeitos
-    if mostrar_defeitos:
+# Defeitos
+if mostrar_defeitos:
         render_section_header("Estratificação de Defeitos", "▸", THEME['accent_lime'])
         colunas_defeitos = [
             'BOLHA','PEDRA','CALCINADO','BALANÇANDO','AMASSADO','OVAL','CORTE','QUEBRADA',
@@ -2268,8 +2268,7 @@ elif aba_selecionada == 'SOPRO':
         color:{THEME['text_muted']};letter-spacing:.1em;">
         TRS DASHBOARD · SOPRO · {get_horario_brasilia()}
     </div>
-    """, unsafe_allow_html=True)
-
+    """, unsafe_allow_html=True)    
 
 # ==================================================================================================
 # TÊMPERA
