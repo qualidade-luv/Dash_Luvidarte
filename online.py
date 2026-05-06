@@ -2226,8 +2226,8 @@ elif aba_selecionada == 'SOPRO':
             st.pyplot(fig)
             plt.close(fig)
 
-# Defeitos
-if mostrar_defeitos:
+    # Defeitos
+    if mostrar_defeitos:
         render_section_header("Estratificação de Defeitos", "▸", THEME['accent_lime'])
         colunas_defeitos = [
             'BOLHA','PEDRA','CALCINADO','BALANÇANDO','AMASSADO','OVAL','CORTE','QUEBRADA',
@@ -2268,7 +2268,8 @@ if mostrar_defeitos:
         color:{THEME['text_muted']};letter-spacing:.1em;">
         TRS DASHBOARD · SOPRO · {get_horario_brasilia()}
     </div>
-    """, unsafe_allow_html=True)    
+    """, unsafe_allow_html=True)
+
 
 # ==================================================================================================
 # TÊMPERA
@@ -3988,47 +3989,25 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
     os.makedirs(CAMINHO_PDF_RM, exist_ok=True)
     os.makedirs(CAMINHO_PDF_RELATORIO_RM, exist_ok=True)
     
-    # ====================== CONFIGURAÇÕES DE E-MAIL - LENDO DO SECRETS ======================
-    try:
-        # Configurações de e-mail para RM
-        EMAIL_CONFIG_RM = {
-            "usuario": st.secrets["smtp_rm"]["usuario"],
-            "senha": st.secrets["smtp_rm"]["senha"],
-            "smtp_server": st.secrets["smtp_rm"]["smtp_server"],
-            "smtp_port": int(st.secrets["smtp_rm"]["smtp_port"])
-        }
-        
-        # Mapeamento de setores para emails
-        EMAILS_SETORES_RM = {
-            "Elétrica": st.secrets["emails_rm"]["eletrica"],
-            "Mecânica": st.secrets["emails_rm"]["mecanica"],
-            "Informática": st.secrets["emails_rm"]["informatica"],
-            "Ferramentaria": st.secrets["emails_rm"]["ferramentaria"],
-            "Manutenção Geral": st.secrets["emails_rm"]["manutencao_geral"],
-            "default": st.secrets["emails_rm"]["default"]
-        }
-        
-        EMAIL_QUALIDADE_RM = st.secrets["emails_rm"]["qualidade"]
-        
-    except Exception as e:
-        # Fallback para valores hardcoded (caso secrets não esteja disponível)
-        st.warning(f"Usando configurações de e-mail hardcoded. Erro ao ler secrets: {e}")
-        EMAIL_CONFIG_RM = {
-            "usuario": "erp@luvidarte.com.br",
-            "senha": "Qualidade123#",
-            "smtp_server": "email-ssl.com.br",
-            "smtp_port": 465
-        }
-        EMAILS_SETORES_RM = {
-            "Elétrica": "manutencaoeletrica@luvidarte.com.br",
-            "Mecânica": "manutencao@luvidarte.com.br",
-            "Informática": "alves.marcello@gmail.com",
-            "Ferramentaria": "ferramentaria@luvidarte.com.br",
-            "Manutenção Geral": "manutencaogeral@luvidarte.com.br",
-            "default": "manutencao@luvidarte.com.br"
-        }
-        EMAIL_QUALIDADE_RM = "qualidade@luvidarte.com.br"
-    # ========================================================================================
+    # Configurações de e-mail para RM
+    EMAIL_CONFIG_RM = {
+        "usuario": "erp@luvidarte.com.br",
+        "senha": "Qualidade123#",
+        "smtp_server": "email-ssl.com.br",
+        "smtp_port": 465
+    }
+    
+    # Mapeamento de setores para emails
+    EMAILS_SETORES_RM = {
+        "Elétrica": "manutencaoeletrica@luvidarte.com.br",
+        "Mecânica": "manutencao@luvidarte.com.br",
+        "Informática": "alves.marcello@gmail.com",
+        "Ferramentaria": "ferramentaria@luvidarte.com.br",
+        "Manutenção Geral": "manutencaogeral@luvidarte.com.br",
+        "default": "manutencao@luvidarte.com.br"
+    }
+    
+    EMAIL_QUALIDADE_RM = "qualidade@luvidarte.com.br"
     
     @dataclass
     class RegistroRM:
@@ -4071,11 +4050,11 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
                 <p>A seguinte requisição foi <b>EXCLUÍDA</b> do sistema:</p>
                 <table border="1" cellpadding="5">
                 <tr><td><b>ID:</b></td><td>{registro.id}</td>
-                <tr><td><b>Equipamento:</b></td><td colspan="3">{registro.equipamento}</td></tr>
+                <td><b>Equipamento:</b></td><td colspan="3">{registro.equipamento}</td></tr>
                 <tr><td><b>Data:</b></td><td>{data_str}</td>
-                <tr><td><b>Hora:</b></td><td>{registro.hora}</td></tr>
+                <td><b>Hora:</b></td><td>{registro.hora}</td></tr>
                 <tr><td><b>Emissor:</b></td><td>{registro.emissor}</td>
-                <tr><td><b>Setor Destino:</b></td><td>{registro.setor2}</td></tr>
+                <td><b>Setor Destino:</b></td><td>{registro.setor2}</td></tr>
                 </table>
                 <p>Email automático do Sistema de Requisições de Manutenção.</p>
                 </body></html>
@@ -4097,9 +4076,9 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
                 <tr><td colspan="6">{registro.problema or "N/A"}</td></tr>
                 """
                 if registro.trabalho:
-                    corpo += f"</tr><td colspan='6'><b>🔧 TRABALHO REALIZADO:</b></td></tr><tr><td colspan='6'>{registro.trabalho}</td></tr>"
+                    corpo += f"<tr><td colspan='6'><b>🔧 TRABALHO REALIZADO:</b></td></tr><tr><td colspan='6'>{registro.trabalho}</td></tr>"
                 if registro.analise:
-                    corpo += f"</tr><td colspan='6'><b>📊 ANÁLISE DO SERVIÇO:</b></td></tr><tr><td colspan='6'>{registro.analise}</td></tr>"
+                    corpo += f"<tr><td colspan='6'><b>📊 ANÁLISE DO SERVIÇO:</b></td></tr><tr><td colspan='6'>{registro.analise}</td></tr>"
                 if registro.emissor2:
                     corpo += f"<tr><td><b>Emissor Técnico:</b></td><td colspan='5'>{registro.emissor2}</td></tr>"
                 if data_fim_str:
