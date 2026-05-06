@@ -2228,64 +2228,47 @@ elif aba_selecionada == 'SOPRO':
 
     # Defeitos
     if mostrar_defeitos:
-    render_section_header("Estratificação de Defeitos", "▸", THEME['accent_lime'])
-    
-    # Lista canônica de defeitos
-    colunas_defeitos = [
-        'BOLHA', 'PEDRA', 'CALCINADO', 'BALANÇANDO', 'AMASSADO', 'OVAL', 'CORTE', 'QUEBRADA',
-        'VIDRO GRUDADO', 'CORDA', 'FORMA', 'RISCO', 'TORTO', 'RUGA', 'GABARITO', 'SUJEIRA',
-        'EMPENO', 'MARCAS', 'FALHADA', 'DOBRA', 'CHUPADO', 'ARREADO', 'GOSMA', 'BARRO', 'CROMO', 'MACHO'
-    ]
-    
-    # Mapeia cada defeito para a primeira coluna que o contém (case-insensitive)
-    def_exist = []
-    for padrao in colunas_defeitos:
-        padrao_upper = padrao.upper()
-        for col in df.columns:
-            if padrao_upper in col.upper():
-                def_exist.append(col)
-                break  # usa a primeira coluna correspondente
-    
-    # Remove duplicatas (caso um padrão pegue mais de uma coluna)
-    def_exist = list(dict.fromkeys(def_exist))
-    
-    if def_exist:
-        df_def = df[def_exist].apply(pd.to_numeric, errors='coerce').fillna(0)
-        df_def_s = df_def.sum().sort_values(ascending=False)
-        
-        # Opcional: se quiser ocultar defeitos com soma zero, descomente a linha abaixo
-        # df_def_s = df_def_s[df_def_s > 0]
-        
-        if not df_def_s.empty:
-            fig, ax = plt.subplots(figsize=(12, 4), facecolor=THEME['bg_card'])
-            apply_chart_style(ax, fig, "Defeitos — Somatório", ylabel="Quantidade")
-            bars = ax.bar(range(len(df_def_s)), df_def_s.values,
-                          color=THEME['accent_red'], alpha=0.8,
-                          edgecolor=THEME['bg_card'], linewidth=1.2)
-            ax.set_xticks(range(len(df_def_s)))
-            ax.set_xticklabels(df_def_s.index, rotation=40, ha='right',
-                               fontsize=9, color=THEME['text_muted'])
-            for bar, val in zip(bars, df_def_s.values):
-                if val > 0:
-                    ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() * 1.02,
-                            f"{int(val):,}".replace(",","."), ha='center', va='bottom',
-                            fontsize=8, color=THEME['text_primary'])
-            fig.tight_layout(pad=1.5)
-            st.pyplot(fig)
-            plt.close(fig)
-            st.caption(f"Total de defeitos: {int(df_def_s.sum()):,}".replace(",","."))
-        else:
-            st.info("Nenhum defeito registrado (todos os valores são zero) no período selecionado")
-    else:
-        st.info("Nenhuma coluna de defeito reconhecida na planilha de Prensados")
+        render_section_header("Estratificação de Defeitos", "▸", THEME['accent_lime'])
+        colunas_defeitos = [
+            'BOLHA','PEDRA','CALCINADO','BALANÇANDO','AMASSADO','OVAL','CORTE','QUEBRADA',
+            'VIDRO GRUDADO','CORDA','FORMA','RISCO','TORTO','RUGA','GABARITO','SUJEIRA',
+            'EMPENO','MARCAS','FALHADA','DOBRA','CHUPADO','ARREADO','GOSMA','BARRO','CROMO','MACHO'
+        ]
+        def_exist = []
+        for defeito in colunas_defeitos:
+            for col in df.columns:
+                if col.upper() == defeito.upper():
+                    def_exist.append(col)
+                    break
+        if def_exist:
+            df_def = df[def_exist].apply(pd.to_numeric, errors='coerce').fillna(0)
+            df_def_s = df_def.sum().sort_values(ascending=False)
+            df_def_s = df_def_s[df_def_s > 0]
+            if not df_def_s.empty:
+                fig, ax = plt.subplots(figsize=(12, 4), facecolor=THEME['bg_card'])
+                apply_chart_style(ax, fig, "Defeitos — Somatório", ylabel="Quantidade")
+                bars = ax.bar(range(len(df_def_s)), df_def_s.values,
+                              color=THEME['accent_red'], alpha=0.8,
+                              edgecolor=THEME['bg_card'], linewidth=1.2)
+                ax.set_xticks(range(len(df_def_s)))
+                ax.set_xticklabels(df_def_s.index, rotation=40, ha='right', fontsize=9, color=THEME['text_muted'])
+                for bar, val in zip(bars, df_def_s.values):
+                    if val > 0:
+                        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() * 1.02,
+                                f"{int(val):,}".replace(",","."), ha='center', va='bottom',
+                                fontsize=8, color=THEME['text_primary'])
+                fig.tight_layout(pad=1.5)
+                st.pyplot(fig)
+                plt.close(fig)
+                st.caption(f"Total de defeitos: {int(df_def_s.sum()):,}".replace(",","."))
 
-st.markdown(f"""
-<div style="text-align:right;padding:16px 0 8px;
-    font-family:'JetBrains Mono',monospace;font-size:10px;
-    color:{THEME['text_muted']};letter-spacing:.1em;">
-    TRS DASHBOARD · PRENSADOS · {get_horario_brasilia()}
-</div>
-""", unsafe_allow_html=True)
+    st.markdown(f"""
+    <div style="text-align:right;padding:16px 0 8px;
+        font-family:'JetBrains Mono',monospace;font-size:10px;
+        color:{THEME['text_muted']};letter-spacing:.1em;">
+        TRS DASHBOARD · SOPRO · {get_horario_brasilia()}
+    </div>
+    """, unsafe_allow_html=True)
 
 
 # ==================================================================================================
