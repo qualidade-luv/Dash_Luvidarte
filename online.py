@@ -2255,7 +2255,107 @@ elif aba_selecionada == 'SOPRO':
             fig.tight_layout(pad=1.5)
             st.pyplot(fig)
             plt.close(fig)
-
+    # ==================================================================
+    # ANÁLISE DE DEFEITOS - SOPRO (via REFUGADO)
+    # ==================================================================
+    st.markdown("<hr>", unsafe_allow_html=True)
+    render_section_header("📊 Análise de Refugo - SOPRO", "▸", THEME['accent_lime'])
+    
+    if not df.empty and 'REFUGADO' in df.columns and 'PRODUZIDO' in df.columns:
+        total_refugo = int(df['REFUGADO'].sum())
+        total_produzido_sopro = int(df['PRODUZIDO'].sum())
+        perc_refugo = (total_refugo / total_produzido_sopro * 100) if total_produzido_sopro > 0 else 0
+        
+        col_r1, col_r2, col_r3, col_r4 = st.columns(4)
+        with col_r1:
+            st.metric("🔴 Total Refugo", f"{total_refugo:,}".replace(",", "."))
+        with col_r2:
+            st.metric("📦 Total Produzido", f"{total_produzido_sopro:,}".replace(",", "."))
+        with col_r3:
+            st.metric("📊 % Refugo", f"{perc_refugo:.1f}%")
+        with col_r4:
+            if perc_refugo <= 5:
+                st.success("✅ Dentro da Meta (<5%)")
+            elif perc_refugo <= 10:
+                st.warning("⚠️ Acima do Ideal (5-10%)")
+            else:
+                st.error("🔴 Crítico (>10%)")
+        
+        # Gráfico de evolução diária do refugo
+        if 'DATA' in df.columns:
+            refugo_dia = df.groupby(df['DATA'].dt.date).agg({
+                'REFUGADO': 'sum',
+                'PRODUZIDO': 'sum'
+            }).reset_index()
+            refugo_dia['DATA'] = pd.to_datetime(refugo_dia['DATA'])
+            refugo_dia['% Refugo'] = (refugo_dia['REFUGADO'] / refugo_dia['PRODUZIDO'] * 100).fillna(0)
+            refugo_dia = refugo_dia.sort_values('DATA')
+            
+            if len(refugo_dia) > 0:
+                fig, ax = plt.subplots(figsize=(12, 4), facecolor=THEME['bg_card'])
+                apply_chart_style(ax, fig, "Evolução do Percentual de Refugo", ylabel="% Refugo", accent=THEME['accent_red'])
+                bars = ax.bar(refugo_dia['DATA'], refugo_dia['% Refugo'], 
+                             color=THEME['accent_red'], alpha=0.6, width=0.8,
+                             label='% Refugo')
+                ax.axhline(y=5, color=THEME['accent_lime'], linestyle='--', linewidth=1.5, label='Meta 5%')
+                ax.axhline(y=10, color=THEME['accent_orange'], linestyle=':', linewidth=1.5, label='Alerta 10%')
+                
+                for bar, val in zip(bars, refugo_dia['% Refugo']):
+                    if val > 0:
+                        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5,
+                                f'{val:.1f}%', ha='center', va='bottom', fontsize=7)
+                
+                plt.setp(ax.xaxis.get_majorticklabels(), rotation=35, ha='right', fontsize=8)
+                ax.legend(loc='upper right', fontsize=8)
+                fig.tight_layout()
+                st.pyplot(fig)
+                plt.close(fig)
+        
+        # Top referências com maior refugo
+        if 'REFERÊNCIA' in df.columns:
+            st.markdown("#### 🎯 Top 10 Referências com Maior Refugo")
+            refugo_ref = df.groupby('REFERÊNCIA').agg({
+                'REFUGADO': 'sum',
+                'PRODUZIDO': 'sum'
+            }).reset_index()
+            refugo_ref['% Refugo'] = (refugo_ref['REFUGADO'] / refugo_ref['PRODUZIDO'] * 100).fillna(0)
+            refugo_ref = refugo_ref.sort_values('% Refugo', ascending=False).head(10)
+            refugo_ref = refugo_ref[refugo_ref['REFUGADO'] > 0]
+            
+            if not refugo_ref.empty:
+                fig, ax = plt.subplots(figsize=(10, max(4, len(refugo_ref) * 0.4)), facecolor=THEME['bg_card'])
+                apply_chart_style(ax, fig, "", accent=THEME['accent_red'])
+                
+                cores_ref = [THEME['accent_red'] if v > 10 else THEME['accent_orange'] if v > 5 else THEME['accent_yellow'] 
+                            for v in refugo_ref['% Refugo']]
+                
+                bars = ax.barh(range(len(refugo_ref)), refugo_ref['% Refugo'], color=cores_ref, alpha=0.8)
+                ax.set_yticks(range(len(refugo_ref)))
+                ax.set_yticklabels(refugo_ref['REFERÊNCIA'], fontsize=8)
+                ax.set_xlabel('% Refugo')
+                ax.axvline(x=5, color=THEME['accent_lime'], linestyle='--', linewidth=1, label='Meta 5%')
+                ax.axvline(x=10, color=THEME['accent_orange'], linestyle=':', linewidth=1, label='Alerta 10%')
+                
+                for i, (idx, row) in enumerate(refugo_ref.iterrows()):
+                    ax.text(row['% Refugo'] + 0.3, i, 
+                           f"{row['% Refugo']:.1f}% ({int(row['REFUGADO'])} pçs)", 
+                           va='center', fontsize=7)
+                
+                ax.legend(loc='lower right', fontsize=8)
+                fig.tight_layout()
+                st.pyplot(fig)
+                plt.close(fig)
+                
+                # Tabela detalhada
+                with st.expander("🔍 Ver tabela completa de refugo por referência"):
+                    df_refugo_display = refugo_ref[['REFERÊNCIA', 'PRODUZIDO', 'REFUGADO', '% Refugo']].copy()
+                    df_refugo_display['% Refugo'] = df_refugo_display['% Refugo'].round(1).astype(str) + '%'
+                    df_refugo_display.columns = ['Referência', 'Produzido', 'Refugo', '% Refugo']
+                    st.dataframe(df_refugo_display, use_container_width=True, height=300)
+            else:
+                st.info("✅ Nenhum refugo registrado nas referências analisadas")
+    else:
+        st.info("📭 Dados de refugo não disponíveis para análise")
     
     st.markdown(f"""
     <div style="text-align:right;padding:16px 0 8px;
