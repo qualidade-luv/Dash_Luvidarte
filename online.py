@@ -20,7 +20,31 @@ from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
 import time
 import json
-from datetime import datetime, timedelta, date, time
+from datetime import datetime, timedelta, date, time as dt_time
+from functools import wraps
+
+# ======================
+# DECORATOR DE RETRY PARA ERROS DE QUOTA (429)
+# ======================
+def retry_on_quota(max_retries=3, delay=5):
+    """Decorator para tentar novamente quando ocorrer erro de quota (429)"""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    if "429" in str(e) or "Quota exceeded" in str(e):
+                        if attempt < max_retries - 1:
+                            wait = delay * (attempt + 1)
+                            st.warning(f"Limite de requisições atingido. Tentando novamente em {wait}s...")
+                            time.sleep(wait)
+                            continue
+                    raise
+            return None
+        return wrapper
+    return decorator
 
 # ======================
 # SISTEMA DE NOTIFICAÇÕES - POPUP SIMPLES (APENAS REGISTROS NOVOS DO DIA ATUAL)
@@ -78,7 +102,7 @@ class SistemaNotificacao:
         
         # ===== VERIFICAR NOVOS AVISOS DE REJEIÇÃO (AR) =====
         try:
-            registros_ar = carregar_registros_ar()
+            registros_ar = carregar_registros_ar_sem_cache()  # usa função sem cache para verificação ao vivo
             if registros_ar:
                 for registro in registros_ar:
                     if registro.data and registro.data.date() == hoje:
@@ -97,7 +121,7 @@ class SistemaNotificacao:
         
         # ===== VERIFICAR NOVAS REQUISIÇÕES DE MANUTENÇÃO (RM) =====
         try:
-            registros_rm = carregar_registros_rm()
+            registros_rm = carregar_registros_rm_sem_cache()
             if registros_rm:
                 for registro in registros_rm:
                     if registro.data and registro.data.date() == hoje:
@@ -342,11 +366,21 @@ def gerar_popup_html(notificacao):
     
     return html, popup_id
 
+# Controlar última verificação de popups (para não exceder quota)
+if "ultima_verificacao_popup" not in st.session_state:
+    st.session_state.ultima_verificacao_popup = datetime.now()
+
 def verificar_e_exibir_popups():
-    """Função principal que verifica novos registros e exibe popups"""
+    """Função principal que verifica novos registros e exibe popups, limitada a cada 60 segundos"""
     aba_atual = st.session_state.get("aba_selecionada", "")
     if aba_atual in ["AVISO DE REJEIÇÃO", "REQUISIÇÃO MANUTENÇÃO"]:
         return
+    
+    agora = datetime.now()
+    if (agora - st.session_state.ultima_verificacao_popup).total_seconds() < 60:
+        return  # verifica no máximo a cada 60 segundos
+    
+    st.session_state.ultima_verificacao_popup = agora
     
     novos_ar, novos_rm = sistema_notificacao.verificar_novos_registros()
     
@@ -399,7 +433,7 @@ ABAS = {
     'TÊMPERA': 'TRS_TEMPERA',
     'AVISO DE REJEIÇÃO': 'AR',
     'REQUISIÇÃO MANUTENÇÃO': 'RM',
-    'FECHAMENTO TURNO': 'FT'  # NOVA LINHA
+    'FECHAMENTO TURNO': 'FT'
 }
 
 CAMINHO_PDF_AR = r"\\srv-luvidarte\dados\DOC\Engenharia_Luvidarte\SGQ - LUVIDARTE - ALTERADAS\0-AVISO DE REJEIÇÃO\1-PDF"
@@ -482,7 +516,9 @@ def safe_float_tempera(val):
     except:
         return 0.0
 
+@st.cache_resource
 def get_gspread_client():
+    """Retorna cliente autenticado do gspread (cacheado)"""
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     try:
         if 'gcp_service_account' in st.secrets:
@@ -625,9 +661,10 @@ def converter_tempo_para_minutos(valor):
     return 0
 
 # ======================
-# FUNÇÕES DE CARREGAMENTO DE DADOS
+# FUNÇÕES DE CARREGAMENTO DE DADOS (COM CACHE E RETRY)
 # ======================
-@st.cache_data(ttl=300)
+@retry_on_quota()
+@st.cache_data(ttl=600)
 def carregar_dados_prensados():
     try:
         client = get_gspread_client()
@@ -671,7 +708,8 @@ def carregar_dados_prensados():
         st.error(f"Erro ao carregar dados de Prensados: {e}")
         return pd.DataFrame()
 
-@st.cache_data(ttl=300)
+@retry_on_quota()
+@st.cache_data(ttl=600)
 def carregar_dados_sopro():
     try:
         client = get_gspread_client()
@@ -707,7 +745,8 @@ def carregar_dados_sopro():
     except Exception:
         return pd.DataFrame()
 
-@st.cache_data(ttl=300)
+@retry_on_quota()
+@st.cache_data(ttl=600)
 def carregar_dados_tempera():
     try:
         client = get_gspread_client()
@@ -906,7 +945,9 @@ def obter_proximo_numero_ar():
     except:
         return 1
 
-def carregar_registros_ar(filtros: Dict[str, Any] = None) -> List[RegistroAR]:
+# Função sem cache para ser usada nas notificações (verificação em tempo real, mas limitada a cada 60s)
+@retry_on_quota()
+def carregar_registros_ar_sem_cache() -> List[RegistroAR]:
     registros = []
     try:
         client = get_gspread_client()
@@ -933,23 +974,31 @@ def carregar_registros_ar(filtros: Dict[str, Any] = None) -> List[RegistroAR]:
                 registro.disposicao = row[9] if len(row) > 9 else ""
                 registro.data_finalizacao = converter_data_br(row[10]) if len(row) > 10 else None
                 registro.turno = row[11] if len(row) > 11 else ""
-                
-                if filtros:
-                    incluir = True
-                    if filtros.get('numero') and filtros['numero'] != registro.numero:
-                        incluir = False
-                    if not incluir or (filtros.get('status') and filtros['status'].upper() != registro.status.upper()):
-                        incluir = False
-                    if not incluir or (filtros.get('decisao') and filtros['decisao'].upper() != registro.decisao.upper()):
-                        incluir = False
-                
-                if not filtros or incluir:
-                    registros.append(registro)
+                registros.append(registro)
             except:
                 continue
         registros.sort(key=lambda x: x.data if x.data else datetime.min, reverse=True)
     except:
         pass
+    return registros
+
+# Função com cache para uso geral (visualização, edição, etc.)
+@st.cache_data(ttl=600)
+def carregar_registros_ar(filtros: Dict[str, Any] = None) -> List[RegistroAR]:
+    registros = carregar_registros_ar_sem_cache()
+    if filtros:
+        registros_filtrados = []
+        for r in registros:
+            incluir = True
+            if filtros.get('numero') and filtros['numero'] != r.numero:
+                incluir = False
+            if filtros.get('status') and filtros['status'].upper() != r.status.upper():
+                incluir = False
+            if filtros.get('decisao') and filtros['decisao'].upper() != r.decisao.upper():
+                incluir = False
+            if incluir:
+                registros_filtrados.append(r)
+        return registros_filtrados
     return registros
 
 def salvar_registro_ar(registro: RegistroAR, eh_alteracao: bool = False) -> bool:
@@ -974,6 +1023,8 @@ def salvar_registro_ar(registro: RegistroAR, eh_alteracao: bool = False) -> bool
                 sheet.append_row(dados)
         else:
             sheet.insert_row(dados, index=2)
+        # Limpar cache para forçar recarregamento
+        st.cache_data.clear()
         return True
     except:
         return False
@@ -987,6 +1038,7 @@ def excluir_registro_ar(numero: int) -> bool:
         cell = sheet.find(str(numero), in_column=1)
         if cell:
             sheet.delete_rows(cell.row)
+            st.cache_data.clear()
             return True
         return False
     except:
@@ -1136,7 +1188,9 @@ def obter_proximo_id_rm():
     except:
         return 1
 
-def carregar_registros_rm(filtros: Dict[str, Any] = None) -> List[RegistroRM]:
+# Função sem cache para notificações
+@retry_on_quota()
+def carregar_registros_rm_sem_cache() -> List[RegistroRM]:
     registros = []
     try:
         client = get_gspread_client()
@@ -1166,24 +1220,32 @@ def carregar_registros_rm(filtros: Dict[str, Any] = None) -> List[RegistroRM]:
                 registro.data_finalizacao = converter_data_br(row[12]) if len(row) > 12 else None
                 registro.emissor2 = row[13] if len(row) > 13 else ""
                 
-                if filtros:
-                    incluir = True
-                    if filtros.get('id') and filtros['id'] != registro.id:
-                        incluir = False
-                    if filtros.get('equipamento') and filtros['equipamento'].lower() not in registro.equipamento.lower():
-                        incluir = False
-                    if filtros.get('status') and filtros['status'] != registro.status:
-                        incluir = False
-                else:
-                    incluir = True
-                
-                if incluir and registro.id is not None:
+                if registro.id is not None:
                     registros.append(registro)
             except:
                 continue
         registros.sort(key=lambda x: x.id if x.id else 0, reverse=True)
     except:
         pass
+    return registros
+
+# Função com cache para uso geral
+@st.cache_data(ttl=600)
+def carregar_registros_rm(filtros: Dict[str, Any] = None) -> List[RegistroRM]:
+    registros = carregar_registros_rm_sem_cache()
+    if filtros:
+        registros_filtrados = []
+        for r in registros:
+            incluir = True
+            if filtros.get('id') and filtros['id'] != r.id:
+                incluir = False
+            if filtros.get('equipamento') and filtros['equipamento'].lower() not in r.equipamento.lower():
+                incluir = False
+            if filtros.get('status') and filtros['status'] != r.status:
+                incluir = False
+            if incluir:
+                registros_filtrados.append(r)
+        return registros_filtrados
     return registros
 
 def salvar_registro_rm(registro: RegistroRM, eh_alteracao: bool = False) -> bool:
@@ -1210,6 +1272,7 @@ def salvar_registro_rm(registro: RegistroRM, eh_alteracao: bool = False) -> bool
                 sheet.append_row(dados)
         else:
             sheet.insert_row(dados, index=2)
+        st.cache_data.clear()
         return True
     except:
         return False
@@ -1223,6 +1286,7 @@ def excluir_registro_rm(id: int) -> bool:
         cell = sheet.find(str(id), in_column=1)
         if cell:
             sheet.delete_rows(cell.row)
+            st.cache_data.clear()
             return True
         return False
     except:
@@ -1909,17 +1973,13 @@ if aba_selecionada == 'PRENSADOS':
             st.pyplot(fig)
             plt.close(fig)
 
-        # Defeitos de Prensados - LISTA COMPLETA
+    # Defeitos de Prensados
     if mostrar_defeitos:
         render_section_header("Estratificação de Defeitos - Prensados", "▸")
-        
-        # LISTA COMPLETA DE DEFEITOS
         colunas_defeitos_prensados = [
-            'BOLHA', 'PEDRA', 'TRINCA', 'RUGAS', 'CORTE TESOURA', 'DOBRA', 'SUJEIRA', 'QUEBRA',
-            'ARREADO', 'VIDRO GRUDADO', 'CONTRA-PEÇA', 'FALHAS', 'CHUPADO', 'ÓLEO TESOURA', 'CROMO',
-            'MACHO', 'BARRO', 'EMPENO', 'OUTROS', 'REMANEJAMENTO'
+            'TRINCA', 'RUGAS', 'DOBRA', 'SUJEIRA', 'FALHAS', 'CHUPADO',
+            'CROMO', 'BARRO', 'EMPENO', 'OUTROS', 'REMANEJAMENTO'
         ]
-        
         defeitos_existentes = []
         for defeito in colunas_defeitos_prensados:
             for col in df.columns:
@@ -1930,7 +1990,7 @@ if aba_selecionada == 'PRENSADOS':
         if not defeitos_existentes:
             for col in df.columns:
                 col_upper = col.upper()
-                if col_upper in ['BOLHA', 'PEDRA', 'TRINCA', 'RUGAS', 'CORTE TESOURA', 'DOBRA', 'SUJEIRA', 'QUEBRA', 'ARREADO', 'VIDRO GRUDADO', 'CONTRA-PEÇA', 'FALHAS', 'CHUPADO', 'ÓLEO TESOURA', 'CROMO', 'MACHO', 'BARRO', 'EMPENO', 'OUTROS', 'REMANEJAMENTO']:
+                if col_upper in ['TRINCA', 'RUGAS', 'DOBRA', 'SUJEIRA', 'FALHAS', 'CHUPADO', 'CROMO', 'BARRO', 'EMPENO', 'OUTROS']:
                     defeitos_existentes.append(col)
         
         if defeitos_existentes:
@@ -1938,50 +1998,24 @@ if aba_selecionada == 'PRENSADOS':
             df_def_sum = df_def.sum().sort_values(ascending=False)
             df_def_sum = df_def_sum[df_def_sum > 0]
             if not df_def_sum.empty:
-                fig, ax = plt.subplots(figsize=(14, max(5, len(df_def_sum) * 0.4)), facecolor=THEME['bg_card'])
+                fig, ax = plt.subplots(figsize=(12, 4), facecolor=THEME['bg_card'])
                 apply_chart_style(ax, fig, "Defeitos — Somatório", ylabel="Quantidade")
-                
-                # Gráfico adaptativo: horizontal se muitos defeitos
-                if len(df_def_sum) > 8:
-                    bars = ax.barh(range(len(df_def_sum)), df_def_sum.values,
-                                  color=THEME['accent_red'], alpha=0.8,
-                                  edgecolor=THEME['bg_card'], linewidth=1.2)
-                    ax.set_yticks(range(len(df_def_sum)))
-                    ax.set_yticklabels(df_def_sum.index, fontsize=9, color=THEME['text_muted'])
-                    ax.set_xlabel('Quantidade')
-                    ax.invert_yaxis()
-                    for bar, val in zip(bars, df_def_sum.values):
-                        if val > 0:
-                            ax.text(bar.get_width() + 1, bar.get_y() + bar.get_height()/2,
-                                    f"{int(val):,}".replace(",","."), ha='left', va='center',
-                                    fontsize=8, color=THEME['text_primary'])
-                else:
-                    bars = ax.bar(range(len(df_def_sum)), df_def_sum.values,
-                                  color=THEME['accent_red'], alpha=0.8,
-                                  edgecolor=THEME['bg_card'], linewidth=1.2)
-                    ax.set_xticks(range(len(df_def_sum)))
-                    ax.set_xticklabels(df_def_sum.index, rotation=40, ha='right',
-                                       fontsize=9, color=THEME['text_muted'])
-                    for bar, val in zip(bars, df_def_sum.values):
-                        if val > 0:
-                            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() * 1.02,
-                                    f"{int(val):,}".replace(",","."), ha='center', va='bottom',
-                                    fontsize=8, color=THEME['text_primary'])
-                
+                bars = ax.bar(range(len(df_def_sum)), df_def_sum.values,
+                              color=THEME['accent_red'], alpha=0.8,
+                              edgecolor=THEME['bg_card'], linewidth=1.2)
+                ax.set_xticks(range(len(df_def_sum)))
+                ax.set_xticklabels(df_def_sum.index, rotation=40, ha='right',
+                                   fontsize=9, color=THEME['text_muted'])
+                for bar, val in zip(bars, df_def_sum.values):
+                    if val > 0:
+                        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() * 1.02,
+                                f"{int(val):,}".replace(",","."), ha='center', va='bottom',
+                                fontsize=8, color=THEME['text_primary'])
                 fig.tight_layout(pad=1.5)
                 st.pyplot(fig)
                 plt.close(fig)
                 total_def = df_def_sum.sum()
                 st.caption(f"Total de defeitos: {int(total_def):,}".replace(",","."))
-                
-                # Tabela detalhada
-                with st.expander("🔍 Ver detalhamento completo"):
-                    df_tabela = pd.DataFrame({
-                        'Defeito': df_def_sum.index,
-                        'Quantidade': df_def_sum.values.astype(int)
-                    })
-                    df_tabela['%'] = (df_tabela['Quantidade'] / total_def * 100).round(1).astype(str) + '%'
-                    st.dataframe(df_tabela, use_container_width=True, height=300)
             else:
                 st.info("Nenhum defeito registrado no período selecionado")
         else:
@@ -2255,98 +2289,43 @@ elif aba_selecionada == 'SOPRO':
             fig.tight_layout(pad=1.5)
             st.pyplot(fig)
             plt.close(fig)
-        # ==================================================================
-    # ESTRATIFICAÇÃO DE DEFEITOS - SOPRO
-    # ==================================================================
-    st.markdown("<hr>", unsafe_allow_html=True)
-    render_section_header("Estratificação de Defeitos - SOPRO", "▸", THEME['accent_lime'])
-    
-    # LISTA COMPLETA DE DEFEITOS DO SOPRO
-    colunas_defeitos_sopro = [
-        'BOLHA', 'PEDRA', 'CALCINADO', 'BALANÇANDO', 'AMASSADO', 'OVAL', 'CORTE', 'QUEBRADA',
-        'VIDRO GRUDADO', 'CORDA', 'FORMA', 'RISCO', 'TORTO', 'RUGA', 'GABARITO', 'SUJEIRA',
-        'EMPENO', 'MARCAS', 'FALHADA', 'DOBRA', 'CHUPADO', 'ARREADO', 'GOSMA', 'BARRO', 'CROMO', 'MACHO'
-    ]
-    
-    # Detecta colunas existentes no DataFrame
-    defeitos_existentes = []
-    for defeito in colunas_defeitos_sopro:
-        for col in df.columns:
-            if col.upper() == defeito.upper():
-                defeitos_existentes.append(col)
-                break
-            if defeito.upper() in col.upper():
-                defeitos_existentes.append(col)
-                break
-    
-    # Remove duplicatas
-    defeitos_existentes = list(dict.fromkeys(defeitos_existentes))
-    
-    if defeitos_existentes:
-        st.info(f"📊 **Defeitos encontrados:** {len(defeitos_existentes)} categorias")
-        
-        df_def = df[defeitos_existentes].apply(pd.to_numeric, errors='coerce').fillna(0)
-        df_def_sum = df_def.sum().sort_values(ascending=False)
-        df_def_sum = df_def_sum[df_def_sum > 0]
-        
-        if not df_def_sum.empty:
-            # Ajusta tamanho do gráfico baseado na quantidade de defeitos
-            fig, ax = plt.subplots(figsize=(14, max(5, len(df_def_sum) * 0.4)), facecolor=THEME['bg_card'])
-            apply_chart_style(ax, fig, "Defeitos — Somatório (SOPRO)", ylabel="Quantidade", accent=THEME['accent_lime'])
-            
-            # Se houver muitos defeitos (mais de 8), usa gráfico horizontal
-            if len(df_def_sum) > 8:
-                bars = ax.barh(range(len(df_def_sum)), df_def_sum.values,
+
+    # Defeitos
+    if mostrar_defeitos:
+        render_section_header("Estratificação de Defeitos", "▸", THEME['accent_lime'])
+        colunas_defeitos = [
+            'BOLHA','PEDRA','CALCINADO','BALANÇANDO','AMASSADO','OVAL','CORTE','QUEBRADA',
+            'VIDRO GRUDADO','CORDA','FORMA','RISCO','TORTO','RUGA','GABARITO','SUJEIRA',
+            'EMPENO','MARCAS','FALHADA','DOBRA','CHUPADO','ARREADO','GOSMA','BARRO','CROMO','MACHO'
+        ]
+        def_exist = []
+        for defeito in colunas_defeitos:
+            for col in df.columns:
+                if col.upper() == defeito.upper():
+                    def_exist.append(col)
+                    break
+        if def_exist:
+            df_def = df[def_exist].apply(pd.to_numeric, errors='coerce').fillna(0)
+            df_def_s = df_def.sum().sort_values(ascending=False)
+            df_def_s = df_def_s[df_def_s > 0]
+            if not df_def_s.empty:
+                fig, ax = plt.subplots(figsize=(12, 4), facecolor=THEME['bg_card'])
+                apply_chart_style(ax, fig, "Defeitos — Somatório", ylabel="Quantidade")
+                bars = ax.bar(range(len(df_def_s)), df_def_s.values,
                               color=THEME['accent_red'], alpha=0.8,
                               edgecolor=THEME['bg_card'], linewidth=1.2)
-                ax.set_yticks(range(len(df_def_sum)))
-                ax.set_yticklabels(df_def_sum.index, fontsize=9, color=THEME['text_muted'])
-                ax.set_xlabel('Quantidade')
-                ax.invert_yaxis()  # Maior no topo
-                
-                for bar, val in zip(bars, df_def_sum.values):
-                    if val > 0:
-                        ax.text(bar.get_width() + 1, bar.get_y() + bar.get_height()/2,
-                                f"{int(val):,}".replace(",","."), ha='left', va='center',
-                                fontsize=8, color=THEME['text_primary'])
-            else:
-                # Gráfico vertical para poucos defeitos
-                bars = ax.bar(range(len(df_def_sum)), df_def_sum.values,
-                              color=THEME['accent_red'], alpha=0.8,
-                              edgecolor=THEME['bg_card'], linewidth=1.2)
-                ax.set_xticks(range(len(df_def_sum)))
-                ax.set_xticklabels(df_def_sum.index, rotation=45, ha='right',
-                                   fontsize=9, color=THEME['text_muted'])
-                ax.set_ylabel('Quantidade')
-                
-                for bar, val in zip(bars, df_def_sum.values):
+                ax.set_xticks(range(len(df_def_s)))
+                ax.set_xticklabels(df_def_s.index, rotation=40, ha='right', fontsize=9, color=THEME['text_muted'])
+                for bar, val in zip(bars, df_def_s.values):
                     if val > 0:
                         ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() * 1.02,
                                 f"{int(val):,}".replace(",","."), ha='center', va='bottom',
                                 fontsize=8, color=THEME['text_primary'])
-            
-            fig.tight_layout(pad=1.5)
-            st.pyplot(fig)
-            plt.close(fig)
-            
-            total_def = int(df_def_sum.sum())
-            st.caption(f"📊 **Total de defeitos no período:** {total_def:,}".replace(",","."))
-            
-            # Tabela detalhada com percentuais
-            with st.expander("🔍 Ver detalhamento completo dos defeitos"):
-                df_tabela = pd.DataFrame({
-                    'Defeito': df_def_sum.index,
-                    'Quantidade': df_def_sum.values.astype(int)
-                })
-                df_tabela = df_tabela.sort_values('Quantidade', ascending=False)
-                if total_def > 0:
-                    df_tabela['%'] = (df_tabela['Quantidade'] / total_def * 100).round(1).astype(str) + '%'
-                st.dataframe(df_tabela, use_container_width=True, height=400)
-        else:
-            st.info("✅ Nenhum defeito registrado no período selecionado")
-    else:
-        st.info("📭 Colunas de defeitos não encontradas na planilha de SOPRO")
-    
+                fig.tight_layout(pad=1.5)
+                st.pyplot(fig)
+                plt.close(fig)
+                st.caption(f"Total de defeitos: {int(df_def_s.sum()):,}".replace(",","."))
+
     st.markdown(f"""
     <div style="text-align:right;padding:16px 0 8px;
         font-family:'JetBrains Mono',monospace;font-size:10px;
@@ -2354,6 +2333,7 @@ elif aba_selecionada == 'SOPRO':
         TRS DASHBOARD · SOPRO · {get_horario_brasilia()}
     </div>
     """, unsafe_allow_html=True)
+
 
 # ==================================================================================================
 # TÊMPERA
@@ -4073,25 +4053,47 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
     os.makedirs(CAMINHO_PDF_RM, exist_ok=True)
     os.makedirs(CAMINHO_PDF_RELATORIO_RM, exist_ok=True)
     
-    # Configurações de e-mail para RM
-    EMAIL_CONFIG_RM = {
-        "usuario": "erp@luvidarte.com.br",
-        "senha": "Qualidade123#",
-        "smtp_server": "email-ssl.com.br",
-        "smtp_port": 465
-    }
-    
-    # Mapeamento de setores para emails
-    EMAILS_SETORES_RM = {
-        "Elétrica": "manutencaoeletrica@luvidarte.com.br",
-        "Mecânica": "manutencao@luvidarte.com.br",
-        "Informática": "alves.marcello@gmail.com",
-        "Ferramentaria": "ferramentaria@luvidarte.com.br",
-        "Manutenção Geral": "manutencaogeral@luvidarte.com.br",
-        "default": "manutencao@luvidarte.com.br"
-    }
-    
-    EMAIL_QUALIDADE_RM = "qualidade@luvidarte.com.br"
+    # ====================== CONFIGURAÇÕES DE E-MAIL - LENDO DO SECRETS ======================
+    try:
+        # Configurações de e-mail para RM
+        EMAIL_CONFIG_RM = {
+            "usuario": st.secrets["smtp_rm"]["usuario"],
+            "senha": st.secrets["smtp_rm"]["senha"],
+            "smtp_server": st.secrets["smtp_rm"]["smtp_server"],
+            "smtp_port": int(st.secrets["smtp_rm"]["smtp_port"])
+        }
+        
+        # Mapeamento de setores para emails
+        EMAILS_SETORES_RM = {
+            "Elétrica": st.secrets["emails_rm"]["eletrica"],
+            "Mecânica": st.secrets["emails_rm"]["mecanica"],
+            "Informática": st.secrets["emails_rm"]["informatica"],
+            "Ferramentaria": st.secrets["emails_rm"]["ferramentaria"],
+            "Manutenção Geral": st.secrets["emails_rm"]["manutencao_geral"],
+            "default": st.secrets["emails_rm"]["default"]
+        }
+        
+        EMAIL_QUALIDADE_RM = st.secrets["emails_rm"]["qualidade"]
+        
+    except Exception as e:
+        # Fallback para valores hardcoded (caso secrets não esteja disponível)
+        st.warning(f"Usando configurações de e-mail hardcoded. Erro ao ler secrets: {e}")
+        EMAIL_CONFIG_RM = {
+            "usuario": "erp@luvidarte.com.br",
+            "senha": "Qualidade123#",
+            "smtp_server": "email-ssl.com.br",
+            "smtp_port": 465
+        }
+        EMAILS_SETORES_RM = {
+            "Elétrica": "manutencaoeletrica@luvidarte.com.br",
+            "Mecânica": "manutencao@luvidarte.com.br",
+            "Informática": "alves.marcello@gmail.com",
+            "Ferramentaria": "ferramentaria@luvidarte.com.br",
+            "Manutenção Geral": "manutencaogeral@luvidarte.com.br",
+            "default": "manutencao@luvidarte.com.br"
+        }
+        EMAIL_QUALIDADE_RM = "qualidade@luvidarte.com.br"
+    # ========================================================================================
     
     @dataclass
     class RegistroRM:
@@ -4134,11 +4136,11 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
                 <p>A seguinte requisição foi <b>EXCLUÍDA</b> do sistema:</p>
                 <table border="1" cellpadding="5">
                 <tr><td><b>ID:</b></td><td>{registro.id}</td>
-                <td><b>Equipamento:</b></td><td colspan="3">{registro.equipamento}</td></tr>
+                <tr><td><b>Equipamento:</b></td><td colspan="3">{registro.equipamento}</td></tr>
                 <tr><td><b>Data:</b></td><td>{data_str}</td>
-                <td><b>Hora:</b></td><td>{registro.hora}</td></tr>
+                <tr><td><b>Hora:</b></td><td>{registro.hora}</td></tr>
                 <tr><td><b>Emissor:</b></td><td>{registro.emissor}</td>
-                <td><b>Setor Destino:</b></td><td>{registro.setor2}</td></tr>
+                <tr><td><b>Setor Destino:</b></td><td>{registro.setor2}</td></tr>
                 </table>
                 <p>Email automático do Sistema de Requisições de Manutenção.</p>
                 </body></html>
@@ -4160,9 +4162,9 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
                 <tr><td colspan="6">{registro.problema or "N/A"}</td></tr>
                 """
                 if registro.trabalho:
-                    corpo += f"<tr><td colspan='6'><b>🔧 TRABALHO REALIZADO:</b></td></tr><tr><td colspan='6'>{registro.trabalho}</td></tr>"
+                    corpo += f"</tr><td colspan='6'><b>🔧 TRABALHO REALIZADO:</b></td></tr><tr><td colspan='6'>{registro.trabalho}</td></tr>"
                 if registro.analise:
-                    corpo += f"<tr><td colspan='6'><b>📊 ANÁLISE DO SERVIÇO:</b></td></tr><tr><td colspan='6'>{registro.analise}</td></tr>"
+                    corpo += f"</tr><td colspan='6'><b>📊 ANÁLISE DO SERVIÇO:</b></td></tr><tr><td colspan='6'>{registro.analise}</td></tr>"
                 if registro.emissor2:
                     corpo += f"<tr><td><b>Emissor Técnico:</b></td><td colspan='5'>{registro.emissor2}</td></tr>"
                 if data_fim_str:
