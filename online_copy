@@ -20,7 +20,31 @@ from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
 import time
 import json
-from datetime import datetime, timedelta, date, time
+from datetime import datetime, timedelta, date, time as dt_time
+from functools import wraps
+
+# ======================
+# DECORATOR DE RETRY PARA ERROS DE QUOTA (429)
+# ======================
+def retry_on_quota(max_retries=3, delay=5):
+    """Decorator para tentar novamente quando ocorrer erro de quota (429)"""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    if "429" in str(e) or "Quota exceeded" in str(e):
+                        if attempt < max_retries - 1:
+                            wait = delay * (attempt + 1)
+                            st.warning(f"Limite de requisições atingido. Tentando novamente em {wait}s...")
+                            time.sleep(wait)
+                            continue
+                    raise
+            return None
+        return wrapper
+    return decorator
 
 # ======================
 # SISTEMA DE NOTIFICAÇÕES - POPUP SIMPLES (APENAS REGISTROS NOVOS DO DIA ATUAL)
@@ -78,7 +102,7 @@ class SistemaNotificacao:
         
         # ===== VERIFICAR NOVOS AVISOS DE REJEIÇÃO (AR) =====
         try:
-            registros_ar = carregar_registros_ar()
+            registros_ar = carregar_registros_ar_sem_cache()  # usa função sem cache para verificação ao vivo
             if registros_ar:
                 for registro in registros_ar:
                     if registro.data and registro.data.date() == hoje:
@@ -97,7 +121,7 @@ class SistemaNotificacao:
         
         # ===== VERIFICAR NOVAS REQUISIÇÕES DE MANUTENÇÃO (RM) =====
         try:
-            registros_rm = carregar_registros_rm()
+            registros_rm = carregar_registros_rm_sem_cache()
             if registros_rm:
                 for registro in registros_rm:
                     if registro.data and registro.data.date() == hoje:
@@ -342,11 +366,21 @@ def gerar_popup_html(notificacao):
     
     return html, popup_id
 
+# Controlar última verificação de popups (para não exceder quota)
+if "ultima_verificacao_popup" not in st.session_state:
+    st.session_state.ultima_verificacao_popup = datetime.now()
+
 def verificar_e_exibir_popups():
-    """Função principal que verifica novos registros e exibe popups"""
+    """Função principal que verifica novos registros e exibe popups, limitada a cada 60 segundos"""
     aba_atual = st.session_state.get("aba_selecionada", "")
     if aba_atual in ["AVISO DE REJEIÇÃO", "REQUISIÇÃO MANUTENÇÃO"]:
         return
+    
+    agora = datetime.now()
+    if (agora - st.session_state.ultima_verificacao_popup).total_seconds() < 60:
+        return  # verifica no máximo a cada 60 segundos
+    
+    st.session_state.ultima_verificacao_popup = agora
     
     novos_ar, novos_rm = sistema_notificacao.verificar_novos_registros()
     
@@ -399,7 +433,7 @@ ABAS = {
     'TÊMPERA': 'TRS_TEMPERA',
     'AVISO DE REJEIÇÃO': 'AR',
     'REQUISIÇÃO MANUTENÇÃO': 'RM',
-    'FECHAMENTO TURNO': 'FT'  # NOVA LINHA
+    'FECHAMENTO TURNO': 'FT'
 }
 
 CAMINHO_PDF_AR = r"\\srv-luvidarte\dados\DOC\Engenharia_Luvidarte\SGQ - LUVIDARTE - ALTERADAS\0-AVISO DE REJEIÇÃO\1-PDF"
@@ -482,7 +516,9 @@ def safe_float_tempera(val):
     except:
         return 0.0
 
+@st.cache_resource
 def get_gspread_client():
+    """Retorna cliente autenticado do gspread (cacheado)"""
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     try:
         if 'gcp_service_account' in st.secrets:
@@ -625,9 +661,10 @@ def converter_tempo_para_minutos(valor):
     return 0
 
 # ======================
-# FUNÇÕES DE CARREGAMENTO DE DADOS
+# FUNÇÕES DE CARREGAMENTO DE DADOS (COM CACHE E RETRY)
 # ======================
-@st.cache_data(ttl=300)
+@retry_on_quota()
+@st.cache_data(ttl=600)
 def carregar_dados_prensados():
     try:
         client = get_gspread_client()
@@ -671,7 +708,8 @@ def carregar_dados_prensados():
         st.error(f"Erro ao carregar dados de Prensados: {e}")
         return pd.DataFrame()
 
-@st.cache_data(ttl=300)
+@retry_on_quota()
+@st.cache_data(ttl=600)
 def carregar_dados_sopro():
     try:
         client = get_gspread_client()
@@ -707,7 +745,8 @@ def carregar_dados_sopro():
     except Exception:
         return pd.DataFrame()
 
-@st.cache_data(ttl=300)
+@retry_on_quota()
+@st.cache_data(ttl=600)
 def carregar_dados_tempera():
     try:
         client = get_gspread_client()
@@ -906,7 +945,9 @@ def obter_proximo_numero_ar():
     except:
         return 1
 
-def carregar_registros_ar(filtros: Dict[str, Any] = None) -> List[RegistroAR]:
+# Função sem cache para ser usada nas notificações (verificação em tempo real, mas limitada a cada 60s)
+@retry_on_quota()
+def carregar_registros_ar_sem_cache() -> List[RegistroAR]:
     registros = []
     try:
         client = get_gspread_client()
@@ -933,23 +974,31 @@ def carregar_registros_ar(filtros: Dict[str, Any] = None) -> List[RegistroAR]:
                 registro.disposicao = row[9] if len(row) > 9 else ""
                 registro.data_finalizacao = converter_data_br(row[10]) if len(row) > 10 else None
                 registro.turno = row[11] if len(row) > 11 else ""
-                
-                if filtros:
-                    incluir = True
-                    if filtros.get('numero') and filtros['numero'] != registro.numero:
-                        incluir = False
-                    if not incluir or (filtros.get('status') and filtros['status'].upper() != registro.status.upper()):
-                        incluir = False
-                    if not incluir or (filtros.get('decisao') and filtros['decisao'].upper() != registro.decisao.upper()):
-                        incluir = False
-                
-                if not filtros or incluir:
-                    registros.append(registro)
+                registros.append(registro)
             except:
                 continue
         registros.sort(key=lambda x: x.data if x.data else datetime.min, reverse=True)
     except:
         pass
+    return registros
+
+# Função com cache para uso geral (visualização, edição, etc.)
+@st.cache_data(ttl=600)
+def carregar_registros_ar(filtros: Dict[str, Any] = None) -> List[RegistroAR]:
+    registros = carregar_registros_ar_sem_cache()
+    if filtros:
+        registros_filtrados = []
+        for r in registros:
+            incluir = True
+            if filtros.get('numero') and filtros['numero'] != r.numero:
+                incluir = False
+            if filtros.get('status') and filtros['status'].upper() != r.status.upper():
+                incluir = False
+            if filtros.get('decisao') and filtros['decisao'].upper() != r.decisao.upper():
+                incluir = False
+            if incluir:
+                registros_filtrados.append(r)
+        return registros_filtrados
     return registros
 
 def salvar_registro_ar(registro: RegistroAR, eh_alteracao: bool = False) -> bool:
@@ -974,6 +1023,8 @@ def salvar_registro_ar(registro: RegistroAR, eh_alteracao: bool = False) -> bool
                 sheet.append_row(dados)
         else:
             sheet.insert_row(dados, index=2)
+        # Limpar cache para forçar recarregamento
+        st.cache_data.clear()
         return True
     except:
         return False
@@ -987,6 +1038,7 @@ def excluir_registro_ar(numero: int) -> bool:
         cell = sheet.find(str(numero), in_column=1)
         if cell:
             sheet.delete_rows(cell.row)
+            st.cache_data.clear()
             return True
         return False
     except:
@@ -1136,7 +1188,9 @@ def obter_proximo_id_rm():
     except:
         return 1
 
-def carregar_registros_rm(filtros: Dict[str, Any] = None) -> List[RegistroRM]:
+# Função sem cache para notificações
+@retry_on_quota()
+def carregar_registros_rm_sem_cache() -> List[RegistroRM]:
     registros = []
     try:
         client = get_gspread_client()
@@ -1166,24 +1220,32 @@ def carregar_registros_rm(filtros: Dict[str, Any] = None) -> List[RegistroRM]:
                 registro.data_finalizacao = converter_data_br(row[12]) if len(row) > 12 else None
                 registro.emissor2 = row[13] if len(row) > 13 else ""
                 
-                if filtros:
-                    incluir = True
-                    if filtros.get('id') and filtros['id'] != registro.id:
-                        incluir = False
-                    if filtros.get('equipamento') and filtros['equipamento'].lower() not in registro.equipamento.lower():
-                        incluir = False
-                    if filtros.get('status') and filtros['status'] != registro.status:
-                        incluir = False
-                else:
-                    incluir = True
-                
-                if incluir and registro.id is not None:
+                if registro.id is not None:
                     registros.append(registro)
             except:
                 continue
         registros.sort(key=lambda x: x.id if x.id else 0, reverse=True)
     except:
         pass
+    return registros
+
+# Função com cache para uso geral
+@st.cache_data(ttl=600)
+def carregar_registros_rm(filtros: Dict[str, Any] = None) -> List[RegistroRM]:
+    registros = carregar_registros_rm_sem_cache()
+    if filtros:
+        registros_filtrados = []
+        for r in registros:
+            incluir = True
+            if filtros.get('id') and filtros['id'] != r.id:
+                incluir = False
+            if filtros.get('equipamento') and filtros['equipamento'].lower() not in r.equipamento.lower():
+                incluir = False
+            if filtros.get('status') and filtros['status'] != r.status:
+                incluir = False
+            if incluir:
+                registros_filtrados.append(r)
+        return registros_filtrados
     return registros
 
 def salvar_registro_rm(registro: RegistroRM, eh_alteracao: bool = False) -> bool:
@@ -1210,6 +1272,7 @@ def salvar_registro_rm(registro: RegistroRM, eh_alteracao: bool = False) -> bool
                 sheet.append_row(dados)
         else:
             sheet.insert_row(dados, index=2)
+        st.cache_data.clear()
         return True
     except:
         return False
@@ -1223,6 +1286,7 @@ def excluir_registro_rm(id: int) -> bool:
         cell = sheet.find(str(id), in_column=1)
         if cell:
             sheet.delete_rows(cell.row)
+            st.cache_data.clear()
             return True
         return False
     except:
@@ -1909,17 +1973,13 @@ if aba_selecionada == 'PRENSADOS':
             st.pyplot(fig)
             plt.close(fig)
 
-        # Defeitos de Prensados - LISTA COMPLETA
+    # Defeitos de Prensados
     if mostrar_defeitos:
         render_section_header("Estratificação de Defeitos - Prensados", "▸")
-        
-        # LISTA COMPLETA DE DEFEITOS
         colunas_defeitos_prensados = [
-            'BOLHA', 'PEDRA', 'TRINCA', 'RUGAS', 'CORTE TESOURA', 'DOBRA', 'SUJEIRA', 'QUEBRA',
-            'ARREADO', 'VIDRO GRUDADO', 'CONTRA-PEÇA', 'FALHAS', 'CHUPADO', 'ÓLEO TESOURA', 'CROMO',
-            'MACHO', 'BARRO', 'EMPENO', 'OUTROS', 'REMANEJAMENTO'
+            'TRINCA', 'RUGAS', 'DOBRA', 'SUJEIRA', 'FALHAS', 'CHUPADO',
+            'CROMO', 'BARRO', 'EMPENO', 'OUTROS', 'REMANEJAMENTO'
         ]
-        
         defeitos_existentes = []
         for defeito in colunas_defeitos_prensados:
             for col in df.columns:
@@ -1930,7 +1990,7 @@ if aba_selecionada == 'PRENSADOS':
         if not defeitos_existentes:
             for col in df.columns:
                 col_upper = col.upper()
-                if col_upper in ['BOLHA', 'PEDRA', 'TRINCA', 'RUGAS', 'CORTE TESOURA', 'DOBRA', 'SUJEIRA', 'QUEBRA', 'ARREADO', 'VIDRO GRUDADO', 'CONTRA-PEÇA', 'FALHAS', 'CHUPADO', 'ÓLEO TESOURA', 'CROMO', 'MACHO', 'BARRO', 'EMPENO', 'OUTROS', 'REMANEJAMENTO']:
+                if col_upper in ['TRINCA', 'RUGAS', 'DOBRA', 'SUJEIRA', 'FALHAS', 'CHUPADO', 'CROMO', 'BARRO', 'EMPENO', 'OUTROS']:
                     defeitos_existentes.append(col)
         
         if defeitos_existentes:
@@ -1938,50 +1998,24 @@ if aba_selecionada == 'PRENSADOS':
             df_def_sum = df_def.sum().sort_values(ascending=False)
             df_def_sum = df_def_sum[df_def_sum > 0]
             if not df_def_sum.empty:
-                fig, ax = plt.subplots(figsize=(14, max(5, len(df_def_sum) * 0.4)), facecolor=THEME['bg_card'])
+                fig, ax = plt.subplots(figsize=(12, 4), facecolor=THEME['bg_card'])
                 apply_chart_style(ax, fig, "Defeitos — Somatório", ylabel="Quantidade")
-                
-                # Gráfico adaptativo: horizontal se muitos defeitos
-                if len(df_def_sum) > 8:
-                    bars = ax.barh(range(len(df_def_sum)), df_def_sum.values,
-                                  color=THEME['accent_red'], alpha=0.8,
-                                  edgecolor=THEME['bg_card'], linewidth=1.2)
-                    ax.set_yticks(range(len(df_def_sum)))
-                    ax.set_yticklabels(df_def_sum.index, fontsize=9, color=THEME['text_muted'])
-                    ax.set_xlabel('Quantidade')
-                    ax.invert_yaxis()
-                    for bar, val in zip(bars, df_def_sum.values):
-                        if val > 0:
-                            ax.text(bar.get_width() + 1, bar.get_y() + bar.get_height()/2,
-                                    f"{int(val):,}".replace(",","."), ha='left', va='center',
-                                    fontsize=8, color=THEME['text_primary'])
-                else:
-                    bars = ax.bar(range(len(df_def_sum)), df_def_sum.values,
-                                  color=THEME['accent_red'], alpha=0.8,
-                                  edgecolor=THEME['bg_card'], linewidth=1.2)
-                    ax.set_xticks(range(len(df_def_sum)))
-                    ax.set_xticklabels(df_def_sum.index, rotation=40, ha='right',
-                                       fontsize=9, color=THEME['text_muted'])
-                    for bar, val in zip(bars, df_def_sum.values):
-                        if val > 0:
-                            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() * 1.02,
-                                    f"{int(val):,}".replace(",","."), ha='center', va='bottom',
-                                    fontsize=8, color=THEME['text_primary'])
-                
+                bars = ax.bar(range(len(df_def_sum)), df_def_sum.values,
+                              color=THEME['accent_red'], alpha=0.8,
+                              edgecolor=THEME['bg_card'], linewidth=1.2)
+                ax.set_xticks(range(len(df_def_sum)))
+                ax.set_xticklabels(df_def_sum.index, rotation=40, ha='right',
+                                   fontsize=9, color=THEME['text_muted'])
+                for bar, val in zip(bars, df_def_sum.values):
+                    if val > 0:
+                        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() * 1.02,
+                                f"{int(val):,}".replace(",","."), ha='center', va='bottom',
+                                fontsize=8, color=THEME['text_primary'])
                 fig.tight_layout(pad=1.5)
                 st.pyplot(fig)
                 plt.close(fig)
                 total_def = df_def_sum.sum()
                 st.caption(f"Total de defeitos: {int(total_def):,}".replace(",","."))
-                
-                # Tabela detalhada
-                with st.expander("🔍 Ver detalhamento completo"):
-                    df_tabela = pd.DataFrame({
-                        'Defeito': df_def_sum.index,
-                        'Quantidade': df_def_sum.values.astype(int)
-                    })
-                    df_tabela['%'] = (df_tabela['Quantidade'] / total_def * 100).round(1).astype(str) + '%'
-                    st.dataframe(df_tabela, use_container_width=True, height=300)
             else:
                 st.info("Nenhum defeito registrado no período selecionado")
         else:
@@ -2255,98 +2289,43 @@ elif aba_selecionada == 'SOPRO':
             fig.tight_layout(pad=1.5)
             st.pyplot(fig)
             plt.close(fig)
-        # ==================================================================
-    # ESTRATIFICAÇÃO DE DEFEITOS - SOPRO
-    # ==================================================================
-    st.markdown("<hr>", unsafe_allow_html=True)
-    render_section_header("Estratificação de Defeitos - SOPRO", "▸", THEME['accent_lime'])
-    
-    # LISTA COMPLETA DE DEFEITOS DO SOPRO
-    colunas_defeitos_sopro = [
-        'BOLHA', 'PEDRA', 'CALCINADO', 'BALANÇANDO', 'AMASSADO', 'OVAL', 'CORTE', 'QUEBRADA',
-        'VIDRO GRUDADO', 'CORDA', 'FORMA', 'RISCO', 'TORTO', 'RUGA', 'GABARITO', 'SUJEIRA',
-        'EMPENO', 'MARCAS', 'FALHADA', 'DOBRA', 'CHUPADO', 'ARREADO', 'GOSMA', 'BARRO', 'CROMO', 'MACHO'
-    ]
-    
-    # Detecta colunas existentes no DataFrame
-    defeitos_existentes = []
-    for defeito in colunas_defeitos_sopro:
-        for col in df.columns:
-            if col.upper() == defeito.upper():
-                defeitos_existentes.append(col)
-                break
-            if defeito.upper() in col.upper():
-                defeitos_existentes.append(col)
-                break
-    
-    # Remove duplicatas
-    defeitos_existentes = list(dict.fromkeys(defeitos_existentes))
-    
-    if defeitos_existentes:
-        st.info(f"📊 **Defeitos encontrados:** {len(defeitos_existentes)} categorias")
-        
-        df_def = df[defeitos_existentes].apply(pd.to_numeric, errors='coerce').fillna(0)
-        df_def_sum = df_def.sum().sort_values(ascending=False)
-        df_def_sum = df_def_sum[df_def_sum > 0]
-        
-        if not df_def_sum.empty:
-            # Ajusta tamanho do gráfico baseado na quantidade de defeitos
-            fig, ax = plt.subplots(figsize=(14, max(5, len(df_def_sum) * 0.4)), facecolor=THEME['bg_card'])
-            apply_chart_style(ax, fig, "Defeitos — Somatório (SOPRO)", ylabel="Quantidade", accent=THEME['accent_lime'])
-            
-            # Se houver muitos defeitos (mais de 8), usa gráfico horizontal
-            if len(df_def_sum) > 8:
-                bars = ax.barh(range(len(df_def_sum)), df_def_sum.values,
+
+    # Defeitos
+    if mostrar_defeitos:
+        render_section_header("Estratificação de Defeitos", "▸", THEME['accent_lime'])
+        colunas_defeitos = [
+            'BOLHA','PEDRA','CALCINADO','BALANÇANDO','AMASSADO','OVAL','CORTE','QUEBRADA',
+            'VIDRO GRUDADO','CORDA','FORMA','RISCO','TORTO','RUGA','GABARITO','SUJEIRA',
+            'EMPENO','MARCAS','FALHADA','DOBRA','CHUPADO','ARREADO','GOSMA','BARRO','CROMO','MACHO'
+        ]
+        def_exist = []
+        for defeito in colunas_defeitos:
+            for col in df.columns:
+                if col.upper() == defeito.upper():
+                    def_exist.append(col)
+                    break
+        if def_exist:
+            df_def = df[def_exist].apply(pd.to_numeric, errors='coerce').fillna(0)
+            df_def_s = df_def.sum().sort_values(ascending=False)
+            df_def_s = df_def_s[df_def_s > 0]
+            if not df_def_s.empty:
+                fig, ax = plt.subplots(figsize=(12, 4), facecolor=THEME['bg_card'])
+                apply_chart_style(ax, fig, "Defeitos — Somatório", ylabel="Quantidade")
+                bars = ax.bar(range(len(df_def_s)), df_def_s.values,
                               color=THEME['accent_red'], alpha=0.8,
                               edgecolor=THEME['bg_card'], linewidth=1.2)
-                ax.set_yticks(range(len(df_def_sum)))
-                ax.set_yticklabels(df_def_sum.index, fontsize=9, color=THEME['text_muted'])
-                ax.set_xlabel('Quantidade')
-                ax.invert_yaxis()  # Maior no topo
-                
-                for bar, val in zip(bars, df_def_sum.values):
-                    if val > 0:
-                        ax.text(bar.get_width() + 1, bar.get_y() + bar.get_height()/2,
-                                f"{int(val):,}".replace(",","."), ha='left', va='center',
-                                fontsize=8, color=THEME['text_primary'])
-            else:
-                # Gráfico vertical para poucos defeitos
-                bars = ax.bar(range(len(df_def_sum)), df_def_sum.values,
-                              color=THEME['accent_red'], alpha=0.8,
-                              edgecolor=THEME['bg_card'], linewidth=1.2)
-                ax.set_xticks(range(len(df_def_sum)))
-                ax.set_xticklabels(df_def_sum.index, rotation=45, ha='right',
-                                   fontsize=9, color=THEME['text_muted'])
-                ax.set_ylabel('Quantidade')
-                
-                for bar, val in zip(bars, df_def_sum.values):
+                ax.set_xticks(range(len(df_def_s)))
+                ax.set_xticklabels(df_def_s.index, rotation=40, ha='right', fontsize=9, color=THEME['text_muted'])
+                for bar, val in zip(bars, df_def_s.values):
                     if val > 0:
                         ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() * 1.02,
                                 f"{int(val):,}".replace(",","."), ha='center', va='bottom',
                                 fontsize=8, color=THEME['text_primary'])
-            
-            fig.tight_layout(pad=1.5)
-            st.pyplot(fig)
-            plt.close(fig)
-            
-            total_def = int(df_def_sum.sum())
-            st.caption(f"📊 **Total de defeitos no período:** {total_def:,}".replace(",","."))
-            
-            # Tabela detalhada com percentuais
-            with st.expander("🔍 Ver detalhamento completo dos defeitos"):
-                df_tabela = pd.DataFrame({
-                    'Defeito': df_def_sum.index,
-                    'Quantidade': df_def_sum.values.astype(int)
-                })
-                df_tabela = df_tabela.sort_values('Quantidade', ascending=False)
-                if total_def > 0:
-                    df_tabela['%'] = (df_tabela['Quantidade'] / total_def * 100).round(1).astype(str) + '%'
-                st.dataframe(df_tabela, use_container_width=True, height=400)
-        else:
-            st.info("✅ Nenhum defeito registrado no período selecionado")
-    else:
-        st.info("📭 Colunas de defeitos não encontradas na planilha de SOPRO")
-    
+                fig.tight_layout(pad=1.5)
+                st.pyplot(fig)
+                plt.close(fig)
+                st.caption(f"Total de defeitos: {int(df_def_s.sum()):,}".replace(",","."))
+
     st.markdown(f"""
     <div style="text-align:right;padding:16px 0 8px;
         font-family:'JetBrains Mono',monospace;font-size:10px;
@@ -2354,6 +2333,7 @@ elif aba_selecionada == 'SOPRO':
         TRS DASHBOARD · SOPRO · {get_horario_brasilia()}
     </div>
     """, unsafe_allow_html=True)
+
 
 # ==================================================================================================
 # TÊMPERA
@@ -4073,25 +4053,47 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
     os.makedirs(CAMINHO_PDF_RM, exist_ok=True)
     os.makedirs(CAMINHO_PDF_RELATORIO_RM, exist_ok=True)
     
-    # Configurações de e-mail para RM
-    EMAIL_CONFIG_RM = {
-        "usuario": "erp@luvidarte.com.br",
-        "senha": "Qualidade123#",
-        "smtp_server": "email-ssl.com.br",
-        "smtp_port": 465
-    }
-    
-    # Mapeamento de setores para emails
-    EMAILS_SETORES_RM = {
-        "Elétrica": "manutencaoeletrica@luvidarte.com.br",
-        "Mecânica": "manutencao@luvidarte.com.br",
-        "Informática": "alves.marcello@gmail.com",
-        "Ferramentaria": "ferramentaria@luvidarte.com.br",
-        "Manutenção Geral": "manutencaogeral@luvidarte.com.br",
-        "default": "manutencao@luvidarte.com.br"
-    }
-    
-    EMAIL_QUALIDADE_RM = "qualidade@luvidarte.com.br"
+    # ====================== CONFIGURAÇÕES DE E-MAIL - LENDO DO SECRETS ======================
+    try:
+        # Configurações de e-mail para RM
+        EMAIL_CONFIG_RM = {
+            "usuario": st.secrets["smtp_rm"]["usuario"],
+            "senha": st.secrets["smtp_rm"]["senha"],
+            "smtp_server": st.secrets["smtp_rm"]["smtp_server"],
+            "smtp_port": int(st.secrets["smtp_rm"]["smtp_port"])
+        }
+        
+        # Mapeamento de setores para emails
+        EMAILS_SETORES_RM = {
+            "Elétrica": st.secrets["emails_rm"]["eletrica"],
+            "Mecânica": st.secrets["emails_rm"]["mecanica"],
+            "Informática": st.secrets["emails_rm"]["informatica"],
+            "Ferramentaria": st.secrets["emails_rm"]["ferramentaria"],
+            "Manutenção Geral": st.secrets["emails_rm"]["manutencao_geral"],
+            "default": st.secrets["emails_rm"]["default"]
+        }
+        
+        EMAIL_QUALIDADE_RM = st.secrets["emails_rm"]["qualidade"]
+        
+    except Exception as e:
+        # Fallback para valores hardcoded (caso secrets não esteja disponível)
+        st.warning(f"Usando configurações de e-mail hardcoded. Erro ao ler secrets: {e}")
+        EMAIL_CONFIG_RM = {
+            "usuario": "erp@luvidarte.com.br",
+            "senha": "Qualidade123#",
+            "smtp_server": "email-ssl.com.br",
+            "smtp_port": 465
+        }
+        EMAILS_SETORES_RM = {
+            "Elétrica": "manutencaoeletrica@luvidarte.com.br",
+            "Mecânica": "manutencao@luvidarte.com.br",
+            "Informática": "alves.marcello@gmail.com",
+            "Ferramentaria": "ferramentaria@luvidarte.com.br",
+            "Manutenção Geral": "manutencaogeral@luvidarte.com.br",
+            "default": "manutencao@luvidarte.com.br"
+        }
+        EMAIL_QUALIDADE_RM = "qualidade@luvidarte.com.br"
+    # ========================================================================================
     
     @dataclass
     class RegistroRM:
@@ -4134,11 +4136,11 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
                 <p>A seguinte requisição foi <b>EXCLUÍDA</b> do sistema:</p>
                 <table border="1" cellpadding="5">
                 <tr><td><b>ID:</b></td><td>{registro.id}</td>
-                <td><b>Equipamento:</b></td><td colspan="3">{registro.equipamento}</td></tr>
+                <tr><td><b>Equipamento:</b></td><td colspan="3">{registro.equipamento}</td></tr>
                 <tr><td><b>Data:</b></td><td>{data_str}</td>
-                <td><b>Hora:</b></td><td>{registro.hora}</td></tr>
+                <tr><td><b>Hora:</b></td><td>{registro.hora}</td></tr>
                 <tr><td><b>Emissor:</b></td><td>{registro.emissor}</td>
-                <td><b>Setor Destino:</b></td><td>{registro.setor2}</td></tr>
+                <tr><td><b>Setor Destino:</b></td><td>{registro.setor2}</td></tr>
                 </table>
                 <p>Email automático do Sistema de Requisições de Manutenção.</p>
                 </body></html>
@@ -4160,9 +4162,9 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
                 <tr><td colspan="6">{registro.problema or "N/A"}</td></tr>
                 """
                 if registro.trabalho:
-                    corpo += f"<tr><td colspan='6'><b>🔧 TRABALHO REALIZADO:</b></td></tr><tr><td colspan='6'>{registro.trabalho}</td></tr>"
+                    corpo += f"</tr><td colspan='6'><b>🔧 TRABALHO REALIZADO:</b></td></tr><tr><td colspan='6'>{registro.trabalho}</td></tr>"
                 if registro.analise:
-                    corpo += f"<tr><td colspan='6'><b>📊 ANÁLISE DO SERVIÇO:</b></td></tr><tr><td colspan='6'>{registro.analise}</td></tr>"
+                    corpo += f"</tr><td colspan='6'><b>📊 ANÁLISE DO SERVIÇO:</b></td></tr><tr><td colspan='6'>{registro.analise}</td></tr>"
                 if registro.emissor2:
                     corpo += f"<tr><td><b>Emissor Técnico:</b></td><td colspan='5'>{registro.emissor2}</td></tr>"
                 if data_fim_str:
@@ -4817,7 +4819,7 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
     """, unsafe_allow_html=True)
     
 # ==================================================================================================
-# FECHAMENTO TURNO - VERSÃO GOOGLE SHEETS (COM TRS BRUTO)
+# FECHAMENTO TURNO - VERSÃO GOOGLE SHEETS (COM TRS BRUTO + ARs/RMs)
 # ==================================================================================================
 elif aba_selecionada == 'FECHAMENTO TURNO':
     render_page_header("FECHAMENTO DE TURNO", f"Controle de Produção · Atualizado {get_horario_brasilia()}", THEME['accent_purple'])
@@ -5016,6 +5018,99 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
         
         return faltas
     
+    @st.cache_data(ttl=300)
+    def carregar_ars_rms_fechamento(data_selecionada: date):
+        """Carrega ARs e RMs das planilhas existentes filtradas por data"""
+        ars = []
+        rms = []
+        
+        try:
+            client = get_gspread_client()
+            if client is None:
+                return ars, rms
+            
+            # ======================
+            # CARREGAR ARs (Aviso de Rejeição)
+            # ======================
+            try:
+                sheet_ar = client.open_by_key(ID_PLANILHA_AR).worksheet(ABA_AR)
+                todos_dados_ar = sheet_ar.get_all_values()
+                
+                if len(todos_dados_ar) >= 2:
+                    # Mapear cabeçalho da AR
+                    cabecalho_ar = [str(c).strip().upper() for c in todos_dados_ar[0]]
+                    
+                    for row in todos_dados_ar[1:]:
+                        if len(row) < 5:
+                            continue
+                        
+                        # A AR tem estrutura: Número, Data, Hora, Código, Emissor, Referência, Decisão, Descrição, Status, Disposição, Data Finalização, Turno
+                        data_ar_str = row[1] if len(row) > 1 else ""
+                        data_ar = converter_data_sheets(data_ar_str)
+                        
+                        if data_ar and data_ar == data_selecionada:
+                            ars.append({
+                                'tipo': 'AR',
+                                'numero': row[0] if len(row) > 0 else "",
+                                'data_abertura': data_ar,
+                                'hora': row[2] if len(row) > 2 else "",
+                                'codigo': row[3] if len(row) > 3 else "",
+                                'emissor': row[4] if len(row) > 4 else "",
+                                'referencia': row[5] if len(row) > 5 else "",
+                                'decisao': row[6] if len(row) > 6 else "",
+                                'descricao': row[7] if len(row) > 7 else "",
+                                'status': row[8] if len(row) > 8 else "ABERTO",
+                                'disposicao': row[9] if len(row) > 9 else "",
+                                'data_fechamento': converter_data_sheets(row[10]) if len(row) > 10 and row[10] else None,
+                                'turno': row[11] if len(row) > 11 else "",
+                                'setor_destino': 'Qualidade',
+                                'responsavel': row[4] if len(row) > 4 else ""  # Emissor como responsável
+                            })
+            except Exception as e:
+                st.warning(f"Aviso: Não foi possível carregar ARs: {e}")
+            
+            # ======================
+            # CARREGAR RMs (Requisição de Manutenção)
+            # ======================
+            try:
+                sheet_rm = client.open_by_key(ID_PLANILHA_AR).worksheet(ABA_RM)
+                todos_dados_rm = sheet_rm.get_all_values()
+                
+                if len(todos_dados_rm) >= 2:
+                    for row in todos_dados_rm[1:]:
+                        if len(row) < 10:
+                            continue
+                        
+                        # A RM tem estrutura: ID, Data, Hora, Emissor, Equipamento, Setor, Caráter, Setor2, Problema, Trabalho, Análise, Status, Data Finalização, Emissor2
+                        data_rm_str = row[1] if len(row) > 1 else ""
+                        data_rm = converter_data_sheets(data_rm_str)
+                        
+                        if data_rm and data_rm == data_selecionada:
+                            rms.append({
+                                'tipo': 'RM',
+                                'numero': row[0] if len(row) > 0 else "",
+                                'data_abertura': data_rm,
+                                'hora': row[2] if len(row) > 2 else "",
+                                'emissor': row[3] if len(row) > 3 else "",
+                                'equipamento': row[4] if len(row) > 4 else "",
+                                'setor': row[5] if len(row) > 5 else "",
+                                'carater': row[6] if len(row) > 6 else "",
+                                'setor_destino': row[7] if len(row) > 7 else "",
+                                'descricao': row[8] if len(row) > 8 else "",
+                                'trabalho': row[9] if len(row) > 9 else "",
+                                'analise': row[10] if len(row) > 10 else "",
+                                'status': row[11] if len(row) > 11 else "ABERTO",
+                                'data_fechamento': converter_data_sheets(row[12]) if len(row) > 12 and row[12] else None,
+                                'responsavel': row[13] if len(row) > 13 else ""  # Emissor2
+                            })
+            except Exception as e:
+                st.warning(f"Aviso: Não foi possível carregar RMs: {e}")
+            
+        except Exception as e:
+            st.error(f"Erro ao carregar ARs/RMs: {e}")
+        
+        return ars, rms
+    
     # ======================
     # INTERFACE DO FECHAMENTO TURNO
     # ======================
@@ -5037,6 +5132,10 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
         producoes = carregar_producoes_fechamento(data_fechamento)
         checklists, checklists_detalhes = carregar_checklists_fechamento(data_fechamento)
         faltas = carregar_faltas_fechamento(data_fechamento)
+        ars, rms = carregar_ars_rms_fechamento(data_fechamento)
+    
+    # Consolidar ARs e RMs
+    todos_documentos = ars + rms
     
     # KPIs do dia
     st.markdown("### 📊 Resumo do Dia")
@@ -5063,8 +5162,8 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
     
     st.markdown("<hr>", unsafe_allow_html=True)
     
-    # Tabs (apenas 3 - removido Programação PCP)
-    tab1, tab2, tab3 = st.tabs(["📋 Produções do Dia", "✅ Checklists Turno", "🟥 Faltas"])
+    # Tabs com a nova aba ARs & RMs
+    tab1, tab2, tab3, tab4 = st.tabs(["📋 Produções do Dia", "✅ Checklists Turno", "🟥 Faltas", "🔧 ARs & RMs"])
     
     with tab1:
         st.subheader("Registros de Produção")
@@ -5152,6 +5251,229 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
                 st.dataframe(df_faltas, use_container_width=True, height=400)
         else:
             st.success(f"✅ Nenhuma falta registrada para esta data.")
+    
+    with tab4:
+        st.subheader("🔧 ARs & RMs - Documentos do Dia")
+        st.caption(f"Documentos abertos em {data_fechamento.strftime('%d/%m/%Y')}")
+        
+        if todos_documentos:
+            # ======================
+            # KPIs de ARs/RMs
+            # ======================
+            total_ars = len(ars)
+            total_rms = len(rms)
+            
+            # Status possíveis: ABERTO, FINALIZADO, NÃO RESPONDIDA (AR) / CANCELADO, EM ANDAMENTO (RM)
+            status_normalizado = []
+            for doc in todos_documentos:
+                status = str(doc.get('status', '')).upper().strip()
+                if status in ['FINALIZADO', 'FINALIZADA']:
+                    status_normalizado.append('FINALIZADO')
+                elif status in ['ABERTO', 'EM ANDAMENTO']:
+                    status_normalizado.append('ABERTO')
+                else:
+                    status_normalizado.append('NÃO RESPONDIDO')
+            
+            abertas = status_normalizado.count('ABERTO')
+            finalizadas = status_normalizado.count('FINALIZADO')
+            nao_respondidas = status_normalizado.count('NÃO RESPONDIDO')
+            
+            col_a1, col_a2, col_a3, col_a4, col_a5 = st.columns(5)
+            
+            with col_a1:
+                st.metric("📋 Total ARs", total_ars)
+            with col_a2:
+                st.metric("🔩 Total RMs", total_rms)
+            with col_a3:
+                st.metric("🟡 Em Aberto", abertas)
+            with col_a4:
+                st.metric("🟢 Finalizados", finalizadas)
+            with col_a5:
+                st.metric("🔴 Não Respondidos", nao_respondidas)
+            
+            st.markdown("---")
+            
+            # ======================
+            # Filtros
+            # ======================
+            col_f1, col_f2 = st.columns(2)
+            
+            with col_f1:
+                tipo_filtro = st.selectbox("📑 Filtrar por Tipo:", ["TODOS", "AR", "RM"], key="filtro_tipo_ft")
+            
+            with col_f2:
+                status_filtro = st.selectbox("📊 Filtrar por Status:", ["TODOS", "ABERTO", "FINALIZADO", "NÃO RESPONDIDO"], key="filtro_status_ft")
+            
+            # Aplicar filtros
+            docs_filtrados = todos_documentos.copy()
+            
+            if tipo_filtro != "TODOS":
+                docs_filtrados = [d for d in docs_filtrados if d.get('tipo') == tipo_filtro]
+            
+            if status_filtro != "TODOS":
+                if status_filtro == "NÃO RESPONDIDO":
+                    docs_filtrados = [d for d in docs_filtrados if str(d.get('status', '')).upper().strip() not in ['FINALIZADO', 'FINALIZADA', 'ABERTO', 'EM ANDAMENTO']]
+                elif status_filtro == "ABERTO":
+                    docs_filtrados = [d for d in docs_filtrados if str(d.get('status', '')).upper().strip() in ['ABERTO', 'EM ANDAMENTO']]
+                else:
+                    docs_filtrados = [d for d in docs_filtrados if str(d.get('status', '')).upper().strip() in ['FINALIZADO', 'FINALIZADA']]
+            
+            st.markdown(f"**Exibindo {len(docs_filtrados)} de {len(todos_documentos)} documentos**")
+            st.markdown("---")
+            
+            # ======================
+            # Exibição dos documentos
+            # ======================
+            if docs_filtrados:
+                for doc in docs_filtrados:
+                    # Definir cores por status
+                    status = str(doc.get('status', '')).upper().strip()
+                    if status in ['FINALIZADO', 'FINALIZADA']:
+                        borda_cor = '#28a745'
+                        bg_status = '#d4edda'
+                        texto_status = '#155724'
+                        icone_status = '✅'
+                    elif status in ['ABERTO', 'EM ANDAMENTO']:
+                        borda_cor = '#ffc107'
+                        bg_status = '#fff3cd'
+                        texto_status = '#856404'
+                        icone_status = '🟡'
+                    else:
+                        borda_cor = '#dc3545'
+                        bg_status = '#f8d7da'
+                        texto_status = '#721c24'
+                        icone_status = '🔴'
+                    
+                    # Ícone do tipo
+                    tipo = doc.get('tipo', '')
+                    icone_tipo = '📋' if tipo == 'AR' else '🔩'
+                    
+                    # Título do expander
+                    if tipo == 'AR':
+                        titulo = f"{icone_tipo} AR Nº {doc.get('numero', '-')} | {icone_status} {status} | Ref: {doc.get('referencia', '-')[:40]}"
+                    else:
+                        titulo = f"{icone_tipo} RM Nº {doc.get('numero', '-')} | {icone_status} {status} | {doc.get('equipamento', '-')[:40]}"
+                    
+                    with st.expander(titulo):
+                        col_info1, col_info2 = st.columns(2)
+                        
+                        with col_info1:
+                            st.markdown(f"**📄 Tipo:** {tipo}")
+                            st.markdown(f"**🔢 Número:** {doc.get('numero', '-')}")
+                            st.markdown(f"**📅 Data Abertura:** {doc.get('data_abertura', '-')}")
+                            st.markdown(f"**⏰ Hora:** {doc.get('hora', '-')}")
+                            
+                            if tipo == 'AR':
+                                st.markdown(f"**📦 Código:** {doc.get('codigo', '-')}")
+                                st.markdown(f"**🏷️ Referência:** {doc.get('referencia', '-')}")
+                                st.markdown(f"**⚖️ Decisão:** {doc.get('decisao', '-')}")
+                            else:
+                                st.markdown(f"**🏭 Equipamento:** {doc.get('equipamento', '-')}")
+                                st.markdown(f"**📍 Setor:** {doc.get('setor', '-')}")
+                                st.markdown(f"**⚠️ Caráter:** {doc.get('carater', '-')}")
+                        
+                        with col_info2:
+                            st.markdown(f"**👤 Emissor:** {doc.get('emissor', '-')}")
+                            st.markdown(f"**🎯 Setor Destino:** {doc.get('setor_destino', '-')}")
+                            st.markdown(f"**👷 Responsável:** {doc.get('responsavel', '-')}")
+                            
+                            data_fim = doc.get('data_fechamento')
+                            st.markdown(f"**📅 Data Fechamento:** {data_fim if data_fim else 'Pendente'}")
+                            
+                            st.markdown(f"""
+                            <div style="background: {bg_status}; padding: 5px 10px; border-radius: 5px; display: inline-block; margin-top: 5px;">
+                                <span style="color: {texto_status}; font-weight: bold;">{icone_status} {status}</span>
+                            </div>
+                            """, unsafe_allow_html=True)
+                        
+                        st.markdown("---")
+                        
+                        if tipo == 'AR':
+                            st.markdown(f"**📝 Descrição do Problema:** {doc.get('descricao', '-')}")
+                            if doc.get('disposicao'):
+                                st.markdown(f"**📋 Disposição:** {doc.get('disposicao', '-')}")
+                        else:
+                            st.markdown(f"**📝 Problema:** {doc.get('descricao', '-')}")
+                            if doc.get('trabalho'):
+                                st.markdown(f"**🔧 Trabalho Realizado:** {doc.get('trabalho', '-')}")
+                            if doc.get('analise'):
+                                st.markdown(f"**📊 Análise:** {doc.get('analise', '-')}")
+            else:
+                st.info("📭 Nenhum documento encontrado com os filtros selecionados.")
+            
+            # ======================
+            # Gráfico resumo
+            # ======================
+            if todos_documentos:
+                st.markdown("---")
+                st.subheader("📊 Distribuição dos Documentos")
+                
+                col_graf1, col_graf2 = st.columns(2)
+                
+                with col_graf1:
+                    # Gráfico de pizza por status
+                    fig, ax = plt.subplots(figsize=(6, 5), facecolor=THEME['bg_card'])
+                    
+                    status_labels = ['Finalizado', 'Aberto', 'Não Respondido']
+                    status_values = [finalizadas, abertas, nao_respondidas]
+                    status_cores = ['#28a745', '#ffc107', '#dc3545']
+                    
+                    # Remover zeros
+                    labels_filtrados = []
+                    valores_filtrados = []
+                    cores_filtradas = []
+                    for l, v, c in zip(status_labels, status_values, status_cores):
+                        if v > 0:
+                            labels_filtrados.append(l)
+                            valores_filtrados.append(v)
+                            cores_filtradas.append(c)
+                    
+                    if valores_filtrados:
+                        wedges, texts, autotexts = ax.pie(
+                            valores_filtrados, 
+                            labels=labels_filtrados, 
+                            colors=cores_filtradas,
+                            autopct='%1.1f%%',
+                            startangle=90,
+                            textprops={'fontsize': 10}
+                        )
+                        
+                        for autotext in autotexts:
+                            autotext.set_color('white')
+                            autotext.set_fontweight('bold')
+                        
+                        ax.set_title('Status dos Documentos', fontweight='bold')
+                    
+                    st.pyplot(fig)
+                    plt.close(fig)
+                
+                with col_graf2:
+                    # Gráfico de barras por tipo
+                    fig, ax = plt.subplots(figsize=(6, 5), facecolor=THEME['bg_card'])
+                    
+                    tipos = ['AR', 'RM']
+                    valores_tipo = [total_ars, total_rms]
+                    cores_tipo = [THEME['accent_cyan'], THEME['accent_orange']]
+                    
+                    bars = ax.bar(tipos, valores_tipo, color=cores_tipo, alpha=0.8)
+                    
+                    ax.set_title('Documentos por Tipo', fontweight='bold')
+                    ax.set_ylabel('Quantidade')
+                    
+                    for bar, valor in zip(bars, valores_tipo):
+                        if valor > 0:
+                            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.1, 
+                                    str(valor), ha='center', va='bottom', fontweight='bold')
+                    
+                    ax.spines['top'].set_visible(False)
+                    ax.spines['right'].set_visible(False)
+                    
+                    fig.tight_layout()
+                    st.pyplot(fig)
+                    plt.close(fig)
+        else:
+            st.info("📭 Nenhuma AR ou RM encontrada para esta data.")
+            st.caption(f"Verificando abas '{ABA_AR}' e '{ABA_RM}' na planilha de AR/RM")
     
     # ======================
     # GRÁFICOS E ANÁLISES
@@ -5242,13 +5564,15 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
         
         with col_r3:
             itens_baixa = sum(1 for p in producoes if (p.get('produzido', 0) or 0) / max(p.get('meta', 1), 1) * 100 < 80)
+            ars_abertas = sum(1 for d in todos_documentos if str(d.get('status', '')).upper().strip() in ['ABERTO', 'EM ANDAMENTO'])
             
             st.markdown(f"""
             <div style="background: {THEME['bg_card']}; padding: 15px; border-radius: 10px; border-left: 4px solid {THEME['accent_lime']};">
                 <b>📊 INDICADORES</b><br>
                 • Itens com baixa prod.: <b>{itens_baixa}</b><br>
                 • Checklists realizados: <b>{sum(1 for v in checklists.values() if v)}/3</b><br>
-                • Total registro faltas: <b>{len(faltas)}</b>
+                • Total registro faltas: <b>{len(faltas)}</b><br>
+                • ARs/RMs do dia: <b>{len(todos_documentos)}</b> ({ars_abertas} abertos)
             </div>
             """, unsafe_allow_html=True)
     
