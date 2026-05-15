@@ -4819,7 +4819,7 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
     """, unsafe_allow_html=True)
     
 # ==================================================================================================
-# FECHAMENTO TURNO - VERSÃO GOOGLE SHEETS (COM TRS BRUTO)
+# FECHAMENTO TURNO - VERSÃO GOOGLE SHEETS (COM TRS BRUTO + ARs/RMs)
 # ==================================================================================================
 elif aba_selecionada == 'FECHAMENTO TURNO':
     render_page_header("FECHAMENTO DE TURNO", f"Controle de Produção · Atualizado {get_horario_brasilia()}", THEME['accent_purple'])
@@ -5018,6 +5018,99 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
         
         return faltas
     
+    @st.cache_data(ttl=300)
+    def carregar_ars_rms_fechamento(data_selecionada: date):
+        """Carrega ARs e RMs das planilhas existentes filtradas por data"""
+        ars = []
+        rms = []
+        
+        try:
+            client = get_gspread_client()
+            if client is None:
+                return ars, rms
+            
+            # ======================
+            # CARREGAR ARs (Aviso de Rejeição)
+            # ======================
+            try:
+                sheet_ar = client.open_by_key(ID_PLANILHA_AR).worksheet(ABA_AR)
+                todos_dados_ar = sheet_ar.get_all_values()
+                
+                if len(todos_dados_ar) >= 2:
+                    # Mapear cabeçalho da AR
+                    cabecalho_ar = [str(c).strip().upper() for c in todos_dados_ar[0]]
+                    
+                    for row in todos_dados_ar[1:]:
+                        if len(row) < 5:
+                            continue
+                        
+                        # A AR tem estrutura: Número, Data, Hora, Código, Emissor, Referência, Decisão, Descrição, Status, Disposição, Data Finalização, Turno
+                        data_ar_str = row[1] if len(row) > 1 else ""
+                        data_ar = converter_data_sheets(data_ar_str)
+                        
+                        if data_ar and data_ar == data_selecionada:
+                            ars.append({
+                                'tipo': 'AR',
+                                'numero': row[0] if len(row) > 0 else "",
+                                'data_abertura': data_ar,
+                                'hora': row[2] if len(row) > 2 else "",
+                                'codigo': row[3] if len(row) > 3 else "",
+                                'emissor': row[4] if len(row) > 4 else "",
+                                'referencia': row[5] if len(row) > 5 else "",
+                                'decisao': row[6] if len(row) > 6 else "",
+                                'descricao': row[7] if len(row) > 7 else "",
+                                'status': row[8] if len(row) > 8 else "ABERTO",
+                                'disposicao': row[9] if len(row) > 9 else "",
+                                'data_fechamento': converter_data_sheets(row[10]) if len(row) > 10 and row[10] else None,
+                                'turno': row[11] if len(row) > 11 else "",
+                                'setor_destino': 'Qualidade',
+                                'responsavel': row[4] if len(row) > 4 else ""  # Emissor como responsável
+                            })
+            except Exception as e:
+                st.warning(f"Aviso: Não foi possível carregar ARs: {e}")
+            
+            # ======================
+            # CARREGAR RMs (Requisição de Manutenção)
+            # ======================
+            try:
+                sheet_rm = client.open_by_key(ID_PLANILHA_AR).worksheet(ABA_RM)
+                todos_dados_rm = sheet_rm.get_all_values()
+                
+                if len(todos_dados_rm) >= 2:
+                    for row in todos_dados_rm[1:]:
+                        if len(row) < 10:
+                            continue
+                        
+                        # A RM tem estrutura: ID, Data, Hora, Emissor, Equipamento, Setor, Caráter, Setor2, Problema, Trabalho, Análise, Status, Data Finalização, Emissor2
+                        data_rm_str = row[1] if len(row) > 1 else ""
+                        data_rm = converter_data_sheets(data_rm_str)
+                        
+                        if data_rm and data_rm == data_selecionada:
+                            rms.append({
+                                'tipo': 'RM',
+                                'numero': row[0] if len(row) > 0 else "",
+                                'data_abertura': data_rm,
+                                'hora': row[2] if len(row) > 2 else "",
+                                'emissor': row[3] if len(row) > 3 else "",
+                                'equipamento': row[4] if len(row) > 4 else "",
+                                'setor': row[5] if len(row) > 5 else "",
+                                'carater': row[6] if len(row) > 6 else "",
+                                'setor_destino': row[7] if len(row) > 7 else "",
+                                'descricao': row[8] if len(row) > 8 else "",
+                                'trabalho': row[9] if len(row) > 9 else "",
+                                'analise': row[10] if len(row) > 10 else "",
+                                'status': row[11] if len(row) > 11 else "ABERTO",
+                                'data_fechamento': converter_data_sheets(row[12]) if len(row) > 12 and row[12] else None,
+                                'responsavel': row[13] if len(row) > 13 else ""  # Emissor2
+                            })
+            except Exception as e:
+                st.warning(f"Aviso: Não foi possível carregar RMs: {e}")
+            
+        except Exception as e:
+            st.error(f"Erro ao carregar ARs/RMs: {e}")
+        
+        return ars, rms
+    
     # ======================
     # INTERFACE DO FECHAMENTO TURNO
     # ======================
@@ -5039,6 +5132,10 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
         producoes = carregar_producoes_fechamento(data_fechamento)
         checklists, checklists_detalhes = carregar_checklists_fechamento(data_fechamento)
         faltas = carregar_faltas_fechamento(data_fechamento)
+        ars, rms = carregar_ars_rms_fechamento(data_fechamento)
+    
+    # Consolidar ARs e RMs
+    todos_documentos = ars + rms
     
     # KPIs do dia
     st.markdown("### 📊 Resumo do Dia")
@@ -5065,8 +5162,8 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
     
     st.markdown("<hr>", unsafe_allow_html=True)
     
-    # Tabs (apenas 3 - removido Programação PCP)
-    tab1, tab2, tab3 = st.tabs(["📋 Produções do Dia", "✅ Checklists Turno", "🟥 Faltas"])
+    # Tabs com a nova aba ARs & RMs
+    tab1, tab2, tab3, tab4 = st.tabs(["📋 Produções do Dia", "✅ Checklists Turno", "🟥 Faltas", "🔧 ARs & RMs"])
     
     with tab1:
         st.subheader("Registros de Produção")
@@ -5154,6 +5251,229 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
                 st.dataframe(df_faltas, use_container_width=True, height=400)
         else:
             st.success(f"✅ Nenhuma falta registrada para esta data.")
+    
+    with tab4:
+        st.subheader("🔧 ARs & RMs - Documentos do Dia")
+        st.caption(f"Documentos abertos em {data_fechamento.strftime('%d/%m/%Y')}")
+        
+        if todos_documentos:
+            # ======================
+            # KPIs de ARs/RMs
+            # ======================
+            total_ars = len(ars)
+            total_rms = len(rms)
+            
+            # Status possíveis: ABERTO, FINALIZADO, NÃO RESPONDIDA (AR) / CANCELADO, EM ANDAMENTO (RM)
+            status_normalizado = []
+            for doc in todos_documentos:
+                status = str(doc.get('status', '')).upper().strip()
+                if status in ['FINALIZADO', 'FINALIZADA']:
+                    status_normalizado.append('FINALIZADO')
+                elif status in ['ABERTO', 'EM ANDAMENTO']:
+                    status_normalizado.append('ABERTO')
+                else:
+                    status_normalizado.append('NÃO RESPONDIDO')
+            
+            abertas = status_normalizado.count('ABERTO')
+            finalizadas = status_normalizado.count('FINALIZADO')
+            nao_respondidas = status_normalizado.count('NÃO RESPONDIDO')
+            
+            col_a1, col_a2, col_a3, col_a4, col_a5 = st.columns(5)
+            
+            with col_a1:
+                st.metric("📋 Total ARs", total_ars)
+            with col_a2:
+                st.metric("🔩 Total RMs", total_rms)
+            with col_a3:
+                st.metric("🟡 Em Aberto", abertas)
+            with col_a4:
+                st.metric("🟢 Finalizados", finalizadas)
+            with col_a5:
+                st.metric("🔴 Não Respondidos", nao_respondidas)
+            
+            st.markdown("---")
+            
+            # ======================
+            # Filtros
+            # ======================
+            col_f1, col_f2 = st.columns(2)
+            
+            with col_f1:
+                tipo_filtro = st.selectbox("📑 Filtrar por Tipo:", ["TODOS", "AR", "RM"], key="filtro_tipo_ft")
+            
+            with col_f2:
+                status_filtro = st.selectbox("📊 Filtrar por Status:", ["TODOS", "ABERTO", "FINALIZADO", "NÃO RESPONDIDO"], key="filtro_status_ft")
+            
+            # Aplicar filtros
+            docs_filtrados = todos_documentos.copy()
+            
+            if tipo_filtro != "TODOS":
+                docs_filtrados = [d for d in docs_filtrados if d.get('tipo') == tipo_filtro]
+            
+            if status_filtro != "TODOS":
+                if status_filtro == "NÃO RESPONDIDO":
+                    docs_filtrados = [d for d in docs_filtrados if str(d.get('status', '')).upper().strip() not in ['FINALIZADO', 'FINALIZADA', 'ABERTO', 'EM ANDAMENTO']]
+                elif status_filtro == "ABERTO":
+                    docs_filtrados = [d for d in docs_filtrados if str(d.get('status', '')).upper().strip() in ['ABERTO', 'EM ANDAMENTO']]
+                else:
+                    docs_filtrados = [d for d in docs_filtrados if str(d.get('status', '')).upper().strip() in ['FINALIZADO', 'FINALIZADA']]
+            
+            st.markdown(f"**Exibindo {len(docs_filtrados)} de {len(todos_documentos)} documentos**")
+            st.markdown("---")
+            
+            # ======================
+            # Exibição dos documentos
+            # ======================
+            if docs_filtrados:
+                for doc in docs_filtrados:
+                    # Definir cores por status
+                    status = str(doc.get('status', '')).upper().strip()
+                    if status in ['FINALIZADO', 'FINALIZADA']:
+                        borda_cor = '#28a745'
+                        bg_status = '#d4edda'
+                        texto_status = '#155724'
+                        icone_status = '✅'
+                    elif status in ['ABERTO', 'EM ANDAMENTO']:
+                        borda_cor = '#ffc107'
+                        bg_status = '#fff3cd'
+                        texto_status = '#856404'
+                        icone_status = '🟡'
+                    else:
+                        borda_cor = '#dc3545'
+                        bg_status = '#f8d7da'
+                        texto_status = '#721c24'
+                        icone_status = '🔴'
+                    
+                    # Ícone do tipo
+                    tipo = doc.get('tipo', '')
+                    icone_tipo = '📋' if tipo == 'AR' else '🔩'
+                    
+                    # Título do expander
+                    if tipo == 'AR':
+                        titulo = f"{icone_tipo} AR Nº {doc.get('numero', '-')} | {icone_status} {status} | Ref: {doc.get('referencia', '-')[:40]}"
+                    else:
+                        titulo = f"{icone_tipo} RM Nº {doc.get('numero', '-')} | {icone_status} {status} | {doc.get('equipamento', '-')[:40]}"
+                    
+                    with st.expander(titulo):
+                        col_info1, col_info2 = st.columns(2)
+                        
+                        with col_info1:
+                            st.markdown(f"**📄 Tipo:** {tipo}")
+                            st.markdown(f"**🔢 Número:** {doc.get('numero', '-')}")
+                            st.markdown(f"**📅 Data Abertura:** {doc.get('data_abertura', '-')}")
+                            st.markdown(f"**⏰ Hora:** {doc.get('hora', '-')}")
+                            
+                            if tipo == 'AR':
+                                st.markdown(f"**📦 Código:** {doc.get('codigo', '-')}")
+                                st.markdown(f"**🏷️ Referência:** {doc.get('referencia', '-')}")
+                                st.markdown(f"**⚖️ Decisão:** {doc.get('decisao', '-')}")
+                            else:
+                                st.markdown(f"**🏭 Equipamento:** {doc.get('equipamento', '-')}")
+                                st.markdown(f"**📍 Setor:** {doc.get('setor', '-')}")
+                                st.markdown(f"**⚠️ Caráter:** {doc.get('carater', '-')}")
+                        
+                        with col_info2:
+                            st.markdown(f"**👤 Emissor:** {doc.get('emissor', '-')}")
+                            st.markdown(f"**🎯 Setor Destino:** {doc.get('setor_destino', '-')}")
+                            st.markdown(f"**👷 Responsável:** {doc.get('responsavel', '-')}")
+                            
+                            data_fim = doc.get('data_fechamento')
+                            st.markdown(f"**📅 Data Fechamento:** {data_fim if data_fim else 'Pendente'}")
+                            
+                            st.markdown(f"""
+                            <div style="background: {bg_status}; padding: 5px 10px; border-radius: 5px; display: inline-block; margin-top: 5px;">
+                                <span style="color: {texto_status}; font-weight: bold;">{icone_status} {status}</span>
+                            </div>
+                            """, unsafe_allow_html=True)
+                        
+                        st.markdown("---")
+                        
+                        if tipo == 'AR':
+                            st.markdown(f"**📝 Descrição do Problema:** {doc.get('descricao', '-')}")
+                            if doc.get('disposicao'):
+                                st.markdown(f"**📋 Disposição:** {doc.get('disposicao', '-')}")
+                        else:
+                            st.markdown(f"**📝 Problema:** {doc.get('descricao', '-')}")
+                            if doc.get('trabalho'):
+                                st.markdown(f"**🔧 Trabalho Realizado:** {doc.get('trabalho', '-')}")
+                            if doc.get('analise'):
+                                st.markdown(f"**📊 Análise:** {doc.get('analise', '-')}")
+            else:
+                st.info("📭 Nenhum documento encontrado com os filtros selecionados.")
+            
+            # ======================
+            # Gráfico resumo
+            # ======================
+            if todos_documentos:
+                st.markdown("---")
+                st.subheader("📊 Distribuição dos Documentos")
+                
+                col_graf1, col_graf2 = st.columns(2)
+                
+                with col_graf1:
+                    # Gráfico de pizza por status
+                    fig, ax = plt.subplots(figsize=(6, 5), facecolor=THEME['bg_card'])
+                    
+                    status_labels = ['Finalizado', 'Aberto', 'Não Respondido']
+                    status_values = [finalizadas, abertas, nao_respondidas]
+                    status_cores = ['#28a745', '#ffc107', '#dc3545']
+                    
+                    # Remover zeros
+                    labels_filtrados = []
+                    valores_filtrados = []
+                    cores_filtradas = []
+                    for l, v, c in zip(status_labels, status_values, status_cores):
+                        if v > 0:
+                            labels_filtrados.append(l)
+                            valores_filtrados.append(v)
+                            cores_filtradas.append(c)
+                    
+                    if valores_filtrados:
+                        wedges, texts, autotexts = ax.pie(
+                            valores_filtrados, 
+                            labels=labels_filtrados, 
+                            colors=cores_filtradas,
+                            autopct='%1.1f%%',
+                            startangle=90,
+                            textprops={'fontsize': 10}
+                        )
+                        
+                        for autotext in autotexts:
+                            autotext.set_color('white')
+                            autotext.set_fontweight('bold')
+                        
+                        ax.set_title('Status dos Documentos', fontweight='bold')
+                    
+                    st.pyplot(fig)
+                    plt.close(fig)
+                
+                with col_graf2:
+                    # Gráfico de barras por tipo
+                    fig, ax = plt.subplots(figsize=(6, 5), facecolor=THEME['bg_card'])
+                    
+                    tipos = ['AR', 'RM']
+                    valores_tipo = [total_ars, total_rms]
+                    cores_tipo = [THEME['accent_cyan'], THEME['accent_orange']]
+                    
+                    bars = ax.bar(tipos, valores_tipo, color=cores_tipo, alpha=0.8)
+                    
+                    ax.set_title('Documentos por Tipo', fontweight='bold')
+                    ax.set_ylabel('Quantidade')
+                    
+                    for bar, valor in zip(bars, valores_tipo):
+                        if valor > 0:
+                            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.1, 
+                                    str(valor), ha='center', va='bottom', fontweight='bold')
+                    
+                    ax.spines['top'].set_visible(False)
+                    ax.spines['right'].set_visible(False)
+                    
+                    fig.tight_layout()
+                    st.pyplot(fig)
+                    plt.close(fig)
+        else:
+            st.info("📭 Nenhuma AR ou RM encontrada para esta data.")
+            st.caption(f"Verificando abas '{ABA_AR}' e '{ABA_RM}' na planilha de AR/RM")
     
     # ======================
     # GRÁFICOS E ANÁLISES
@@ -5244,13 +5564,15 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
         
         with col_r3:
             itens_baixa = sum(1 for p in producoes if (p.get('produzido', 0) or 0) / max(p.get('meta', 1), 1) * 100 < 80)
+            ars_abertas = sum(1 for d in todos_documentos if str(d.get('status', '')).upper().strip() in ['ABERTO', 'EM ANDAMENTO'])
             
             st.markdown(f"""
             <div style="background: {THEME['bg_card']}; padding: 15px; border-radius: 10px; border-left: 4px solid {THEME['accent_lime']};">
                 <b>📊 INDICADORES</b><br>
                 • Itens com baixa prod.: <b>{itens_baixa}</b><br>
                 • Checklists realizados: <b>{sum(1 for v in checklists.values() if v)}/3</b><br>
-                • Total registro faltas: <b>{len(faltas)}</b>
+                • Total registro faltas: <b>{len(faltas)}</b><br>
+                • ARs/RMs do dia: <b>{len(todos_documentos)}</b> ({ars_abertas} abertos)
             </div>
             """, unsafe_allow_html=True)
     
