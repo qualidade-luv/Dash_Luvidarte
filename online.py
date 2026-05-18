@@ -2205,16 +2205,13 @@ if aba_selecionada == 'PRENSADOS':
             st.pyplot(fig)
             plt.close(fig)
 
-    # Defeitos de Prensados - CORRIGIDO com cabeçalhos reais
+    # Defeitos de Prensados
     if mostrar_defeitos:
         render_section_header("Estratificação de Defeitos - Prensados", "▸")
         colunas_defeitos_prensados = [
-            'BOLHA', 'PEDRA', 'TRINCA', 'RUGAS', 'CORTE TESOURA', 
-            'DOBRA', 'SUJEIRA', 'QUEBRA', 'ARREADO', 'VIDRO GRUDADO',
-            'CONTRA-PEÇA', 'FALHAS', 'CHUPADO', 'ÓLEO TESOURA', 
-            'CROMO', 'MACHO', 'BARRO', 'EMPENO', 'OUTROS'
+            'TRINCA', 'RUGAS', 'DOBRA', 'SUJEIRA', 'FALHAS', 'CHUPADO',
+            'CROMO', 'BARRO', 'EMPENO', 'OUTROS', 'REMANEJAMENTO'
         ]
-        
         defeitos_existentes = []
         for defeito in colunas_defeitos_prensados:
             for col in df.columns:
@@ -2222,104 +2219,39 @@ if aba_selecionada == 'PRENSADOS':
                     defeitos_existentes.append(col)
                     break
         
-        # Fallback para busca case-insensitive sem exigir correspondência exata
         if not defeitos_existentes:
             for col in df.columns:
                 col_upper = col.upper()
-                for defeito in colunas_defeitos_prensados:
-                    if defeito.upper() == col_upper:
-                        defeitos_existentes.append(col)
-                        break
+                if col_upper in ['TRINCA', 'RUGAS', 'DOBRA', 'SUJEIRA', 'FALHAS', 'CHUPADO', 'CROMO', 'BARRO', 'EMPENO', 'OUTROS']:
+                    defeitos_existentes.append(col)
         
         if defeitos_existentes:
-            # Remove duplicatas mantendo ordem
-            defeitos_existentes = list(dict.fromkeys(defeitos_existentes))
-            
             df_def = df[defeitos_existentes].apply(pd.to_numeric, errors='coerce').fillna(0)
             df_def_sum = df_def.sum().sort_values(ascending=False)
             df_def_sum = df_def_sum[df_def_sum > 0]
-            
             if not df_def_sum.empty:
-                # Ajusta altura do gráfico baseado na quantidade de defeitos
-                altura_grafico = max(4, len(df_def_sum) * 0.35)
-                
-                fig, ax = plt.subplots(figsize=(12, altura_grafico), facecolor=THEME['bg_card'])
+                fig, ax = plt.subplots(figsize=(12, 4), facecolor=THEME['bg_card'])
                 apply_chart_style(ax, fig, "Defeitos — Somatório", ylabel="Quantidade")
-                
-                # Gráfico de barras horizontal (melhor para muitos defeitos)
-                bars = ax.barh(range(len(df_def_sum)), df_def_sum.values,
+                bars = ax.bar(range(len(df_def_sum)), df_def_sum.values,
                               color=THEME['accent_red'], alpha=0.8,
                               edgecolor=THEME['bg_card'], linewidth=1.2)
-                
-                ax.set_yticks(range(len(df_def_sum)))
-                ax.set_yticklabels(df_def_sum.index, fontsize=9, color=THEME['text_muted'])
-                ax.invert_yaxis()  # Maior quantidade no topo
-                
-                # Adicionar valores nas barras
-                max_valor = df_def_sum.max() if len(df_def_sum) > 0 else 1
+                ax.set_xticks(range(len(df_def_sum)))
+                ax.set_xticklabels(df_def_sum.index, rotation=40, ha='right',
+                                   fontsize=9, color=THEME['text_muted'])
                 for bar, val in zip(bars, df_def_sum.values):
                     if val > 0:
-                        ax.text(bar.get_width() + (max_valor * 0.01), 
-                               bar.get_y() + bar.get_height()/2,
-                               f"{int(val):,}".replace(",","."), 
-                               va='center', fontsize=9, color=THEME['text_primary'])
-                
-                ax.set_xlabel("Quantidade", fontsize=10, color=THEME['text_muted'])
+                        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() * 1.02,
+                                f"{int(val):,}".replace(",","."), ha='center', va='bottom',
+                                fontsize=8, color=THEME['text_primary'])
                 fig.tight_layout(pad=1.5)
                 st.pyplot(fig)
                 plt.close(fig)
-                
                 total_def = df_def_sum.sum()
-                st.caption(f"**Total de defeitos:** {int(total_def):,}".replace(",","."))
-                
-                # Tabela detalhada com percentuais
-                with st.expander("📊 Ver tabela detalhada de defeitos"):
-                    tabela_defeitos = pd.DataFrame({
-                        'Defeito': df_def_sum.index,
-                        'Quantidade': df_def_sum.values.astype(int),
-                        '% do Total': (df_def_sum.values / total_def * 100).round(1)
-                    })
-                    tabela_defeitos['% do Total'] = tabela_defeitos['% do Total'].astype(str) + '%'
-                    st.dataframe(tabela_defeitos, use_container_width=True, hide_index=True)
-                    
-                    # Gráfico de pizza dos principais defeitos (top 5)
-                    if len(df_def_sum) > 1:
-                        st.markdown("**📈 Top 5 Defeitos**")
-                        top5 = df_def_sum.head(5)
-                        outros_total = df_def_sum.iloc[5:].sum() if len(df_def_sum) > 5 else 0
-                        
-                        dados_pizza = []
-                        labels_pizza = []
-                        for idx, (defeito, qtd) in enumerate(top5.items()):
-                            dados_pizza.append(qtd)
-                            labels_pizza.append(f"{defeito}\n({qtd:.0f})")
-                        if outros_total > 0:
-                            dados_pizza.append(outros_total)
-                            labels_pizza.append(f"Outros\n({outros_total:.0f})")
-                        
-                        fig2, ax2 = plt.subplots(figsize=(6, 6), facecolor=THEME['bg_card'])
-                        cores_pizza = ['#E81123', '#FF8C00', '#FFB900', '#107C10', '#0078D4', '#6B46C1']
-                        wedges, texts, autotexts = ax2.pie(
-                            dados_pizza, 
-                            labels=labels_pizza,
-                            colors=cores_pizza[:len(dados_pizza)],
-                            autopct='%1.0f%%',
-                            startangle=90,
-                            textprops={'fontsize': 9}
-                        )
-                        for autotext in autotexts:
-                            autotext.set_color('white')
-                            autotext.set_fontweight('bold')
-                            autotext.set_fontsize(10)
-                        ax2.set_title('Distribuição dos Defeitos (Top 5)', fontweight='bold', fontsize=12)
-                        fig2.tight_layout()
-                        st.pyplot(fig2)
-                        plt.close(fig2)
+                st.caption(f"Total de defeitos: {int(total_def):,}".replace(",","."))
             else:
-                st.info("📭 Nenhum defeito registrado no período selecionado")
+                st.info("Nenhum defeito registrado no período selecionado")
         else:
-            st.warning("⚠️ Colunas de defeitos não encontradas na planilha de Prensados")
-            st.caption(f"Colunas disponíveis na planilha: {', '.join(list(df.columns)[:15])}...")
+            st.info("Colunas de defeitos não encontradas na planilha de Prensados")
 
     st.markdown(f"""
     <div style="text-align:right;padding:16px 0 8px;
