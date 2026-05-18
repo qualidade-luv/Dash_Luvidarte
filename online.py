@@ -102,7 +102,7 @@ class SistemaNotificacao:
         
         # ===== VERIFICAR NOVOS AVISOS DE REJEIÇÃO (AR) =====
         try:
-            registros_ar = carregar_registros_ar_sem_cache()  # usa função sem cache para verificação ao vivo
+            registros_ar = carregar_registros_ar_sem_cache()
             if registros_ar:
                 for registro in registros_ar:
                     if registro.data and registro.data.date() == hoje:
@@ -415,6 +415,98 @@ def renderizar_popups_pendentes():
         st.session_state.popups_para_exibir = []
 
 # ======================
+# CSS PARA A FAIXA DE ROLAGEM (MARQUEE)
+# ======================
+MARQUEE_CSS = """
+<style>
+/* Container da faixa de rolagem fixa no rodapé */
+.marquee-container {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: linear-gradient(90deg, #1a1a2e 0%, #16213e 50%, #1a1a2e 100%);
+    color: #ffd700;
+    padding: 10px 0;
+    z-index: 9998;
+    border-top: 2px solid #ffd700;
+    box-shadow: 0 -2px 10px rgba(0,0,0,0.3);
+    font-family: 'JetBrains Mono', monospace;
+    overflow: hidden;
+    white-space: nowrap;
+    backdrop-filter: blur(5px);
+}
+
+/* Efeito de rolagem - mais lento (45s) e começa já visível */
+.marquee-content {
+    display: inline-block;
+    animation: scrollMarquee 45s linear infinite;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 1px;
+}
+
+.marquee-content span {
+    display: inline-block;
+    margin-right: 100px;
+}
+
+/* Animação de rolagem - COMEÇA COM O TEXTO JÁ VISÍVEL */
+@keyframes scrollMarquee {
+    0% {
+        transform: translateX(30%);  /* Começa com 30% visível (aparece imediatamente) */
+    }
+    100% {
+        transform: translateX(-100%);  /* Sai completamente pela esquerda */
+    }
+}
+
+/* Pausar animação ao passar o mouse */
+.marquee-container:hover .marquee-content {
+    animation-play-state: paused;
+}
+
+/* Ícone decorativo */
+.marquee-icon {
+    display: inline-block;
+    margin: 0 20px;
+    font-size: 16px;
+    animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.7; transform: scale(1.1); }
+}
+
+/* Responsivo para mobile */
+@media (max-width: 768px) {
+    .marquee-content {
+        font-size: 11px;
+        animation-duration: 35s;
+    }
+    .marquee-container {
+        padding: 6px 0;
+    }
+}
+
+/* Espaçador para não sobrepor conteúdo */
+.marquee-spacer {
+    height: 55px;
+}
+</style>
+
+<script>
+function updateMarqueeMessage(newMessage) {
+    const marqueeElement = document.getElementById('marquee-content');
+    if (marqueeElement) {
+        marqueeElement.innerHTML = '<span>✨ ' + newMessage + ' ✨</span>';
+    }
+}
+</script>
+"""
+
+# ======================
 # CONFIGURAÇÕES
 # ======================
 ID_PLANILHA_PRENSADOS_SOPRO = '1Hjy4UGtgwIPJgqmcv46LyXNWOrYk_oeJWWV5vlfKF2k'
@@ -500,6 +592,146 @@ def get_horario_brasilia_obj():
     utc_now = datetime.now(timezone.utc)
     brasilia_offset = timezone(timedelta(hours=-3))
     return utc_now.astimezone(brasilia_offset)    
+
+# ======================
+# NOVA FUNÇÃO PARA CARREGAR MENSAGENS DA PLANILHA RECADOS (FAIXA DE ROLAGEM)
+# ======================
+ID_PLANILHA_RECADOS = '1R0V4HpmRNXAd2TxVv8c_dVVoc1tXDPBOVSFBX1JKHvs'
+ABA_RECADOS = 'Rodapé'
+
+@st.cache_data(ttl=60)  # Atualiza a cada 60 segundos
+def carregar_mensagens_rodape():
+    """
+    Carrega as mensagens da planilha Recados - aba Rodapé.
+    Filtra apenas mensagens da data atual.
+    Retorna uma lista de mensagens [(texto, data), ...]
+    """
+    try:
+        client = get_gspread_client()
+        if client is None:
+            return ["📢 Sistema TRS Dashboard - Acompanhamento de Produção"]
+        
+        # Abre a planilha de Recados
+        spreadsheet = client.open_by_key(ID_PLANILHA_RECADOS)
+        
+        # Tenta pegar a aba "Rodapé"
+        try:
+            sheet = spreadsheet.worksheet(ABA_RECADOS)
+        except Exception as e:
+            # Se não existir a aba, retorna mensagem padrão
+            print(f"Aba '{ABA_RECADOS}' não encontrada na planilha Recados. Erro: {e}")
+            return ["📢 Sistema TRS Dashboard - Acompanhamento de Produção"]
+        
+        # Lê todos os dados da planilha
+        todos_dados = sheet.get_all_values()
+        
+        if len(todos_dados) < 2:
+            return ["📢 Sistema TRS Dashboard - Acompanhamento de Produção"]
+        
+        # Cabeçalhos: primeira linha
+        cabecalho = todos_dados[0]
+        # Mapear índices das colunas
+        idx_data = None
+        idx_mensagem = None
+        
+        for i, col in enumerate(cabecalho):
+            col_clean = str(col).strip().upper()
+            if col_clean == 'DATA':
+                idx_data = i
+            elif col_clean == 'MENSAGEM':
+                idx_mensagem = i
+        
+        if idx_data is None or idx_mensagem is None:
+            print(f"Colunas 'DATA' ou 'MENSAGEM' não encontradas. Cabeçalho: {cabecalho}")
+            return ["📢 Sistema TRS Dashboard - Acompanhamento de Produção"]
+        
+        # Data atual para comparação
+        hoje = datetime.now().date()
+        mensagens_validas = []
+        
+        # Processa as linhas (a partir da linha 1, índice 1)
+        for row in todos_dados[1:]:
+            # Verifica se a linha tem pelo menos as colunas necessárias
+            if len(row) <= max(idx_data, idx_mensagem):
+                continue
+            
+            data_str = row[idx_data].strip() if row[idx_data] else ""
+            mensagem = row[idx_mensagem].strip() if idx_mensagem < len(row) else ""
+            
+            if not mensagem:
+                continue
+            
+            # Converte a data da planilha para objeto date
+            data_mensagem = None
+            # Tenta vários formatos de data
+            formatos = ["%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%m/%d/%Y"]
+            for fmt in formatos:
+                try:
+                    data_mensagem = datetime.strptime(data_str, fmt).date()
+                    break
+                except:
+                    continue
+            
+            # Se conseguiu converter a data e é igual a hoje, adiciona
+            if data_mensagem and data_mensagem == hoje:
+                mensagens_validas.append(mensagem)
+        
+        # Se não encontrou nenhuma mensagem para hoje, retorna mensagem padrão
+        if not mensagens_validas:
+            return ["📢 Sistema TRS Dashboard - Acompanhamento de Produção"]
+        
+        return mensagens_validas
+        
+    except Exception as e:
+        print(f"Erro ao carregar mensagens da planilha Recados: {str(e)}")
+        return ["📢 Sistema TRS Dashboard - Acompanhamento de Produção"]
+
+
+# ======================
+# FUNÇÃO PARA RENDERIZAR A FAIXA DE ROLAGEM COM MÚLTIPLAS MENSAGENS
+# ======================
+def renderizar_faixa_rolagem():
+    """Renderiza a faixa de rolagem no rodapé da página com múltiplas mensagens do dia"""
+    
+    # Carrega as mensagens da planilha Recados
+    mensagens = carregar_mensagens_rodape()
+    
+    # Prepara o texto da faixa com indicadores se houver múltiplas mensagens
+    total_mensagens = len(mensagens)
+    
+    if total_mensagens == 1:
+        texto_faixa = f"✨ {mensagens[0]} ✨"
+    else:
+        # Cria uma lista com indicadores: "1/3 Mensagem 1  |  2/3 Mensagem 2  |  3/3 Mensagem 3"
+        partes = []
+        for i, msg in enumerate(mensagens, start=1):
+            partes.append(f"[{i}/{total_mensagens}] {msg}")
+        texto_faixa = " ✨ | ✨ ".join(partes)
+        texto_faixa = f"✨ {texto_faixa} ✨"
+    
+    # Adiciona CSS
+    st.markdown(MARQUEE_CSS, unsafe_allow_html=True)
+    
+    # Adiciona a faixa de rolagem
+    st.markdown(f"""
+    <div class="marquee-container">
+        <div class="marquee-content" id="marquee-content">
+            <span>{texto_faixa}</span>
+        </div>
+    </div>
+    <div class="marquee-spacer"></div>
+    """, unsafe_allow_html=True)
+    
+    # Força atualização periódica (a cada 60 segundos)
+    if "ultima_atualizacao_mensagem" not in st.session_state:
+        st.session_state.ultima_atualizacao_mensagem = datetime.now()
+    
+    agora = datetime.now()
+    if (agora - st.session_state.ultima_atualizacao_mensagem).total_seconds() > 60:
+        st.session_state.ultima_atualizacao_mensagem = agora
+        # Limpa o cache para forçar recarregamento na próxima execução
+        st.cache_data.clear()
+        st.rerun()
 
 # ======================
 # FUNÇÕES AUXILIARES GLOBAIS
@@ -1571,6 +1803,7 @@ st.markdown(f"""
   .stError {{ background-color: rgba(232,17,35,0.08) !important; border-left: 3px solid {THEME['accent_red']} !important; }}
 </style>
 {NOTIFICACAO_CSS}
+{MARQUEE_CSS}
 """, unsafe_allow_html=True)
 
 # ======================
@@ -1593,7 +1826,6 @@ with st.sidebar:
 # ======================
 renderizar_popups_pendentes()
 verificar_e_exibir_popups()
-
 
 # ==================================================================================================
 # PRENSADOS
@@ -3148,294 +3380,6 @@ elif aba_selecionada == 'TÊMPERA':
     else:
         st.info("Nenhum defeito registrado.")
 
-    # ── Defeitos x Parâmetros ── (CORRIGIDO - agora dentro do bloco TÊMPERA)
-    st.markdown("<hr>", unsafe_allow_html=True)
-    render_section_header("📈 Defeitos x Parâmetros", "▸", THEME['accent_purple'])
-
-    if not df.empty and 'DATA' in df.columns:
-        # Agrupar por data
-        df_diario = df.groupby(df['DATA'].dt.date).agg({
-            'APROVADO': 'sum',
-            'TOTAL_DEFEITOS': 'sum',
-            'MEIO': 'mean',
-            'C4': 'mean',
-            'C2': 'mean'
-        }).reset_index()
-        
-        df_diario['DATA'] = pd.to_datetime(df_diario['DATA'])
-        df_diario = df_diario.sort_values('DATA')
-        
-        # Adicionar contagem de cada defeito por dia
-        for codigo in CODIGOS_DEFEITO_REAIS:
-            nome = MAPEAMENTO_DEFEITOS[codigo]
-            nome_clean = nome.upper().replace(' ', '_').replace('Ç', 'C').replace('Ã', 'A').replace('Á', 'A').replace('Ó', 'O')
-            col_nome = f'QTD_{nome_clean}'
-            if col_nome in df.columns:
-                df_diario[col_nome] = df.groupby(df['DATA'].dt.date)[col_nome].sum().values
-        
-        if len(df_diario) >= 2:
-            # Opções de defeitos que possuem dados
-            opcoes_defeitos = []
-            for codigo in CODIGOS_DEFEITO_REAIS:
-                nome = MAPEAMENTO_DEFEITOS[codigo]
-                nome_clean = nome.upper().replace(' ', '_').replace('Ç', 'C').replace('Ã', 'A').replace('Á', 'A').replace('Ó', 'O')
-                col_nome = f'QTD_{nome_clean}'
-                if col_nome in df_diario.columns and df_diario[col_nome].sum() > 0:
-                    opcoes_defeitos.append((nome, col_nome))
-            
-            # Adicionar opção "Todos os Defeitos"
-            opcoes_defeitos.insert(0, ("📊 TODOS OS DEFEITOS", "TOTAL_DEFEITOS"))
-            
-            if opcoes_defeitos:
-                defeito_selecionado = st.selectbox(
-                    "Selecione o defeito para análise:",
-                    options=[n for n, _ in opcoes_defeitos],
-                    key="defeito_param"
-                )
-                
-                # Encontrar a coluna do defeito selecionado
-                col_defeito = next(c for n, c in opcoes_defeitos if n == defeito_selecionado)
-                
-                # Criar gráfico
-                fig, ax1 = plt.subplots(figsize=(14, 6), facecolor=THEME['bg_card'])
-                apply_chart_style(ax1, fig, f"{defeito_selecionado} vs Parâmetros de Processo", 
-                                  xlabel="Data", ylabel="Quantidade de Defeitos", accent=THEME['accent_red'])
-                
-                # Barras - defeitos
-                bars = ax1.bar(df_diario['DATA'], df_diario[col_defeito], 
-                               color=THEME['accent_red'], alpha=0.5, width=0.8, label=defeito_selecionado)
-                
-                # Adicionar valores nas barras
-                for bar, val in zip(bars, df_diario[col_defeito]):
-                    if val > 0:
-                        ax1.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.3, 
-                                str(int(val)), ha='center', va='bottom', fontsize=7, color=THEME['accent_red'])
-                
-                ax1.set_ylabel('Quantidade de Defeitos', color=THEME['accent_red'])
-                ax1.tick_params(axis='y', labelcolor=THEME['accent_red'])
-                
-                # Eixo secundário - parâmetros
-                ax2 = ax1.twinx()
-                
-                # Linha 1: Temperatura Meio
-                if 'MEIO' in df_diario.columns:
-                    ax2.plot(df_diario['DATA'], df_diario['MEIO'], 
-                            color=THEME['accent_orange'], marker='o', markersize=4, linewidth=2, 
-                            linestyle='-', label='🌡️ Temp. Meio (°C)')
-                
-                # Linha 2: Humidade C4
-                if 'C4' in df_diario.columns:
-                    ax2.plot(df_diario['DATA'], df_diario['C4'], 
-                            color=THEME['accent_cyan'], marker='s', markersize=4, linewidth=2, 
-                            linestyle='--', label='💧 Humidade C4 (%)')
-                
-                # Linha 3: Tempo C2
-                if 'C2' in df_diario.columns:
-                    ax2.plot(df_diario['DATA'], df_diario['C2'], 
-                            color=THEME['accent_lime'], marker='^', markersize=4, linewidth=2, 
-                            linestyle='-.', label='⏱️ Tempo C2 (s)')
-                
-                ax2.set_ylabel('Valores dos Parâmetros', color=THEME['text_primary'])
-                ax2.tick_params(axis='y', labelcolor=THEME['text_primary'])
-                
-                # Legendas combinadas
-                lines1, labels1 = ax1.get_legend_handles_labels()
-                lines2, labels2 = ax2.get_legend_handles_labels()
-                ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left', fontsize=8, 
-                          framealpha=0.9, facecolor=THEME['bg_card'])
-                
-                plt.setp(ax1.xaxis.get_majorticklabels(), rotation=35, ha='right', fontsize=8)
-                fig.tight_layout()
-                st.pyplot(fig)
-                plt.close(fig)
-                
-                # ── ESTATÍSTICAS DE CORRELAÇÃO COM ANÁLISE INTELIGENTE ──
-                st.markdown("#### 📊 Correlações com Análise Contextual")
-                
-                # Dicionário de observações específicas por tipo de defeito e parâmetro
-                def get_observacao(defeito_nome, parametro, corr_valor):
-                    """Retorna observação contextual baseada no defeito e correlação"""
-                    
-                    # Normaliza o nome do defeito
-                    defeito_lower = defeito_nome.lower()
-                    parametro_lower = parametro.lower()
-                    
-                    # Observações para HUMIDADE (C4)
-                    if 'humidade' in parametro_lower or 'c4' in parametro_lower:
-                        if corr_valor > 0.5:
-                            return "⚠️ **Contradição teórica:** A literatura indica que umidade alta é prejudicial, mas seus dados mostram o oposto. Investigue se: (a) a faixa de umidade está abaixo do limiar crítico; (b) a umidade está compensando resfriamento excessivo; (c) há correlação espúria com outra variável (ex: estação do ano)."
-                        elif corr_valor < -0.5:
-                            if 'quebra no resfriamento' in defeito_lower or 'quebra teste impacto' in defeito_lower:
-                                return "✅ **Coerente com teoria:** Umidade mais alta suaviza o choque térmico, reduzindo quebras por resfriamento abrupto. A umidade atua como amortecedor térmico natural."
-                            elif 'estourou após furar' in defeito_lower:
-                                return "⚠️ **Atenção:** Maior umidade reduzindo este defeito sugere que a peça pode estar chegando muito seca/trincada ao furo. Considere verificar lubrificação da furadeira."
-                            else:
-                                return "✅ **Efeito benéfico:** Maior umidade reduz este defeito. Possível explicação: a umidade moderada (30-60%) melhora a transferência de calor uniforme durante o resfriamento."
-                        else:
-                            if 'quebra no resfriamento' in defeito_lower or 'quebra teste impacto' in defeito_lower:
-                                return "ℹ️ **Correlação fraca:** Umidade não parece ser o principal fator para este defeito. Priorize análise de temperatura e tempo de resfriamento."
-                            else:
-                                return "ℹ️ **Correlação fraca:** Umidade tem impacto limitado neste tipo de defeito."
-                    
-                    # Observações para TEMPERATURA MEIO
-                    elif 'temperatura' in parametro_lower or 'meio' in parametro_lower:
-                        if corr_valor > 0.5:
-                            if 'quebra no resfriamento' in defeito_lower or 'quebra teste impacto' in defeito_lower:
-                                return "⚠️ **Temperatura muito alta** pode estar causando tensões residuais excessivas. Considere reduzir temperatura do forno em 5-10°C."
-                            elif 'estourou após furar' in defeito_lower:
-                                return "⚠️ **Temperatura alta** pode estar fragilizando o vidro na região do furo. Verifique distribuição de temperatura na peça."
-                            else:
-                                return "⚠️ **Correlação positiva:** Temperaturas mais altas aumentam este defeito. Reduza gradualmente a temperatura e monitore o impacto."
-                        elif corr_valor < -0.5:
-                            if 'quebra no resfriamento' in defeito_lower or 'quebra teste impacto' in defeito_lower:
-                                return "✅ **Temperatura muito baixa** pode estar causando têmpera insuficiente. Aumente temperatura em 5-10°C e verifique resultado."
-                            else:
-                                return "✅ **Correlação negativa:** Temperaturas mais altas reduzem este defeito. Considere operar no limite superior da faixa especificada."
-                        else:
-                            return "ℹ️ **Correlação moderada:** Temperatura tem influência, mas não é o fator dominante. Analise também tempo de residência e resfriamento."
-                    
-                    # Observações para TEMPO C2
-                    elif 'tempo' in parametro_lower or 'c2' in parametro_lower:
-                        if corr_valor > 0.5:
-                            if 'quebra no resfriamento' in defeito_lower or 'quebra teste impacto' in defeito_lower:
-                                return "⚠️ **Tempo de residência muito longo** pode estar superaquecendo o vidro. Reduza o tempo gradualmente."
-                            elif 'ovalizada' in defeito_lower:
-                                return "⚠️ **Tempo excessivo** pode estar causando deformação (ovalização) por amolecimento excessivo do vidro."
-                            else:
-                                return "⚠️ **Correlação positiva:** Tempos mais longos aumentam este defeito. Reduza o tempo de residência no forno."
-                        elif corr_valor < -0.5:
-                            if 'quebra teste impacto' in defeito_lower:
-                                return "✅ **Tempo insuficiente** para têmpera adequada. Aumente o tempo de residência para garantir aquecimento uniforme."
-                            elif 'furada e não fraturou' in defeito_lower:
-                                return "⚠️ **Tempo curto** pode resultar em têmpera incompleta, reduzindo a fragmentação. Aumente tempo ou temperatura."
-                            else:
-                                return "✅ **Correlação negativa:** Tempos mais longos reduzem este defeito. Considere operar com maior tempo de residência."
-                        else:
-                            return "ℹ️ **Correlação moderada:** Tempo tem influência secundária. Priorize ajuste de temperatura primeiro."
-                    
-                    return "🔍 Nenhuma correlação forte identificada. Continue monitorando outros parâmetros."
-                
-                # Exibir correlações em cards
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    if 'MEIO' in df_diario.columns:
-                        corr_temp = df_diario[col_defeito].corr(df_diario['MEIO'])
-                        cor_temp = corr_temp if pd.notna(corr_temp) else 0
-                        delta_temp = "📈" if cor_temp > 0 else "📉" if cor_temp < 0 else "➡️"
-                        st.metric(f"🌡️ vs Temp. Meio", f"{cor_temp:.2f}", delta_temp)
-                        
-                        with st.expander("🔍 Análise", expanded=False):
-                            obs_temp = get_observacao(defeito_selecionado, "Temperatura Meio", cor_temp)
-                            st.markdown(obs_temp)
-                
-                with col2:
-                    if 'C4' in df_diario.columns:
-                        corr_hum = df_diario[col_defeito].corr(df_diario['C4'])
-                        cor_hum = corr_hum if pd.notna(corr_hum) else 0
-                        delta_hum = "📈" if cor_hum > 0 else "📉" if cor_hum < 0 else "➡️"
-                        st.metric(f"💧 vs Humidade C4", f"{cor_hum:.2f}", delta_hum)
-                        
-                        with st.expander("🔍 Análise", expanded=False):
-                            obs_hum = get_observacao(defeito_selecionado, "Humidade C4", cor_hum)
-                            st.markdown(obs_hum)
-                
-                with col3:
-                    if 'C2' in df_diario.columns:
-                        corr_tempo = df_diario[col_defeito].corr(df_diario['C2'])
-                        cor_tempo = corr_tempo if pd.notna(corr_tempo) else 0
-                        delta_tempo = "📈" if cor_tempo > 0 else "📉" if cor_tempo < 0 else "➡️"
-                        st.metric(f"⏱️ vs Tempo C2", f"{cor_tempo:.2f}", delta_tempo)
-                        
-                        with st.expander("🔍 Análise", expanded=False):
-                            obs_tempo = get_observacao(defeito_selecionado, "Tempo C2", cor_tempo)
-                            st.markdown(obs_tempo)
-                
-                # Total do defeito selecionado
-                total_defeito = int(df_diario[col_defeito].sum())
-                st.info(f"📋 **Total de '{defeito_selecionado}' no período:** {total_defeito} ocorrências")
-                
-                # ── RESUMO EXECUTIVO COM RECOMENDAÇÕES ──
-                st.markdown("#### 🎯 Resumo Executivo e Recomendações")
-                
-                # Coletar todas as correlações
-                correlacoes = {}
-                if 'MEIO' in df_diario.columns:
-                    correlacoes['Temperatura Meio'] = df_diario[col_defeito].corr(df_diario['MEIO'])
-                if 'C4' in df_diario.columns:
-                    correlacoes['Humidade C4'] = df_diario[col_defeito].corr(df_diario['C4'])
-                if 'C2' in df_diario.columns:
-                    correlacoes['Tempo C2'] = df_diario[col_defeito].corr(df_diario['C2'])
-                
-                # Filtrar correlações válidas
-                correlacoes_validas = {k: v for k, v in correlacoes.items() if pd.notna(v)}
-                
-                if correlacoes_validas:
-                    # Encontrar fator mais influente (maior |correlação|)
-                    fator_mais_influente = max(correlacoes_validas.items(), key=lambda x: abs(x[1]))
-                    
-                    st.markdown(f"""
-                    <div style="background: {THEME['bg_card2']}; padding: 15px; border-radius: 10px; margin: 10px 0;">
-                        <strong>📌 Fator mais influente para "{defeito_selecionado}":</strong> {fator_mais_influente[0]} 
-                        (correlação {fator_mais_influente[1]:.2f})
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                    # Recomendações baseadas nas correlações
-                    recomendacoes = []
-                    
-                    # Recomendação para Temperatura
-                    if 'Temperatura Meio' in correlacoes_validas:
-                        corr_temp = correlacoes_validas['Temperatura Meio']
-                        if corr_temp > 0.5:
-                            recomendacoes.append("🔧 **Ação:** Reduza a temperatura do forno em 5-10°C e monitore o impacto neste defeito.")
-                        elif corr_temp < -0.5:
-                            recomendacoes.append("🔧 **Ação:** Aumente a temperatura do forno em 5-10°C e monitore a redução deste defeito.")
-                    
-                    # Recomendação para Humidade
-                    if 'Humidade C4' in correlacoes_validas:
-                        corr_hum = correlacoes_validas['Humidade C4']
-                        if corr_hum > 0.5:
-                            recomendacoes.append("🌧️ **Ação:** Reduza a umidade ambiente (use desumidificadores) abaixo de 50% para diminuir este defeito.")
-                        elif corr_hum < -0.5:
-                            recomendacoes.append("💧 **Ação:** A umidade mais alta está reduzindo este defeito. Mantenha umidade entre 40-60% e evite ambientes muito secos (<30%).")
-                    
-                    # Recomendação para Tempo
-                    if 'Tempo C2' in correlacoes_validas:
-                        corr_tempo = correlacoes_validas['Tempo C2']
-                        if corr_tempo > 0.5:
-                            recomendacoes.append("⏱️ **Ação:** Reduza o tempo de residência no forno em 10-15% e monitore o efeito.")
-                        elif corr_tempo < -0.5:
-                            recomendacoes.append("⏱️ **Ação:** Aumente o tempo de residência no forno para garantir têmpera adequada.")
-                    
-                    if recomendacoes:
-                        st.markdown("#### 🔧 Recomendações de Ajuste:")
-                        for rec in recomendacoes:
-                            st.markdown(rec)
-                    else:
-                        st.markdown("🔸 Nenhuma correlação forte (>0.5 ou <-0.5) identificada. O processo parece estável para este defeito.")
-                else:
-                    st.markdown("🔸 Dados insuficientes para análise de correlação.")
-                
-                # Aviso sobre limitações da análise
-                with st.expander("ℹ️ Sobre esta análise", expanded=False):
-                    st.markdown("""
-                    **Limitações e cuidados:**
-                    - Correlação não implica causalidade. Uma correlação forte pode indicar que duas variáveis mudam juntas, mas não necessariamente que uma causa a outra.
-                    - Podem existir **variáveis de confundimento** (ex: estação do ano, matéria-prima, operador) que influenciam tanto o defeito quanto o parâmetro.
-                    - **Intervalo de confiança:** Correlações baseadas em poucos pontos (menos de 10 dias) têm baixa confiabilidade estatística.
-                    - **Faixa de operação:** As correlações são válidas apenas dentro da faixa de dados observada. Extrapolações podem ser perigosas.
-                    
-                    **Recomendação:** Use estas análises como **guia para investigação**, não como verdade absoluta. Sempre valide ajustes com testes controlados.
-                    """)
-            else:
-                st.info("Nenhum defeito com dados suficientes para análise.")
-        else:
-            st.info("Dados insuficientes para análise diária (mínimo 2 dias).")
-    else:
-        st.info("Sem dados disponíveis para análise.")
-
-
 # ==================================================================================================
 # AVISO DE REJEIÇÃO (AR)
 # ==================================================================================================
@@ -4090,7 +4034,7 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
             "Informática": "alves.marcello@gmail.com",
             "Ferramentaria": "ferramentaria@luvidarte.com.br",
             "Manutenção Geral": "manutencaogeral@luvidarte.com.br",
-            "default": "manutencao@luvidarte.com.br"
+            "default": "engenharia@luvidarte.com.br"
         }
         EMAIL_QUALIDADE_RM = "qualidade@luvidarte.com.br"
     # ========================================================================================
@@ -4137,10 +4081,12 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
                 <table border="1" cellpadding="5">
                 <tr><td><b>ID:</b></td><td>{registro.id}</td>
                 <tr><td><b>Equipamento:</b></td><td colspan="3">{registro.equipamento}</td></tr>
-                <tr><td><b>Data:</b></td><td>{data_str}</td>
-                <tr><td><b>Hora:</b></td><td>{registro.hora}</td></tr>
-                <tr><td><b>Emissor:</b></td><td>{registro.emissor}</td>
-                <tr><td><b>Setor Destino:</b></td><td>{registro.setor2}</td></tr>
+                <tr><td><b>Data:</b></td><td>{data_str}</td><tr><td><b>Hora:</b></td><td>{registro.hora}</td></tr>
+                                <tr><td><b>Emissor:</b></td><td colspan="3">{registro.emissor}</td>
+                <tr>
+                <tr><td colspan="6"><b>📋 PROBLEMA:</b></td>
+                <tr>
+                <tr><td colspan="6">{registro.problema or "N/A"}</td>
                 </table>
                 <p>Email automático do Sistema de Requisições de Manutenção.</p>
                 </body></html>
@@ -4153,22 +4099,45 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
                 <html><body>
                 <h2 style="color: {cor};">{emoji} REQUISIÇÃO DE MANUTENÇÃO #{registro.id} - {acao}</h2>
                 <table border="1" cellpadding="5">
-                <tr><td><b>ID:</b></td><td>{registro.id}</td><td><b>Data:</b></td><td>{data_str}</td><td><b>Hora:</b></td><td>{registro.hora}</td></tr>
-                <tr><td><b>Emissor:</b></td><td>{registro.emissor}</td><td><b>Equipamento:</b></td><td colspan="3">{registro.equipamento}</td></tr>
-                <tr><td><b>Setor Solicitante:</b></td><td>{registro.setor}</td><td><b>Setor Destino:</b></td><td colspan="3">{registro.setor2}</td></tr>
-                <tr><td><b>Caráter:</b></td><td colspan="5">{registro.caracter}</td></tr>
-                <tr><td><b>Status:</b></td><td colspan="5"><b style="color:{cor};">{registro.status}</b></td></tr>
-                <tr><td colspan="6"><b>📋 DESCRIÇÃO DO PROBLEMA:</b></td></tr>
-                <tr><td colspan="6">{registro.problema or "N/A"}</td></tr>
+                <tr><td><b>ID:</b></td><td>{registro.id}</td><td><b>Data:</b></td><td>{data_str}</td><td><b>Hora:</b></td><td>{registro.hora}</td>
+                <tr>
+                <tr><td><b>Emissor:</b></td><td>{registro.emissor}</td><td><b>Equipamento:</b></td><td colspan="3">{registro.equipamento}</td>
+                </tr>
+                <tr><td><b>Setor Solicitante:</b></td><td>{registro.setor}</td><td><b>Setor Destino:</b></td><td colspan="3">{registro.setor2}</td>
+                </tr>
+                <tr><td><b>Caráter:</b></td><td colspan="5">{registro.caracter}</td>
+                </tr>
+                <tr><td><b>Status:</b></td><td colspan="5"><b style="color:{cor};">{registro.status}</b></td>
+                </tr>
+                <tr><td colspan="6"><b>📋 DESCRIÇÃO DO PROBLEMA:</b></td>
+                </tr>
+                <tr><td colspan="6">{registro.problema or "N/A"}</td>
+                </tr>
                 """
                 if registro.trabalho:
-                    corpo += f"</tr><td colspan='6'><b>🔧 TRABALHO REALIZADO:</b></td></tr><tr><td colspan='6'>{registro.trabalho}</td></tr>"
+                    corpo += f"""
+                    <tr><td colspan="6"><b>🔧 TRABALHO REALIZADO:</b></td>
+                    <tr>
+                    <tr><td colspan="6">{registro.trabalho}</td>
+                    </tr>
+                    """
                 if registro.analise:
-                    corpo += f"</tr><td colspan='6'><b>📊 ANÁLISE DO SERVIÇO:</b></td></tr><tr><td colspan='6'>{registro.analise}</td></tr>"
+                    corpo += f"""
+                    <tr><td colspan="6"><b>📊 ANÁLISE DO SERVIÇO:</b></td>
+                    <tr>
+                    <tr><td colspan="6">{registro.analise}</td>
+                    </tr>
+                    """
                 if registro.emissor2:
-                    corpo += f"<tr><td><b>Emissor Técnico:</b></td><td colspan='5'>{registro.emissor2}</td></tr>"
+                    corpo += f"""
+                    <tr><td><b>Emissor Técnico:</b></td><td colspan="5">{registro.emissor2}</td>
+                    </tr>
+                    """
                 if data_fim_str:
-                    corpo += f"<tr><td><b>Data Finalização:</b></td><td colspan='5'>{data_fim_str}</td></tr>"
+                    corpo += f"""
+                    <tr><td><b>Data Finalização:</b></td><td colspan="5">{data_fim_str}</td>
+                    </tr>
+                    """
                 corpo += "</table><p>Email automático do Sistema.</p></body></html>"
             
             msg.attach(MIMEText(corpo, "html"))
@@ -4817,7 +4786,7 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
         REQUISIÇÃO DE MANUTENÇÃO · {get_horario_brasilia()}
     </div>
     """, unsafe_allow_html=True)
-    
+
 # ==================================================================================================
 # FECHAMENTO TURNO - VERSÃO GOOGLE SHEETS (COM TRS BRUTO + ARs/RMs)
 # ==================================================================================================
@@ -5162,7 +5131,7 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
     
     st.markdown("<hr>", unsafe_allow_html=True)
     
-    # Tabs com a nova aba ARs & RMs
+    # Tabs
     tab1, tab2, tab3, tab4 = st.tabs(["📋 Produções do Dia", "✅ Checklists Turno", "🟥 Faltas", "🔧 ARs & RMs"])
     
     with tab1:
@@ -5170,7 +5139,6 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
         if producoes:
             df_display = pd.DataFrame(producoes)
             
-            # Selecionar colunas para exibição com observações, justificativas e TRS Bruto
             colunas_exibir = ['referencia', 'inicio', 'fim', 'produzido', 'meta', 'setup', 'manut', 'observacoes', 'justificativa', 'trs_bruto']
             colunas_existentes = [c for c in colunas_exibir if c in df_display.columns]
             
@@ -5178,7 +5146,6 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
                 df_display = df_display[colunas_existentes]
                 df_display.columns = ['Referência', 'Início', 'Fim', 'Produzido', 'Meta', 'Setup', 'Manut.', 'Observações', 'Justificativa', 'TRS Bruto (%)'][:len(colunas_existentes)]
                 
-                # Aplicar estilo de cores no TRS Bruto
                 def color_trs(val):
                     if isinstance(val, (int, float)):
                         if val >= 85:
@@ -5257,13 +5224,9 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
         st.caption(f"Documentos abertos em {data_fechamento.strftime('%d/%m/%Y')}")
         
         if todos_documentos:
-            # ======================
-            # KPIs de ARs/RMs
-            # ======================
             total_ars = len(ars)
             total_rms = len(rms)
             
-            # Status possíveis: ABERTO, FINALIZADO, NÃO RESPONDIDA (AR) / CANCELADO, EM ANDAMENTO (RM)
             status_normalizado = []
             for doc in todos_documentos:
                 status = str(doc.get('status', '')).upper().strip()
@@ -5293,23 +5256,15 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
             
             st.markdown("---")
             
-            # ======================
-            # Filtros
-            # ======================
             col_f1, col_f2 = st.columns(2)
-            
             with col_f1:
                 tipo_filtro = st.selectbox("📑 Filtrar por Tipo:", ["TODOS", "AR", "RM"], key="filtro_tipo_ft")
-            
             with col_f2:
                 status_filtro = st.selectbox("📊 Filtrar por Status:", ["TODOS", "ABERTO", "FINALIZADO", "NÃO RESPONDIDO"], key="filtro_status_ft")
             
-            # Aplicar filtros
             docs_filtrados = todos_documentos.copy()
-            
             if tipo_filtro != "TODOS":
                 docs_filtrados = [d for d in docs_filtrados if d.get('tipo') == tipo_filtro]
-            
             if status_filtro != "TODOS":
                 if status_filtro == "NÃO RESPONDIDO":
                     docs_filtrados = [d for d in docs_filtrados if str(d.get('status', '')).upper().strip() not in ['FINALIZADO', 'FINALIZADA', 'ABERTO', 'EM ANDAMENTO']]
@@ -5321,12 +5276,8 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
             st.markdown(f"**Exibindo {len(docs_filtrados)} de {len(todos_documentos)} documentos**")
             st.markdown("---")
             
-            # ======================
-            # Exibição dos documentos
-            # ======================
             if docs_filtrados:
                 for doc in docs_filtrados:
-                    # Definir cores por status
                     status = str(doc.get('status', '')).upper().strip()
                     if status in ['FINALIZADO', 'FINALIZADA']:
                         borda_cor = '#28a745'
@@ -5344,11 +5295,9 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
                         texto_status = '#721c24'
                         icone_status = '🔴'
                     
-                    # Ícone do tipo
                     tipo = doc.get('tipo', '')
                     icone_tipo = '📋' if tipo == 'AR' else '🔩'
                     
-                    # Título do expander
                     if tipo == 'AR':
                         titulo = f"{icone_tipo} AR Nº {doc.get('numero', '-')} | {icone_status} {status} | Ref: {doc.get('referencia', '-')[:40]}"
                     else:
@@ -5356,13 +5305,11 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
                     
                     with st.expander(titulo):
                         col_info1, col_info2 = st.columns(2)
-                        
                         with col_info1:
                             st.markdown(f"**📄 Tipo:** {tipo}")
                             st.markdown(f"**🔢 Número:** {doc.get('numero', '-')}")
                             st.markdown(f"**📅 Data Abertura:** {doc.get('data_abertura', '-')}")
                             st.markdown(f"**⏰ Hora:** {doc.get('hora', '-')}")
-                            
                             if tipo == 'AR':
                                 st.markdown(f"**📦 Código:** {doc.get('codigo', '-')}")
                                 st.markdown(f"**🏷️ Referência:** {doc.get('referencia', '-')}")
@@ -5371,15 +5318,12 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
                                 st.markdown(f"**🏭 Equipamento:** {doc.get('equipamento', '-')}")
                                 st.markdown(f"**📍 Setor:** {doc.get('setor', '-')}")
                                 st.markdown(f"**⚠️ Caráter:** {doc.get('carater', '-')}")
-                        
                         with col_info2:
                             st.markdown(f"**👤 Emissor:** {doc.get('emissor', '-')}")
                             st.markdown(f"**🎯 Setor Destino:** {doc.get('setor_destino', '-')}")
                             st.markdown(f"**👷 Responsável:** {doc.get('responsavel', '-')}")
-                            
                             data_fim = doc.get('data_fechamento')
                             st.markdown(f"**📅 Data Fechamento:** {data_fim if data_fim else 'Pendente'}")
-                            
                             st.markdown(f"""
                             <div style="background: {bg_status}; padding: 5px 10px; border-radius: 5px; display: inline-block; margin-top: 5px;">
                                 <span style="color: {texto_status}; font-weight: bold;">{icone_status} {status}</span>
@@ -5387,7 +5331,6 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
                             """, unsafe_allow_html=True)
                         
                         st.markdown("---")
-                        
                         if tipo == 'AR':
                             st.markdown(f"**📝 Descrição do Problema:** {doc.get('descricao', '-')}")
                             if doc.get('disposicao'):
@@ -5401,9 +5344,6 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
             else:
                 st.info("📭 Nenhum documento encontrado com os filtros selecionados.")
             
-            # ======================
-            # Gráfico resumo
-            # ======================
             if todos_documentos:
                 st.markdown("---")
                 st.subheader("📊 Distribuição dos Documentos")
@@ -5411,14 +5351,11 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
                 col_graf1, col_graf2 = st.columns(2)
                 
                 with col_graf1:
-                    # Gráfico de pizza por status
                     fig, ax = plt.subplots(figsize=(6, 5), facecolor=THEME['bg_card'])
-                    
                     status_labels = ['Finalizado', 'Aberto', 'Não Respondido']
                     status_values = [finalizadas, abertas, nao_respondidas]
                     status_cores = ['#28a745', '#ffc107', '#dc3545']
                     
-                    # Remover zeros
                     labels_filtrados = []
                     valores_filtrados = []
                     cores_filtradas = []
@@ -5437,47 +5374,33 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
                             startangle=90,
                             textprops={'fontsize': 10}
                         )
-                        
                         for autotext in autotexts:
                             autotext.set_color('white')
                             autotext.set_fontweight('bold')
-                        
                         ax.set_title('Status dos Documentos', fontweight='bold')
-                    
                     st.pyplot(fig)
                     plt.close(fig)
                 
                 with col_graf2:
-                    # Gráfico de barras por tipo
                     fig, ax = plt.subplots(figsize=(6, 5), facecolor=THEME['bg_card'])
-                    
                     tipos = ['AR', 'RM']
                     valores_tipo = [total_ars, total_rms]
                     cores_tipo = [THEME['accent_cyan'], THEME['accent_orange']]
-                    
                     bars = ax.bar(tipos, valores_tipo, color=cores_tipo, alpha=0.8)
-                    
                     ax.set_title('Documentos por Tipo', fontweight='bold')
                     ax.set_ylabel('Quantidade')
-                    
                     for bar, valor in zip(bars, valores_tipo):
                         if valor > 0:
                             ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.1, 
                                     str(valor), ha='center', va='bottom', fontweight='bold')
-                    
                     ax.spines['top'].set_visible(False)
                     ax.spines['right'].set_visible(False)
-                    
                     fig.tight_layout()
                     st.pyplot(fig)
                     plt.close(fig)
         else:
             st.info("📭 Nenhuma AR ou RM encontrada para esta data.")
-            st.caption(f"Verificando abas '{ABA_AR}' e '{ABA_RM}' na planilha de AR/RM")
     
-    # ======================
-    # GRÁFICOS E ANÁLISES
-    # ======================
     if producoes:
         st.markdown("<hr>", unsafe_allow_html=True)
         st.subheader("📈 Análise do Dia")
@@ -5533,9 +5456,6 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
             st.pyplot(fig)
             plt.close(fig)
     
-    # ======================
-    # RESUMO EXECUTIVO
-    # ======================
     st.markdown("<hr>", unsafe_allow_html=True)
     st.subheader("📋 Resumo Executivo")
     
@@ -5583,3 +5503,16 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
         FECHAMENTO DE TURNO · {get_horario_brasilia()}
     </div>
     """, unsafe_allow_html=True)
+
+
+# ==================================================================================================
+# RENDERIZAR FAIXA DE ROLAGEM NO RODAPÉ (aparece em todas as abas)
+# ==================================================================================================
+# Define a planilha de fechamento para a faixa de rolagem (precisa estar definida antes)
+# A planilha ID_PLANILHA_FECHAMENTO já está definida na seção de FECHAMENTO TURNO
+# Caso o usuário não acesse o FECHAMENTO TURNO antes, definimos um valor padrão
+if 'ID_PLANILHA_FECHAMENTO' not in dir():
+    ID_PLANILHA_FECHAMENTO = '1_HkKTRCSg24wDJ47v5wSd-UPBkbalLd6plV9IvlTY64'
+
+# Renderiza a faixa de rolagem
+renderizar_faixa_rolagem()
