@@ -440,7 +440,7 @@ MARQUEE_CSS = """
 /* Efeito de rolagem - mais lento (45s) e começa já visível */
 .marquee-content {
     display: inline-block;
-    animation: scrollMarquee 45s linear infinite;
+    animation: scrollMarquee 80s linear infinite;
     font-size: 14px;
     font-weight: 600;
     letter-spacing: 1px;
