@@ -599,7 +599,7 @@ def get_horario_brasilia_obj():
 ID_PLANILHA_RECADOS = '1R0V4HpmRNXAd2TxVv8c_dVVoc1tXDPBOVSFBX1JKHvs'
 ABA_RECADOS = 'Rodapé'
 
-@st.cache_data(ttl=120)  # Atualiza a cada 60 segundos
+@st.cache_data(ttl=240)  # Atualiza a cada 60 segundos
 def carregar_mensagens_rodape():
     """
     Carrega as mensagens da planilha Recados - aba Rodapé.
@@ -2666,7 +2666,7 @@ elif aba_selecionada == 'TÊMPERA':
         except:
             return 0.0
 
-    @st.cache_data(ttl=600)
+    @st.cache_data(ttl=1200)
     def carregar_dados_tempera():
         try:
             client = get_gspread_client()
@@ -5193,7 +5193,7 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
     # ======================
     # FUNÇÕES DE CARREGAMENTO
     # ======================
-    @st.cache_data(ttl=600)
+    @st.cache_data(ttl=1200)
     def carregar_producoes_fechamento(data_selecionada: date):
         """Carrega produções do Google Sheets"""
         producoes = []
@@ -5252,7 +5252,7 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
         
         return producoes
     
-    @st.cache_data(ttl=600)
+    @st.cache_data(ttl=1200)
     def carregar_checklists_fechamento(data_selecionada: date):
         """Carrega checklists do Google Sheets"""
         checklists = {"manha": False, "tarde": False, "noite": False}
@@ -5293,7 +5293,7 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
         
         return checklists, detalhes
     
-    @st.cache_data(ttl=600)
+    @st.cache_data(ttl=1200)
     def carregar_faltas_fechamento(data_selecionada: date):
         """Carrega faltas do Google Sheets"""
         faltas = []
@@ -5329,7 +5329,7 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
         
         return faltas
     
-    @st.cache_data(ttl=600)
+    @st.cache_data(ttl=1200)
     def carregar_ars_rms_fechamento(data_selecionada: date):
         """Carrega ARs e RMs das planilhas existentes filtradas por data"""
         ars = []
