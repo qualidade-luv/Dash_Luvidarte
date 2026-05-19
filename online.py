@@ -3466,7 +3466,6 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
         </div>
         """, unsafe_allow_html=True)
         
-        # MODIFICAÇÃO: Adicionar a opção "📈 Dashboard AR" ao menu
         menu_ar = st.radio("Opções do AR:", ["📝 Novo Registro", "📊 Visualizar Registros", "🔍 Buscar/Editar/Excluir", "📈 Dashboard AR"], horizontal=True, key="menu_ar_principal")
         
         if 'ar_pdf_bytes' not in st.session_state:
@@ -3505,7 +3504,6 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                 
                 sheet = client.open_by_key(ID_PLANILHA_AR).worksheet(ABA_AR)
                 
-                # Buscar o número na coluna A (primeira coluna)
                 celula = sheet.find(str(numero), in_column=1)
                 if celula:
                     sheet.delete_rows(celula.row)
@@ -3529,12 +3527,10 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                 
                 sheet = client.open_by_key(ID_PLANILHA_AR).worksheet(ABA_AR)
                 
-                # Buscar o número na coluna A
                 celula = sheet.find(str(registro.numero), in_column=1)
                 if celula:
                     linha = celula.row
                     
-                    # Preparar os dados
                     dados = [
                         str(registro.numero),
                         registro.data.strftime("%d/%m/%Y") if registro.data else "",
@@ -3550,7 +3546,6 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                         registro.turno
                     ]
                     
-                    # Atualizar cada célula
                     for col, valor in enumerate(dados, start=1):
                         sheet.update_cell(linha, col, valor)
                     
@@ -3574,10 +3569,8 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                 if not nome_arquivo.lower().endswith('.pdf'):
                     nome_arquivo = nome_arquivo + '.pdf'
                 
-                # Converter PDF para base64 para abrir no navegador
                 pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
                 
-                # Criar HTML com o PDF embutido e botão de impressão
                 html_content = f"""
                 <!DOCTYPE html>
                 <html>
@@ -3658,7 +3651,6 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                     </div>
                     <embed src="data:application/pdf;base64,{pdf_base64}" type="application/pdf">
                     <script>
-                        // Tentar abrir a impressão automaticamente após 1 segundo
                         setTimeout(function() {{
                             window.print();
                         }}, 1000);
@@ -3667,15 +3659,12 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                 </html>
                 """
                 
-                # Salvar HTML temporário
                 temp_html = os.path.join(CAMINHO_PDF_AR, f"temp_print_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html")
                 with open(temp_html, 'w', encoding='utf-8') as f:
                     f.write(html_content)
                 
-                # Abrir no navegador padrão
                 webbrowser.open(f'file://{temp_html}')
                 
-                # Limpar arquivo temporário após alguns segundos
                 import threading
                 def limpar_arquivo():
                     import time
@@ -3708,7 +3697,7 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
             finalizados = len([r for r in registros if r.status == "FINALIZADO"])
             nao_respondidos = len([r for r in registros if r.status == "NÃO RESPONDIDA"])
             
-            # Distribuição por decisão (incluindo NÃO RESPONDIDO)
+            # Distribuição por decisão
             decisao_counts = {}
             for d in OPCOES_DECISAO_AR_MOD:
                 decisao_counts[d] = len([r for r in registros if r.decisao == d])
@@ -3717,6 +3706,16 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
             turno_counts = {}
             for t in OPCOES_TURNO_AR:
                 turno_counts[t] = len([r for r in registros if r.turno == t])
+            
+            # NOVO: Estatísticas por Turno com status (ABERTO, FINALIZADO, NÃO RESPONDIDA)
+            turno_status = {}
+            for t in OPCOES_TURNO_AR:
+                registros_turno = [r for r in registros if r.turno == t]
+                turno_status[t] = {
+                    'ABERTO': len([r for r in registros_turno if r.status == "ABERTO"]),
+                    'FINALIZADO': len([r for r in registros_turno if r.status == "FINALIZADO"]),
+                    'NÃO RESPONDIDA': len([r for r in registros_turno if r.status == "NÃO RESPONDIDA"])
+                }
             
             # Top emissores
             emissor_counts = {}
@@ -3745,6 +3744,45 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
             with col_k5:
                 perc_finalizado = (finalizados / total_registros * 100) if total_registros > 0 else 0
                 st.metric("✅ Taxa Finalização", f"{perc_finalizado:.1f}%")
+            
+            st.markdown("<hr>", unsafe_allow_html=True)
+            
+            # NOVO GRÁFICO: Status por Turno (Barras agrupadas)
+            st.subheader("📊 Status dos ARs por Turno")
+            
+            # Preparar dados para o gráfico de barras agrupadas
+            turnos_lista = list(turno_status.keys())
+            abertos_lista = [turno_status[t]['ABERTO'] for t in turnos_lista]
+            finalizados_lista = [turno_status[t]['FINALIZADO'] for t in turnos_lista]
+            nao_respondidos_lista = [turno_status[t]['NÃO RESPONDIDA'] for t in turnos_lista]
+            
+            fig, ax = plt.subplots(figsize=(10, 6), facecolor=THEME['bg_card'])
+            apply_chart_style(ax, fig, "ARs por Turno e Status", ylabel="Quantidade")
+            
+            x = np.arange(len(turnos_lista))
+            width = 0.25
+            
+            bars1 = ax.bar(x - width, abertos_lista, width, label='🟡 Em Aberto', color='#ffc107', alpha=0.85, edgecolor='white', linewidth=1)
+            bars2 = ax.bar(x, finalizados_lista, width, label='🟢 Finalizados', color='#28a745', alpha=0.85, edgecolor='white', linewidth=1)
+            bars3 = ax.bar(x + width, nao_respondidos_lista, width, label='🔴 Não Respondidos', color='#dc3545', alpha=0.85, edgecolor='white', linewidth=1)
+            
+            # Adicionar valores nas barras
+            for bars in [bars1, bars2, bars3]:
+                for bar in bars:
+                    height = bar.get_height()
+                    if height > 0:
+                        ax.text(bar.get_x() + bar.get_width()/2., height + 0.5,
+                                f'{int(height)}', ha='center', va='bottom', fontsize=9, fontweight='bold')
+            
+            ax.set_xticks(x)
+            ax.set_xticklabels(turnos_lista, fontsize=11, fontweight='bold')
+            ax.set_ylabel("Quantidade", fontsize=11)
+            ax.legend(loc='upper right', fontsize=10)
+            ax.set_ylim(0, max(max(abertos_lista), max(finalizados_lista), max(nao_respondidos_lista)) * 1.15)
+            
+            fig.tight_layout()
+            st.pyplot(fig)
+            plt.close(fig)
             
             st.markdown("<hr>", unsafe_allow_html=True)
             
@@ -3863,7 +3901,6 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
             # Evolução diária
             st.subheader("📅 Evolução Diária de ARs")
             
-            # Agrupar por data
             datas_dict = {}
             for r in registros:
                 if r.data:
@@ -3919,7 +3956,7 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                 st.dataframe(df_tabela, use_container_width=True, height=300)
         
         # ======================
-        # NOVO REGISTRO (com decisão modificada)
+        # NOVO REGISTRO
         # ======================
         if menu_ar == "📝 Novo Registro":
             st.subheader("Novo Aviso de Rejeição")
@@ -4026,7 +4063,6 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                         codigo = st.text_input("Código*")
                         emissor = st.text_input("Emissor*")
                         referencia = st.text_area("Referência*", height=100)
-                        # MODIFICAÇÃO: Usar OPCOES_DECISAO_AR_MOD
                         decisao = st.selectbox("Decisão*", OPCOES_DECISAO_AR_MOD)
                     with col3:
                         status = st.selectbox("Status*", OPCOES_STATUS_AR)
@@ -4067,28 +4103,33 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                                     st.rerun()
         
         # ======================
-        # VISUALIZAR REGISTROS (com opção NÃO RESPONDIDO)
+        # VISUALIZAR REGISTROS (com filtros de Status, Decisão, Turno e Número)
         # ======================
         elif menu_ar == "📊 Visualizar Registros":
             st.subheader("Registros de Aviso de Rejeição")
             with st.spinner("Carregando registros..."):
                 registros = carregar_registros_ar()
             if registros:
-                col_f1, col_f2, col_f3 = st.columns(3)
+                col_f1, col_f2, col_f3, col_f4 = st.columns(4)
                 with col_f1:
                     filtro_status = st.selectbox("Filtrar por Status", ["Todos"] + OPCOES_STATUS_AR)
                 with col_f2:
-                    # MODIFICAÇÃO: Usar OPCOES_DECISAO_AR_MOD
                     filtro_decisao = st.selectbox("Filtrar por Decisão", ["Todos"] + OPCOES_DECISAO_AR_MOD)
                 with col_f3:
+                    filtro_turno = st.selectbox("Filtrar por Turno", ["Todos"] + OPCOES_TURNO_AR)
+                with col_f4:
                     filtro_numero = st.number_input("Filtrar por Nº", min_value=0, step=1, value=0)
+                
                 registros_filtrados = registros
                 if filtro_status != "Todos":
                     registros_filtrados = [r for r in registros_filtrados if r.status == filtro_status]
                 if filtro_decisao != "Todos":
                     registros_filtrados = [r for r in registros_filtrados if r.decisao == filtro_decisao]
+                if filtro_turno != "Todos":
+                    registros_filtrados = [r for r in registros_filtrados if r.turno == filtro_turno]
                 if filtro_numero > 0:
                     registros_filtrados = [r for r in registros_filtrados if r.numero == filtro_numero]
+                
                 col_e1, col_e2, col_e3, col_e4 = st.columns(4)
                 with col_e1:
                     st.metric("Total Registros", len(registros))
@@ -4098,9 +4139,69 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                     st.metric("Finalizados", len([r for r in registros if r.status == "FINALIZADO"]))
                 with col_e4:
                     st.metric("Não Respondidos", len([r for r in registros if r.status == "NÃO RESPONDIDA"]))
+                
+                # NOVO GRÁFICO DE BARRAS POR TURNO (Visualização de Registros)
+                if len(registros_filtrados) > 0:
+                    st.markdown("---")
+                    st.subheader("📊 Distribuição por Turno e Status")
+                    
+                    # Preparar dados para o gráfico
+                    turno_status_reg = {}
+                    for t in OPCOES_TURNO_AR:
+                        regs_turno = [r for r in registros_filtrados if r.turno == t]
+                        turno_status_reg[t] = {
+                            'ABERTO': len([r for r in regs_turno if r.status == "ABERTO"]),
+                            'FINALIZADO': len([r for r in regs_turno if r.status == "FINALIZADO"]),
+                            'NÃO RESPONDIDA': len([r for r in regs_turno if r.status == "NÃO RESPONDIDA"])
+                        }
+                    
+                    turnos = list(turno_status_reg.keys())
+                    abertos_val = [turno_status_reg[t]['ABERTO'] for t in turnos]
+                    finalizados_val = [turno_status_reg[t]['FINALIZADO'] for t in turnos]
+                    nao_respondidos_val = [turno_status_reg[t]['NÃO RESPONDIDA'] for t in turnos]
+                    
+                    fig, ax = plt.subplots(figsize=(10, 5), facecolor=THEME['bg_card'])
+                    apply_chart_style(ax, fig, "ARs por Turno e Status", ylabel="Quantidade")
+                    
+                    x = np.arange(len(turnos))
+                    width = 0.25
+                    
+                    bars1 = ax.bar(x - width, abertos_val, width, label='🟡 Em Aberto', color='#ffc107', alpha=0.85, edgecolor='white', linewidth=1)
+                    bars2 = ax.bar(x, finalizados_val, width, label='🟢 Finalizados', color='#28a745', alpha=0.85, edgecolor='white', linewidth=1)
+                    bars3 = ax.bar(x + width, nao_respondidos_val, width, label='🔴 Não Respondidos', color='#dc3545', alpha=0.85, edgecolor='white', linewidth=1)
+                    
+                    for bars in [bars1, bars2, bars3]:
+                        for bar in bars:
+                            height = bar.get_height()
+                            if height > 0:
+                                ax.text(bar.get_x() + bar.get_width()/2., height + 0.5,
+                                        f'{int(height)}', ha='center', va='bottom', fontsize=9, fontweight='bold')
+                    
+                    ax.set_xticks(x)
+                    ax.set_xticklabels(turnos, fontsize=11, fontweight='bold')
+                    ax.set_ylabel("Quantidade", fontsize=11)
+                    ax.legend(loc='upper right', fontsize=10)
+                    ax.set_ylim(0, max(max(abertos_val), max(finalizados_val), max(nao_respondidos_val)) * 1.15 if any(v > 0 for v in abertos_val + finalizados_val + nao_respondidos_val) else 10)
+                    
+                    fig.tight_layout()
+                    st.pyplot(fig)
+                    plt.close(fig)
+                
+                st.markdown("---")
+                
                 dados = []
                 for reg in registros_filtrados[:100]:
-                    dados.append({"Nº": reg.numero, "Data": reg.data.strftime("%d/%m/%Y") if reg.data else "-", "Hora": reg.hora, "Código": reg.codigo, "Emissor": reg.emissor, "Referência": reg.referencia[:40] + "..." if len(reg.referencia) > 40 else reg.referencia, "Decisão": reg.decisao, "Status": reg.status, "Turno": reg.turno})
+                    dados.append({
+                        "Nº": reg.numero, 
+                        "Data": reg.data.strftime("%d/%m/%Y") if reg.data else "-", 
+                        "Hora": reg.hora, 
+                        "Código": reg.codigo, 
+                        "Emissor": reg.emissor, 
+                        "Referência": reg.referencia[:40] + "..." if len(reg.referencia) > 40 else reg.referencia, 
+                        "Decisão": reg.decisao, 
+                        "Status": reg.status, 
+                        "Turno": reg.turno
+                    })
                 df = pd.DataFrame(dados)
                 st.dataframe(df, use_container_width=True, height=400)
             else:
@@ -4164,7 +4265,6 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                             codigo_edt = st.text_input("Código", reg.codigo)
                             emissor_edt = st.text_input("Emissor", reg.emissor)
                             referencia_edt = st.text_area("Referência", reg.referencia, height=80)
-                            # MODIFICAÇÃO: Usar OPCOES_DECISAO_AR_MOD
                             decisao_edt = st.selectbox("Decisão", OPCOES_DECISAO_AR_MOD, index=OPCOES_DECISAO_AR_MOD.index(reg.decisao) if reg.decisao in OPCOES_DECISAO_AR_MOD else 0)
                         with col_e3:
                             status_edt = st.selectbox("Status", OPCOES_STATUS_AR, index=OPCOES_STATUS_AR.index(reg.status) if reg.status in OPCOES_STATUS_AR else 0)
@@ -4265,13 +4365,12 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                         st.markdown("#### 📥 Salvar PDF")
                         st.download_button(label="Baixar PDF", data=st.session_state.ar_pdf_bytes, file_name=st.session_state.ar_pdf_nome, mime="application/pdf", use_container_width=True)
                 
-                # Botão para limpar e voltar
                 if st.button("🔍 Nova Busca", use_container_width=True):
                     st.session_state.ar_registro_editando = None
                     st.rerun()
         
         # ======================
-        # NOVO: DASHBOARD AR (similar ao RM)
+        # DASHBOARD AR
         # ======================
         elif menu_ar == "📈 Dashboard AR":
             st.subheader("📊 Dashboard - Avisos de Rejeição")
@@ -4281,7 +4380,6 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                 registros = carregar_registros_ar()
             
             if registros:
-                # Adicionar filtros de data ao dashboard
                 st.markdown("### 🔍 Filtros do Dashboard")
                 col_f1, col_f2 = st.columns(2)
                 with col_f1:
@@ -4289,7 +4387,6 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                 with col_f2:
                     data_fim_dash = st.date_input("Data Final", value=None, key="ar_dash_data_fim")
                 
-                # Aplicar filtros de data
                 registros_filtrados = registros.copy()
                 if data_ini_dash:
                     registros_filtrados = [r for r in registros_filtrados if r.data and r.data >= pd.to_datetime(data_ini_dash)]
