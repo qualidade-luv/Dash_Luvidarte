@@ -440,7 +440,7 @@ MARQUEE_CSS = """
 /* Efeito de rolagem - mais lento (45s) e começa já visível */
 .marquee-content {
     display: inline-block;
-    animation: scrollMarquee 80s linear infinite;
+    animation: scrollMarquee 45s linear infinite;
     font-size: 14px;
     font-weight: 600;
     letter-spacing: 1px;
@@ -3454,6 +3454,9 @@ elif aba_selecionada == 'TÊMPERA':
 elif aba_selecionada == 'AVISO DE REJEIÇÃO':
     render_page_header("AVISO DE REJEIÇÃO", f"CQ-018 REV004 · Atualizado {get_horario_brasilia()}", THEME['accent_red'])
     
+    # Adicionar a opção "NÃO RESPONDIDO" nas opções de decisão
+    OPCOES_DECISAO_AR_MOD = ["APROVADO CONDICIONAL", "REPROVADO", "EM ANÁLISE", "NÃO RESPONDIDO"]
+    
     with st.container():
         st.markdown(f"""
         <div style="background: linear-gradient(135deg, {THEME['bg_card']} 0%, {THEME['bg_card2']} 100%); padding: 15px 20px; border-radius: 10px; border-left: 4px solid {THEME['accent_red']}; margin: 20px 0;">
@@ -3463,7 +3466,8 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
         </div>
         """, unsafe_allow_html=True)
         
-        menu_ar = st.radio("Opções do AR:", ["📝 Novo Registro", "📊 Visualizar Registros", "🔍 Buscar/Editar/Excluir"], horizontal=True, key="menu_ar_principal")
+        # MODIFICAÇÃO: Adicionar a opção "📈 Dashboard AR" ao menu
+        menu_ar = st.radio("Opções do AR:", ["📝 Novo Registro", "📊 Visualizar Registros", "🔍 Buscar/Editar/Excluir", "📈 Dashboard AR"], horizontal=True, key="menu_ar_principal")
         
         if 'ar_pdf_bytes' not in st.session_state:
             st.session_state.ar_pdf_bytes = None
@@ -3689,6 +3693,234 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
             except Exception as e:
                 return False, f"Erro ao abrir PDF: {str(e)}"
         
+        # ======================
+        # FUNÇÃO PARA DASHBOARD AR
+        # ======================
+        def gerar_dashboard_ar(registros):
+            """Gera dashboard com estatísticas dos ARs"""
+            if not registros:
+                st.info("📭 Nenhum registro encontrado para análise.")
+                return
+            
+            # Estatísticas gerais
+            total_registros = len(registros)
+            abertos = len([r for r in registros if r.status == "ABERTO"])
+            finalizados = len([r for r in registros if r.status == "FINALIZADO"])
+            nao_respondidos = len([r for r in registros if r.status == "NÃO RESPONDIDA"])
+            
+            # Distribuição por decisão (incluindo NÃO RESPONDIDO)
+            decisao_counts = {}
+            for d in OPCOES_DECISAO_AR_MOD:
+                decisao_counts[d] = len([r for r in registros if r.decisao == d])
+            
+            # Distribuição por turno
+            turno_counts = {}
+            for t in OPCOES_TURNO_AR:
+                turno_counts[t] = len([r for r in registros if r.turno == t])
+            
+            # Top emissores
+            emissor_counts = {}
+            for r in registros:
+                emissor_counts[r.emissor] = emissor_counts.get(r.emissor, 0) + 1
+            top_emissores = sorted(emissor_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+            
+            # Top referências com mais rejeições
+            referencia_counts = {}
+            for r in registros:
+                ref = r.referencia[:30] if len(r.referencia) > 30 else r.referencia
+                referencia_counts[ref] = referencia_counts.get(ref, 0) + 1
+            top_referencias = sorted(referencia_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+            
+            # KPIs
+            st.subheader("📊 Indicadores Gerais")
+            col_k1, col_k2, col_k3, col_k4, col_k5 = st.columns(5)
+            with col_k1:
+                st.metric("📋 Total ARs", total_registros)
+            with col_k2:
+                st.metric("🟡 Em Aberto", abertos)
+            with col_k3:
+                st.metric("🟢 Finalizados", finalizados)
+            with col_k4:
+                st.metric("🔴 Não Respondidos", nao_respondidos)
+            with col_k5:
+                perc_finalizado = (finalizados / total_registros * 100) if total_registros > 0 else 0
+                st.metric("✅ Taxa Finalização", f"{perc_finalizado:.1f}%")
+            
+            st.markdown("<hr>", unsafe_allow_html=True)
+            
+            # Gráficos
+            col_g1, col_g2 = st.columns(2)
+            
+            with col_g1:
+                st.subheader("📊 Distribuição por Decisão")
+                fig, ax = plt.subplots(figsize=(6, 4), facecolor=THEME['bg_card'])
+                
+                decisao_labels = list(decisao_counts.keys())
+                decisao_valores = list(decisao_counts.values())
+                cores_decisao = ['#107C10' if 'APROVADO' in d else '#E81123' if 'REPROVADO' in d else '#FFB900' if 'EM ANÁLISE' in d else '#9E9E9E' for d in decisao_labels]
+                
+                bars = ax.bar(range(len(decisao_labels)), decisao_valores, color=cores_decisao, alpha=0.8)
+                ax.set_xticks(range(len(decisao_labels)))
+                ax.set_xticklabels(decisao_labels, rotation=25, ha='right', fontsize=9)
+                ax.set_ylabel("Quantidade")
+                ax.set_title("ARs por Decisão")
+                
+                for bar, val in zip(bars, decisao_valores):
+                    if val > 0:
+                        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5, str(val), ha='center', va='bottom', fontsize=10, fontweight='bold')
+                
+                fig.tight_layout()
+                st.pyplot(fig)
+                plt.close(fig)
+            
+            with col_g2:
+                st.subheader("🕐 Distribuição por Turno")
+                fig, ax = plt.subplots(figsize=(5, 4), facecolor=THEME['bg_card'])
+                
+                turno_labels = list(turno_counts.keys())
+                turno_valores = list(turno_counts.values())
+                cores_turno = {'Manhã': '#0078D4', 'Tarde': '#E86C2C', 'Noite': '#6B46C1'}
+                cores_graf = [cores_turno.get(t, '#9E9E9E') for t in turno_labels]
+                
+                bars = ax.bar(range(len(turno_labels)), turno_valores, color=cores_graf, alpha=0.8)
+                ax.set_xticks(range(len(turno_labels)))
+                ax.set_xticklabels(turno_labels, fontsize=10)
+                ax.set_ylabel("Quantidade")
+                ax.set_title("ARs por Turno")
+                
+                for bar, val in zip(bars, turno_valores):
+                    if val > 0:
+                        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5, str(val), ha='center', va='bottom', fontsize=10, fontweight='bold')
+                
+                fig.tight_layout()
+                st.pyplot(fig)
+                plt.close(fig)
+            
+            # Status dos ARs (Gráfico de Pizza)
+            st.subheader("📈 Status dos ARs")
+            col_p1, col_p2 = st.columns([1, 1])
+            
+            with col_p1:
+                fig, ax = plt.subplots(figsize=(5, 4), facecolor=THEME['bg_card'])
+                status_labels = ['ABERTO', 'FINALIZADO', 'NÃO RESPONDIDA']
+                status_valores = [abertos, finalizados, nao_respondidos]
+                status_cores = ['#ffc107', '#28a745', '#dc3545']
+                
+                valores_validos = [(l, v, c) for l, v, c in zip(status_labels, status_valores, status_cores) if v > 0]
+                
+                if valores_validos:
+                    labels, sizes, colors_pie = zip(*valores_validos)
+                    wedges, texts, autotexts = ax.pie(
+                        sizes, labels=labels, colors=colors_pie,
+                        autopct='%1.1f%%', startangle=90,
+                        textprops={'fontsize': 9}
+                    )
+                    for autotext in autotexts:
+                        autotext.set_color('white')
+                        autotext.set_fontweight('bold')
+                    ax.set_title('Distribuição por Status', fontweight='bold', fontsize=12)
+                
+                fig.tight_layout()
+                st.pyplot(fig)
+                plt.close(fig)
+            
+            with col_p2:
+                if top_emissores:
+                    st.subheader("👥 Top 5 Emissores")
+                    fig, ax = plt.subplots(figsize=(5, 3.5), facecolor=THEME['bg_card'])
+                    emissores, quantidades = zip(*top_emissores)
+                    bars = ax.barh(range(len(emissores)), quantidades, color=THEME['accent_cyan'], alpha=0.8)
+                    ax.set_yticks(range(len(emissores)))
+                    ax.set_yticklabels([e[:20] for e in emissores], fontsize=9)
+                    ax.set_xlabel("Quantidade de ARs")
+                    ax.invert_yaxis()
+                    for bar, val in zip(bars, quantidades):
+                        ax.text(bar.get_width() + 0.2, bar.get_y() + bar.get_height()/2, str(val), va='center', fontsize=9, fontweight='bold')
+                    fig.tight_layout()
+                    st.pyplot(fig)
+                    plt.close(fig)
+            
+            # Top referências com mais rejeições
+            if top_referencias:
+                st.subheader("🏷️ Top 5 Referências com Mais Rejeições")
+                df_ref = pd.DataFrame(top_referencias, columns=['Referência', 'Quantidade'])
+                df_ref = df_ref.sort_values('Quantidade', ascending=False)
+                
+                fig, ax = plt.subplots(figsize=(8, 4), facecolor=THEME['bg_card'])
+                bars = ax.bar(range(len(df_ref)), df_ref['Quantidade'], color=THEME['accent_red'], alpha=0.8)
+                ax.set_xticks(range(len(df_ref)))
+                ax.set_xticklabels(df_ref['Referência'], rotation=25, ha='right', fontsize=9)
+                ax.set_ylabel("Quantidade de ARs")
+                ax.set_title("Referências com Mais Rejeições")
+                
+                for bar, val in zip(bars, df_ref['Quantidade']):
+                    ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5, str(val), ha='center', va='bottom', fontsize=10, fontweight='bold')
+                
+                fig.tight_layout()
+                st.pyplot(fig)
+                plt.close(fig)
+            
+            # Evolução diária
+            st.subheader("📅 Evolução Diária de ARs")
+            
+            # Agrupar por data
+            datas_dict = {}
+            for r in registros:
+                if r.data:
+                    data_str = r.data.strftime("%d/%m/%Y")
+                    if data_str not in datas_dict:
+                        datas_dict[data_str] = {'total': 0, 'abertos': 0, 'finalizados': 0}
+                    datas_dict[data_str]['total'] += 1
+                    if r.status == "ABERTO":
+                        datas_dict[data_str]['abertos'] += 1
+                    elif r.status == "FINALIZADO":
+                        datas_dict[data_str]['finalizados'] += 1
+            
+            if datas_dict:
+                datas_ordenadas = sorted(datas_dict.keys(), key=lambda x: datetime.strptime(x, "%d/%m/%Y"))
+                totais = [datas_dict[d]['total'] for d in datas_ordenadas]
+                abertos_dia = [datas_dict[d]['abertos'] for d in datas_ordenadas]
+                finalizados_dia = [datas_dict[d]['finalizados'] for d in datas_ordenadas]
+                
+                fig, ax = plt.subplots(figsize=(10, 4), facecolor=THEME['bg_card'])
+                apply_chart_style(ax, fig, "ARs por Dia", ylabel="Quantidade")
+                
+                x = range(len(datas_ordenadas))
+                ax.plot(x, totais, marker='o', linewidth=2, color=THEME['accent_red'], label='Total ARs')
+                ax.plot(x, abertos_dia, marker='s', linewidth=2, color=THEME['accent_orange'], label='Em Aberto')
+                ax.plot(x, finalizados_dia, marker='^', linewidth=2, color=THEME['accent_lime'], label='Finalizados')
+                
+                ax.set_xticks(x)
+                ax.set_xticklabels(datas_ordenadas, rotation=35, ha='right', fontsize=8)
+                ax.legend(loc='upper left', fontsize=9)
+                
+                fig.tight_layout()
+                st.pyplot(fig)
+                plt.close(fig)
+            
+            # Tabela de registros recentes
+            st.subheader("📋 Últimos 10 Registros")
+            registros_recentes = sorted(registros, key=lambda x: x.data if x.data else datetime.min, reverse=True)[:10]
+            
+            dados_tabela = []
+            for r in registros_recentes:
+                dados_tabela.append({
+                    "Nº": r.numero,
+                    "Data": r.data.strftime("%d/%m/%Y") if r.data else "-",
+                    "Referência": r.referencia[:35] + "..." if len(r.referencia) > 35 else r.referencia,
+                    "Decisão": r.decisao,
+                    "Status": r.status,
+                    "Turno": r.turno,
+                    "Emissor": r.emissor
+                })
+            
+            if dados_tabela:
+                df_tabela = pd.DataFrame(dados_tabela)
+                st.dataframe(df_tabela, use_container_width=True, height=300)
+        
+        # ======================
+        # NOVO REGISTRO (com decisão modificada)
+        # ======================
         if menu_ar == "📝 Novo Registro":
             st.subheader("Novo Aviso de Rejeição")
             st.info("⚠️ Data e hora serão preenchidas automaticamente no salvamento (Horário de Brasília)")
@@ -3794,7 +4026,8 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                         codigo = st.text_input("Código*")
                         emissor = st.text_input("Emissor*")
                         referencia = st.text_area("Referência*", height=100)
-                        decisao = st.selectbox("Decisão*", OPCOES_DECISAO_AR)
+                        # MODIFICAÇÃO: Usar OPCOES_DECISAO_AR_MOD
+                        decisao = st.selectbox("Decisão*", OPCOES_DECISAO_AR_MOD)
                     with col3:
                         status = st.selectbox("Status*", OPCOES_STATUS_AR)
                         descricao = st.text_area("Descrição do Problema*", height=150)
@@ -3833,6 +4066,9 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                                     st.session_state.ar_etapa_confirmacao = 1
                                     st.rerun()
         
+        # ======================
+        # VISUALIZAR REGISTROS (com opção NÃO RESPONDIDO)
+        # ======================
         elif menu_ar == "📊 Visualizar Registros":
             st.subheader("Registros de Aviso de Rejeição")
             with st.spinner("Carregando registros..."):
@@ -3842,7 +4078,8 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                 with col_f1:
                     filtro_status = st.selectbox("Filtrar por Status", ["Todos"] + OPCOES_STATUS_AR)
                 with col_f2:
-                    filtro_decisao = st.selectbox("Filtrar por Decisão", ["Todos"] + OPCOES_DECISAO_AR)
+                    # MODIFICAÇÃO: Usar OPCOES_DECISAO_AR_MOD
+                    filtro_decisao = st.selectbox("Filtrar por Decisão", ["Todos"] + OPCOES_DECISAO_AR_MOD)
                 with col_f3:
                     filtro_numero = st.number_input("Filtrar por Nº", min_value=0, step=1, value=0)
                 registros_filtrados = registros
@@ -3860,7 +4097,7 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                 with col_e3:
                     st.metric("Finalizados", len([r for r in registros if r.status == "FINALIZADO"]))
                 with col_e4:
-                    st.metric("Aprovados Cond.", len([r for r in registros if r.decisao == "APROVADO CONDICIONAL"]))
+                    st.metric("Não Respondidos", len([r for r in registros if r.status == "NÃO RESPONDIDA"]))
                 dados = []
                 for reg in registros_filtrados[:100]:
                     dados.append({"Nº": reg.numero, "Data": reg.data.strftime("%d/%m/%Y") if reg.data else "-", "Hora": reg.hora, "Código": reg.codigo, "Emissor": reg.emissor, "Referência": reg.referencia[:40] + "..." if len(reg.referencia) > 40 else reg.referencia, "Decisão": reg.decisao, "Status": reg.status, "Turno": reg.turno})
@@ -3869,6 +4106,9 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
             else:
                 st.info("📭 Nenhum registro encontrado na planilha.")
         
+        # ======================
+        # BUSCAR/EDITAR/EXCLUIR
+        # ======================
         elif menu_ar == "🔍 Buscar/Editar/Excluir":
             st.subheader("Buscar, Editar ou Excluir Registro")
             
@@ -3924,7 +4164,8 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                             codigo_edt = st.text_input("Código", reg.codigo)
                             emissor_edt = st.text_input("Emissor", reg.emissor)
                             referencia_edt = st.text_area("Referência", reg.referencia, height=80)
-                            decisao_edt = st.selectbox("Decisão", OPCOES_DECISAO_AR, index=OPCOES_DECISAO_AR.index(reg.decisao) if reg.decisao in OPCOES_DECISAO_AR else 0)
+                            # MODIFICAÇÃO: Usar OPCOES_DECISAO_AR_MOD
+                            decisao_edt = st.selectbox("Decisão", OPCOES_DECISAO_AR_MOD, index=OPCOES_DECISAO_AR_MOD.index(reg.decisao) if reg.decisao in OPCOES_DECISAO_AR_MOD else 0)
                         with col_e3:
                             status_edt = st.selectbox("Status", OPCOES_STATUS_AR, index=OPCOES_STATUS_AR.index(reg.status) if reg.status in OPCOES_STATUS_AR else 0)
                             descricao_edt = st.text_area("Descrição", reg.descricao, height=80)
@@ -4028,6 +4269,39 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                 if st.button("🔍 Nova Busca", use_container_width=True):
                     st.session_state.ar_registro_editando = None
                     st.rerun()
+        
+        # ======================
+        # NOVO: DASHBOARD AR (similar ao RM)
+        # ======================
+        elif menu_ar == "📈 Dashboard AR":
+            st.subheader("📊 Dashboard - Avisos de Rejeição")
+            st.caption(f"Análise estatística dos ARs cadastrados | Atualizado {get_horario_brasilia()}")
+            
+            with st.spinner("Carregando dados para o dashboard..."):
+                registros = carregar_registros_ar()
+            
+            if registros:
+                # Adicionar filtros de data ao dashboard
+                st.markdown("### 🔍 Filtros do Dashboard")
+                col_f1, col_f2 = st.columns(2)
+                with col_f1:
+                    data_ini_dash = st.date_input("Data Inicial", value=None, key="ar_dash_data_ini")
+                with col_f2:
+                    data_fim_dash = st.date_input("Data Final", value=None, key="ar_dash_data_fim")
+                
+                # Aplicar filtros de data
+                registros_filtrados = registros.copy()
+                if data_ini_dash:
+                    registros_filtrados = [r for r in registros_filtrados if r.data and r.data >= pd.to_datetime(data_ini_dash)]
+                if data_fim_dash:
+                    registros_filtrados = [r for r in registros_filtrados if r.data and r.data <= pd.to_datetime(data_fim_dash)]
+                
+                if data_ini_dash or data_fim_dash:
+                    st.caption(f"📅 Período filtrado: {len(registros_filtrados)} de {len(registros)} registros")
+                
+                gerar_dashboard_ar(registros_filtrados)
+            else:
+                st.info("📭 Nenhum registro encontrado para gerar o dashboard.")
     
     st.markdown(f"""
     <div style="text-align:right;padding:16px 0 8px;
