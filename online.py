@@ -602,7 +602,6 @@ ID_PLANILHA_RECADOS = '1R0V4HpmRNXAd2TxVv8c_dVVoc1tXDPBOVSFBX1JKHvs'
 ABA_RECADOS = 'Rodapé'
 
 @st.cache_data(ttl=240)  # Atualiza a cada 60 segundos
-@st.cache_data(ttl=240)  # Atualiza a cada 60 segundos
 def carregar_mensagens_rodape():
     """
     Carrega as mensagens da planilha Recados - aba Rodapé.
