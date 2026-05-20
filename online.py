@@ -600,6 +600,7 @@ ID_PLANILHA_RECADOS = '1R0V4HpmRNXAd2TxVv8c_dVVoc1tXDPBOVSFBX1JKHvs'
 ABA_RECADOS = 'Rodapé'
 
 @st.cache_data(ttl=240)  # Atualiza a cada 60 segundos
+@st.cache_data(ttl=240)  # Atualiza a cada 60 segundos
 def carregar_mensagens_rodape():
     """
     Carrega as mensagens da planilha Recados - aba Rodapé.
@@ -618,7 +619,6 @@ def carregar_mensagens_rodape():
         try:
             sheet = spreadsheet.worksheet(ABA_RECADOS)
         except Exception as e:
-            # Se não existir a aba, retorna mensagem padrão
             print(f"Aba '{ABA_RECADOS}' não encontrada na planilha Recados. Erro: {e}")
             return ["📢 Sistema TRS Dashboard - Acompanhamento de Produção"]
         
@@ -645,8 +645,10 @@ def carregar_mensagens_rodape():
             print(f"Colunas 'DATA' ou 'MENSAGEM' não encontradas. Cabeçalho: {cabecalho}")
             return ["📢 Sistema TRS Dashboard - Acompanhamento de Produção"]
         
-        # Data atual para comparação
+        # Data atual para comparação - USANDO APENAS DATA LOCAL
         hoje = datetime.now().date()
+        print(f"Data atual para filtro: {hoje}")  # Debug
+        
         mensagens_validas = []
         
         # Processa as linhas (a partir da linha 1, índice 1)
@@ -661,25 +663,50 @@ def carregar_mensagens_rodape():
             if not mensagem:
                 continue
             
+            print(f"Processando linha: data='{data_str}', mensagem='{mensagem[:50]}'")  # Debug
+            
             # Converte a data da planilha para objeto date
             data_mensagem = None
-            # Tenta vários formatos de data
-            formatos = ["%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%m/%d/%Y"]
-            for fmt in formatos:
-                try:
-                    data_mensagem = datetime.strptime(data_str, fmt).date()
-                    break
-                except:
-                    continue
+            
+            # Formato DD/MM/YYYY (prioritário para datas brasileiras)
+            try:
+                if '/' in data_str:
+                    partes = data_str.split('/')
+                    if len(partes) == 3:
+                        dia = int(partes[0])
+                        mes = int(partes[1])
+                        ano = int(partes[2])
+                        data_mensagem = date(ano, mes, dia)
+                        print(f"  Convertido via DD/MM/YYYY: {data_mensagem}")
+            except Exception as e:
+                print(f"  Erro conversão DD/MM/YYYY: {e}")
+            
+            # Fallback para outros formatos
+            if data_mensagem is None:
+                formatos = ["%Y-%m-%d", "%d-%m-%Y", "%m/%d/%Y"]
+                for fmt in formatos:
+                    try:
+                        data_mensagem = datetime.strptime(data_str, fmt).date()
+                        print(f"  Convertido via {fmt}: {data_mensagem}")
+                        break
+                    except:
+                        continue
             
             # Se conseguiu converter a data e é igual a hoje, adiciona
-            if data_mensagem and data_mensagem == hoje:
-                mensagens_validas.append(mensagem)
+            if data_mensagem:
+                print(f"  Comparando: data_mensagem={data_mensagem} vs hoje={hoje} -> {data_mensagem == hoje}")
+                if data_mensagem == hoje:
+                    mensagens_validas.append(mensagem)
+                    print(f"  ✅ MENSAGEM ADICIONADA: {mensagem[:50]}")
+            else:
+                print(f"  ❌ Falha ao converter data: '{data_str}'")
         
         # Se não encontrou nenhuma mensagem para hoje, retorna mensagem padrão
         if not mensagens_validas:
+            print("Nenhuma mensagem válida encontrada para hoje")
             return ["📢 Sistema TRS Dashboard - Acompanhamento de Produção"]
         
+        print(f"Total de mensagens encontradas: {len(mensagens_validas)}")
         return mensagens_validas
         
     except Exception as e:
