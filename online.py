@@ -437,13 +437,15 @@ MARQUEE_CSS = """
     backdrop-filter: blur(5px);
 }
 
-/* Efeito de rolagem - mais lento (45s) e começa já visível */
+/* Efeito de rolagem - da DIREITA para ESQUERDA */
 .marquee-content {
     display: inline-block;
     animation: scrollMarquee 45s linear infinite;
     font-size: 14px;
     font-weight: 600;
     letter-spacing: 1px;
+    /* Começa fora da tela pela DIREITA */
+    transform: translateX(100%);
 }
 
 .marquee-content span {
@@ -451,13 +453,13 @@ MARQUEE_CSS = """
     margin-right: 100px;
 }
 
-/* Animação de rolagem - COMEÇA COM O TEXTO JÁ VISÍVEL */
+/* Animação de rolagem - DA DIREITA PARA ESQUERDA */
 @keyframes scrollMarquee {
     0% {
-        transform: translateX(30%);  /* Começa com 30% visível (aparece imediatamente) */
+        transform: translateX(100%);  /* Começa completamente fora da tela pela DIREITA */
     }
     100% {
-        transform: translateX(-100%);  /* Sai completamente pela esquerda */
+        transform: translateX(-100%);  /* Sai completamente pela ESQUERDA */
     }
 }
 
