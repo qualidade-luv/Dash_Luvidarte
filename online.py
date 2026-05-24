@@ -5978,10 +5978,15 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
     """, unsafe_allow_html=True)
 
 # ==================================================================================================
-# MANUTENÇÃO PREVENTIVA - NOVA ABA (CORRIGIDA)
+# MANUTENÇÃO PREVENTIVA - NOVA ABA (COM CONTROLE VIA GOOGLE SHEETS)
 # ==================================================================================================
 elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
     render_page_header("MANUTENÇÃO PREVENTIVA", f"Plano de Manutenção · Atualizado {get_horario_brasilia()}", THEME['accent_purple'])
+    
+    # ======================
+    # CONSTANTES
+    # ======================
+    ABA_CONTROLE = 'CONTROLE'  # Aba para controle de e-mails enviados
     
     # ======================
     # CLASSES DE DADOS
@@ -6018,7 +6023,31 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
             return "PROGRAMADO"
     
     # ======================
-    # FUNÇÕES DA PLANILHA PREVENTIVA (CORRIGIDAS)
+    # FUNÇÃO PARA INICIALIZAR ABA DE CONTROLE
+    # ======================
+    def inicializar_aba_controle():
+        """Cria a aba de controle de e-mails se não existir"""
+        try:
+            client = get_gspread_client()
+            if client is None:
+                return None
+            
+            spreadsheet = client.open_by_key(ID_PLANILHA_PREVENTIVA)
+            
+            try:
+                sheet = spreadsheet.worksheet(ABA_CONTROLE)
+            except:
+                sheet = spreadsheet.add_worksheet(title=ABA_CONTROLE, rows=1000, cols=10)
+                cabecalho = ["CHAVE", "DATA_ENVIO", "TIPO", "ID_MAQUINA", "DATA_AGENDADA", "MAQUINA"]
+                sheet.append_row(cabecalho)
+            
+            return sheet
+        except Exception as e:
+            print(f"Erro ao inicializar aba de controle: {e}")
+            return None
+    
+    # ======================
+    # FUNÇÕES DA PLANILHA PREVENTIVA
     # ======================
     @retry_on_quota()
     @st.cache_data(ttl=300)
@@ -6052,12 +6081,11 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
                     registro = RegistroPreventiva()
                     registro.id = row[0].strip()
                     
-                    # CORREÇÃO: Converter data de forma robusta
+                    # Converter data de forma robusta
                     data_str = row[1].strip() if len(row) > 1 and row[1] else ""
                     registro.data = None
                     
                     if data_str:
-                        # Tenta diferentes formatos de data
                         formatos = ["%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%m/%d/%Y"]
                         for fmt in formatos:
                             try:
@@ -6066,7 +6094,6 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
                             except:
                                 continue
                         
-                        # Se ainda não conseguiu, tenta com a função existente
                         if registro.data is None:
                             registro.data = converter_data_br(data_str)
                     
@@ -6164,7 +6191,6 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
             if registro.data:
                 registro.status = calcular_status_preventiva(registro.data.date(), registro.analise)
             
-            # Garantir formato DD/MM/YYYY
             data_formatada = registro.data.strftime("%d/%m/%Y") if registro.data else ""
             
             dados = [
@@ -6381,47 +6407,73 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
             return False
     
     # ======================
-    # VERIFICAR LEMBRETES (executa a cada 6 horas)
+    # VERIFICAR LEMBRETES (com persistência no Google Sheets)
     # ======================
     def verificar_lembretes_preventiva():
+        """Verifica manutenções e envia e-mails usando a aba CONTROLE da planilha"""
         try:
             registros = carregar_preventivas()
             hoje = datetime.now().date()
             
-            arquivo_lembretes = "lembretes_preventiva.json"
-            lembretes_enviados = {}
+            # Inicializar aba de controle
+            sheet_controle = inicializar_aba_controle()
+            if sheet_controle is None:
+                print("Não foi possível acessar a aba de controle")
+                return
             
-            if os.path.exists(arquivo_lembretes):
-                try:
-                    with open(arquivo_lembretes, 'r', encoding='utf-8') as f:
-                        lembretes_enviados = json.load(f)
-                except:
-                    lembretes_enviados = {}
+            # Carregar chaves já enviadas da planilha
+            dados_controle = sheet_controle.get_all_values()
+            enviados_3dias = set()
+            enviados_atraso = set()
+            
+            for row in dados_controle[1:]:  # Pular cabeçalho
+                if len(row) >= 3:
+                    chave = row[0]
+                    tipo = row[2] if len(row) > 2 else ""
+                    if tipo == "LEMBRETE":
+                        enviados_3dias.add(chave)
+                    elif tipo == "ATRASO":
+                        enviados_atraso.add(chave)
             
             for registro in registros:
                 if registro.data and registro.status != "FINALIZADO":
                     data_agenda = registro.data.date()
                     dias_restantes = (data_agenda - hoje).days
                     
+                    # LEMBRETE: 3 dias antes
                     if dias_restantes == 3:
                         chave = f"{registro.id}_{data_agenda}"
-                        if chave not in lembretes_enviados.get("enviados_3dias", []):
+                        if chave not in enviados_3dias:
                             if enviar_email_preventiva(registro, "LEMBRETE"):
-                                if "enviados_3dias" not in lembretes_enviados:
-                                    lembretes_enviados["enviados_3dias"] = []
-                                lembretes_enviados["enviados_3dias"].append(chave)
-                                with open(arquivo_lembretes, 'w', encoding='utf-8') as f:
-                                    json.dump(lembretes_enviados, f, ensure_ascii=False)
+                                # Salvar no Google Sheets
+                                sheet_controle.append_row([
+                                    chave,
+                                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                    "LEMBRETE",
+                                    registro.id,
+                                    data_agenda.strftime("%Y-%m-%d"),
+                                    registro.maquina
+                                ])
+                                enviados_3dias.add(chave)
+                                print(f"Lembrete enviado para {registro.maquina} - {data_agenda}")
                     
+                    # ATRASO: data passada e não finalizada
                     elif dias_restantes < 0 and registro.status == "EM ATRASO":
                         chave = f"{registro.id}_{data_agenda}_atraso"
-                        if chave not in lembretes_enviados.get("enviados_atraso", []):
+                        if chave not in enviados_atraso:
                             if enviar_email_preventiva(registro, "ATRASO"):
-                                if "enviados_atraso" not in lembretes_enviados:
-                                    lembretes_enviados["enviados_atraso"] = []
-                                lembretes_enviados["enviados_atraso"].append(chave)
-                                with open(arquivo_lembretes, 'w', encoding='utf-8') as f:
-                                    json.dump(lembretes_enviados, f, ensure_ascii=False)
+                                # Salvar no Google Sheets
+                                sheet_controle.append_row([
+                                    chave,
+                                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                    "ATRASO",
+                                    registro.id,
+                                    data_agenda.strftime("%Y-%m-%d"),
+                                    registro.maquina
+                                ])
+                                enviados_atraso.add(chave)
+                                print(f"Aviso de atraso enviado para {registro.maquina} - {data_agenda}")
+        
         except Exception as e:
             print(f"Erro ao verificar lembretes: {e}")
     
@@ -6860,15 +6912,3 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
         MANUTENÇÃO PREVENTIVA · {get_horario_brasilia()}
     </div>
     """, unsafe_allow_html=True)
-
-# ==================================================================================================
-# RENDERIZAR FAIXA DE ROLAGEM NO RODAPÉ (aparece em todas as abas)
-# ==================================================================================================
-# Define a planilha de fechamento para a faixa de rolagem (precisa estar definida antes)
-# A planilha ID_PLANILHA_FECHAMENTO já está definida na seção de FECHAMENTO TURNO
-# Caso o usuário não acesse o FECHAMENTO TURNO antes, definimos um valor padrão
-if 'ID_PLANILHA_FECHAMENTO' not in dir():
-    ID_PLANILHA_FECHAMENTO = '1_HkKTRCSg24wDJ47v5wSd-UPBkbalLd6plV9IvlTY64'
-    
-# Renderiza a faixa de rolagem
-renderizar_faixa_rolagem()
