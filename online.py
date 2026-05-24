@@ -527,11 +527,17 @@ ABAS = {
     'TÊMPERA': 'TRS_TEMPERA',
     'AVISO DE REJEIÇÃO': 'AR',
     'REQUISIÇÃO MANUTENÇÃO': 'RM',
-    'FECHAMENTO TURNO': 'FT'
+    'FECHAMENTO TURNO': 'FT',
+    'MANUTENÇÃO PREVENTIVA': 'MP'
 }
 
 CAMINHO_PDF_AR = r"\\srv-luvidarte\dados\DOC\Engenharia_Luvidarte\SGQ - LUVIDARTE - ALTERADAS\0-AVISO DE REJEIÇÃO\1-PDF"
 CAMINHO_PDF_RELATORIO_AR = r"\\srv-luvidarte\dados\DOC\Engenharia_Luvidarte\SGQ - LUVIDARTE - ALTERADAS\0-AVISO DE REJEIÇÃO\2-PDF"
+
+# ID da planilha PREVENTIVA
+ID_PLANILHA_PREVENTIVA = '1FOh8OT5NaqPV3OWZziQLlclwJdSnIdd7qkS1KbbUS40'
+ABA_PREVENTIVA = 'PREVENTIVA'
+ABA_CADASTRO_PREVENTIVA = 'CADASTRO'
 
 EMAIL_CONFIG_AR = {
     "usuario": "erp@luvidarte.com.br",
@@ -4459,10 +4465,10 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
     OPCOES_STATUS_RM = ["ABERTO", "EM ANDAMENTO", "FINALIZADO", "CANCELADO"]
     
     # Criar diretórios RM
-    CAMINHO_PDF_RM = r"\\srv-luvidarte\dados\DOC\Engenharia_Luvidarte\SGQ - LUVIDARTE - ALTERADAS\1-REQUISIÇÃO DE MANUTENÇÃO\1-PDF"
-    CAMINHO_PDF_RELATORIO_RM = r"\\srv-luvidarte\dados\DOC\Engenharia_Luvidarte\SGQ - LUVIDARTE - ALTERADAS\1-REQUISIÇÃO DE MANUTENÇÃO\2-PDF"
-    os.makedirs(CAMINHO_PDF_RM, exist_ok=True)
-    os.makedirs(CAMINHO_PDF_RELATORIO_RM, exist_ok=True)
+    #CAMINHO_PDF_RM = r"\\srv-luvidarte\dados\DOC\Engenharia_Luvidarte\SGQ - LUVIDARTE - ALTERADAS\1-REQUISIÇÃO DE MANUTENÇÃO\1-PDF"
+    #CAMINHO_PDF_RELATORIO_RM = r"\\srv-luvidarte\dados\DOC\Engenharia_Luvidarte\SGQ - LUVIDARTE - ALTERADAS\1-REQUISIÇÃO DE MANUTENÇÃO\2-PDF"
+    #os.makedirs(CAMINHO_PDF_RM, exist_ok=True)
+    #os.makedirs(CAMINHO_PDF_RELATORIO_RM, exist_ok=True)
     
     # ====================== CONFIGURAÇÕES DE E-MAIL - LENDO DO SECRETS ======================
     try:
@@ -5971,6 +5977,889 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
     </div>
     """, unsafe_allow_html=True)
 
+# ==================================================================================================
+# MANUTENÇÃO PREVENTIVA - NOVA ABA (CORRIGIDA)
+# ==================================================================================================
+elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
+    render_page_header("MANUTENÇÃO PREVENTIVA", f"Plano de Manutenção · Atualizado {get_horario_brasilia()}", THEME['accent_purple'])
+    
+    # ======================
+    # CLASSES DE DADOS
+    # ======================
+    @dataclass
+    class RegistroPreventiva:
+        id: Optional[str] = None
+        data: Optional[datetime] = None
+        maquina: str = ""
+        setor: str = ""
+        descricao: str = ""
+        execucao: str = ""
+        analise: str = ""
+        status: str = "PROGRAMADO"
+    
+    @dataclass
+    class CadastroMaquina:
+        id: Optional[str] = None
+        maquina: str = ""
+        setor: str = ""
+    
+    # ======================
+    # FUNÇÕES AUXILIARES
+    # ======================
+    def calcular_status_preventiva(data_agendada: date, analise: str) -> str:
+        hoje = datetime.now().date()
+        if analise and analise.strip():
+            return "FINALIZADO"
+        elif data_agendada < hoje:
+            return "EM ATRASO"
+        elif data_agendada == hoje:
+            return "EM EXECUÇÃO"
+        else:
+            return "PROGRAMADO"
+    
+    # ======================
+    # FUNÇÕES DA PLANILHA PREVENTIVA (CORRIGIDAS)
+    # ======================
+    @retry_on_quota()
+    @st.cache_data(ttl=300)
+    def carregar_preventivas(filtros: Dict[str, Any] = None) -> List[RegistroPreventiva]:
+        registros = []
+        try:
+            client = get_gspread_client()
+            if client is None:
+                st.error("❌ Erro ao conectar ao Google Sheets")
+                return registros
+            
+            spreadsheet = client.open_by_key(ID_PLANILHA_PREVENTIVA)
+            
+            try:
+                sheet = spreadsheet.worksheet(ABA_PREVENTIVA)
+            except:
+                sheet = spreadsheet.add_worksheet(title=ABA_PREVENTIVA, rows=1000, cols=20)
+                cabecalho = ["ID", "DATA", "MÁQUINA", "SETOR", "DESCRIÇÃO", "EXECUÇÃO", "ANÁLISE", "STATUS"]
+                sheet.append_row(cabecalho)
+                return registros
+            
+            todos_dados = sheet.get_all_values()
+            if len(todos_dados) < 2:
+                return registros
+            
+            for row in todos_dados[1:]:
+                if len(row) < 8 or not row[0] or not row[0].strip():
+                    continue
+                
+                try:
+                    registro = RegistroPreventiva()
+                    registro.id = row[0].strip()
+                    
+                    # CORREÇÃO: Converter data de forma robusta
+                    data_str = row[1].strip() if len(row) > 1 and row[1] else ""
+                    registro.data = None
+                    
+                    if data_str:
+                        # Tenta diferentes formatos de data
+                        formatos = ["%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%m/%d/%Y"]
+                        for fmt in formatos:
+                            try:
+                                registro.data = datetime.strptime(data_str, fmt)
+                                break
+                            except:
+                                continue
+                        
+                        # Se ainda não conseguiu, tenta com a função existente
+                        if registro.data is None:
+                            registro.data = converter_data_br(data_str)
+                    
+                    registro.maquina = row[2].strip() if len(row) > 2 else ""
+                    registro.setor = row[3].strip() if len(row) > 3 else ""
+                    registro.descricao = row[4].strip() if len(row) > 4 else ""
+                    registro.execucao = row[5].strip() if len(row) > 5 else ""
+                    registro.analise = row[6].strip() if len(row) > 6 else ""
+                    
+                    if registro.data:
+                        registro.status = calcular_status_preventiva(registro.data.date(), registro.analise)
+                    else:
+                        registro.status = "PROGRAMADO"
+                    
+                    registros.append(registro)
+                except Exception as e:
+                    print(f"Erro ao processar linha: {e}")
+                    continue
+            
+            if filtros:
+                registros_filtrados = []
+                for r in registros:
+                    incluir = True
+                    if filtros.get('id') and filtros['id'].upper() != r.id.upper():
+                        incluir = False
+                    if filtros.get('maquina') and filtros['maquina'].lower() not in r.maquina.lower():
+                        incluir = False
+                    if filtros.get('setor') and filtros['setor'].upper() != r.setor.upper():
+                        incluir = False
+                    if filtros.get('status') and filtros['status'].upper() != r.status.upper():
+                        incluir = False
+                    if filtros.get('data_ini') and r.data and r.data.date() < filtros['data_ini']:
+                        incluir = False
+                    if filtros.get('data_fim') and r.data and r.data.date() > filtros['data_fim']:
+                        incluir = False
+                    if incluir:
+                        registros_filtrados.append(r)
+                return registros_filtrados
+            
+            return registros
+        except Exception as e:
+            st.error(f"Erro ao carregar preventivas: {e}")
+            return registros
+    
+    @retry_on_quota()
+    @st.cache_data(ttl=300)
+    def carregar_cadastro_maquinas() -> List[CadastroMaquina]:
+        registros = []
+        try:
+            client = get_gspread_client()
+            if client is None:
+                return registros
+            
+            spreadsheet = client.open_by_key(ID_PLANILHA_PREVENTIVA)
+            
+            try:
+                sheet = spreadsheet.worksheet(ABA_CADASTRO_PREVENTIVA)
+            except:
+                sheet = spreadsheet.add_worksheet(title=ABA_CADASTRO_PREVENTIVA, rows=1000, cols=10)
+                cabecalho = ["ID", "MÁQUINA", "SETOR"]
+                sheet.append_row(cabecalho)
+                return registros
+            
+            todos_dados = sheet.get_all_values()
+            if len(todos_dados) < 2:
+                return registros
+            
+            for row in todos_dados[1:]:
+                if len(row) < 3 or not row[0] or not row[0].strip():
+                    continue
+                
+                try:
+                    registro = CadastroMaquina()
+                    registro.id = row[0].strip()
+                    registro.maquina = row[1].strip() if len(row) > 1 else ""
+                    registro.setor = row[2].strip() if len(row) > 2 else ""
+                    registros.append(registro)
+                except:
+                    continue
+            
+            return registros
+        except Exception as e:
+            st.error(f"Erro ao carregar cadastro: {e}")
+            return registros
+    
+    def salvar_preventiva(registro: RegistroPreventiva, eh_alteracao: bool = False) -> bool:
+        try:
+            client = get_gspread_client()
+            if client is None:
+                return False
+            
+            spreadsheet = client.open_by_key(ID_PLANILHA_PREVENTIVA)
+            sheet = spreadsheet.worksheet(ABA_PREVENTIVA)
+            
+            if registro.data:
+                registro.status = calcular_status_preventiva(registro.data.date(), registro.analise)
+            
+            # Garantir formato DD/MM/YYYY
+            data_formatada = registro.data.strftime("%d/%m/%Y") if registro.data else ""
+            
+            dados = [
+                registro.id,
+                data_formatada,
+                registro.maquina,
+                registro.setor,
+                registro.descricao,
+                registro.execucao,
+                registro.analise,
+                registro.status
+            ]
+            
+            if eh_alteracao:
+                cell = None
+                todas_celulas = sheet.get_all_values()
+                for i, row in enumerate(todas_celulas, start=1):
+                    if len(row) > 0 and i > 1:
+                        if row[0] == registro.id and row[1] == data_formatada:
+                            cell = sheet.cell(i, 1)
+                            break
+                
+                if cell:
+                    for col, valor in enumerate(dados, start=1):
+                        sheet.update_cell(cell.row, col, valor)
+                else:
+                    sheet.append_row(dados)
+            else:
+                sheet.append_row(dados)
+            
+            st.cache_data.clear()
+            return True
+        except Exception as e:
+            st.error(f"Erro ao salvar preventiva: {e}")
+            return False
+    
+    def atualizar_preventiva(registro: RegistroPreventiva, linha: int) -> bool:
+        try:
+            client = get_gspread_client()
+            if client is None:
+                return False
+            
+            spreadsheet = client.open_by_key(ID_PLANILHA_PREVENTIVA)
+            sheet = spreadsheet.worksheet(ABA_PREVENTIVA)
+            
+            if registro.data:
+                registro.status = calcular_status_preventiva(registro.data.date(), registro.analise)
+            
+            dados = [
+                registro.id,
+                registro.data.strftime("%d/%m/%Y") if registro.data else "",
+                registro.maquina,
+                registro.setor,
+                registro.descricao,
+                registro.execucao,
+                registro.analise,
+                registro.status
+            ]
+            
+            for col, valor in enumerate(dados, start=1):
+                sheet.update_cell(linha, col, valor)
+            
+            st.cache_data.clear()
+            return True
+        except Exception as e:
+            st.error(f"Erro ao atualizar preventiva: {e}")
+            return False
+    
+    def excluir_preventiva(linha: int) -> bool:
+        try:
+            client = get_gspread_client()
+            if client is None:
+                return False
+            
+            spreadsheet = client.open_by_key(ID_PLANILHA_PREVENTIVA)
+            sheet = spreadsheet.worksheet(ABA_PREVENTIVA)
+            sheet.delete_rows(linha)
+            st.cache_data.clear()
+            return True
+        except Exception as e:
+            st.error(f"Erro ao excluir preventiva: {e}")
+            return False
+    
+    def salvar_cadastro_maquina(registro: CadastroMaquina, eh_alteracao: bool = False) -> bool:
+        try:
+            client = get_gspread_client()
+            if client is None:
+                return False
+            
+            spreadsheet = client.open_by_key(ID_PLANILHA_PREVENTIVA)
+            sheet = spreadsheet.worksheet(ABA_CADASTRO_PREVENTIVA)
+            
+            dados = [registro.id, registro.maquina, registro.setor]
+            
+            if eh_alteracao:
+                cell = sheet.find(registro.id, in_column=1)
+                if cell:
+                    for col, valor in enumerate(dados, start=1):
+                        sheet.update_cell(cell.row, col, valor)
+                else:
+                    sheet.append_row(dados)
+            else:
+                sheet.append_row(dados)
+            
+            st.cache_data.clear()
+            return True
+        except Exception as e:
+            st.error(f"Erro ao salvar cadastro: {e}")
+            return False
+    
+    def excluir_cadastro_maquina(id_maquina: str) -> bool:
+        try:
+            client = get_gspread_client()
+            if client is None:
+                return False
+            
+            spreadsheet = client.open_by_key(ID_PLANILHA_PREVENTIVA)
+            sheet = spreadsheet.worksheet(ABA_CADASTRO_PREVENTIVA)
+            
+            cell = sheet.find(id_maquina, in_column=1)
+            if cell:
+                sheet.delete_rows(cell.row)
+                st.cache_data.clear()
+                return True
+            return False
+        except Exception as e:
+            st.error(f"Erro ao excluir cadastro: {e}")
+            return False
+    
+    # ======================
+    # FUNÇÃO DE ENVIO DE E-MAIL
+    # ======================
+    def enviar_email_preventiva(registro: RegistroPreventiva, acao: str = "LEMBRETE") -> bool:
+        try:
+            email_config = {
+                "usuario": "erp@luvidarte.com.br",
+                "senha": "Qualidade123#",
+                "smtp_server": "email-ssl.com.br",
+                "smtp_port": 465
+            }
+            
+            destinatarios = [
+                "manutencao@luvidarte.com.br",
+                "engenharia@luvidarte.com.br",
+                "qualidade@luvidarte.com.br",
+                "qualidade2@luvidarte.com.br",
+                "manutencaoeletrica@luvidarte.com.br",
+                "producao@luvidarte.com.br"
+            ]
+            
+            data_str = registro.data.strftime("%d/%m/%Y") if registro.data else "Não agendada"
+            hoje = datetime.now()
+            dias_restantes = (registro.data.date() - hoje.date()).days if registro.data else None
+            
+            if acao == "LEMBRETE":
+                emoji = "🔔"
+                cor = "#FF8C00"
+                titulo = f"LEMBRETE - Manutenção em {dias_restantes} dias"
+                assunto = f"[LEMBRETE] Manutenção - {registro.maquina} - {data_str}"
+            elif acao == "ATRASO":
+                emoji = "⚠️"
+                cor = "#E81123"
+                titulo = "ATRASO - Manutenção Preventiva"
+                assunto = f"[ATRASO] Manutenção - {registro.maquina} - Vencida"
+            elif acao == "CRIAÇÃO":
+                emoji = "🆕"
+                cor = "#107C10"
+                titulo = "NOVA Manutenção Agendada"
+                assunto = f"[NOVA] Manutenção - {registro.maquina} - {data_str}"
+            else:
+                emoji = "📋"
+                cor = "#0078D4"
+                titulo = "Manutenção Preventiva"
+                assunto = f"Manutenção - {registro.maquina} - {data_str}"
+            
+            msg = MIMEMultipart()
+            msg["From"] = email_config["usuario"]
+            msg["To"] = ", ".join(destinatarios)
+            msg["Subject"] = assunto
+            
+            corpo = f"""
+            <html><body>
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #ddd; border-radius: 10px; overflow: hidden;">
+                <div style="background: {cor}; padding: 20px; color: white; text-align: center;">
+                    <h2 style="margin: 0;">{emoji} {titulo}</h2>
+                </div>
+                <div style="padding: 20px; background: #f9f9f9;">
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <tr><td style="padding: 8px;"><strong>ID da Máquina:</strong></td><td>{registro.id}</td></tr>
+                        <tr><td style="padding: 8px;"><strong>Máquina:</strong></td><td>{registro.maquina}</td></tr>
+                        <tr><td style="padding: 8px;"><strong>Setor:</strong></td><td>{registro.setor}</td></tr>
+                        <tr><td style="padding: 8px;"><strong>Data Agendada:</strong></td><td><b style="color:{cor};">{data_str}</b></td></tr>
+                        <tr><td style="padding: 8px;"><strong>Descrição:</strong></td><td>{registro.descricao}</td></tr>
+                        <tr><td style="padding: 8px;"><strong>Responsável:</strong></td><td>{registro.execucao or "Não designado"}</td></tr>
+                        <tr><td style="padding: 8px;"><strong>Status:</strong></td><td><span style="background:{cor};color:white;padding:3px 10px;border-radius:15px;">{registro.status}</span></td></tr>
+                    </table>
+                </div>
+                <div style="padding: 15px; text-align: center; font-size: 11px; color: #666;">
+                    E-mail automático do Sistema de Manutenção Preventiva.
+                </div>
+            </div>
+            </body></html>
+            """
+            
+            msg.attach(MIMEText(corpo, "html"))
+            
+            with smtplib.SMTP_SSL(email_config["smtp_server"], email_config["smtp_port"], timeout=30) as server:
+                server.login(email_config["usuario"], email_config["senha"])
+                server.send_message(msg)
+            
+            return True
+        except Exception as e:
+            print(f"Erro ao enviar e-mail: {e}")
+            return False
+    
+    # ======================
+    # VERIFICAR LEMBRETES (executa a cada 6 horas)
+    # ======================
+    def verificar_lembretes_preventiva():
+        try:
+            registros = carregar_preventivas()
+            hoje = datetime.now().date()
+            
+            arquivo_lembretes = "lembretes_preventiva.json"
+            lembretes_enviados = {}
+            
+            if os.path.exists(arquivo_lembretes):
+                try:
+                    with open(arquivo_lembretes, 'r', encoding='utf-8') as f:
+                        lembretes_enviados = json.load(f)
+                except:
+                    lembretes_enviados = {}
+            
+            for registro in registros:
+                if registro.data and registro.status != "FINALIZADO":
+                    data_agenda = registro.data.date()
+                    dias_restantes = (data_agenda - hoje).days
+                    
+                    if dias_restantes == 3:
+                        chave = f"{registro.id}_{data_agenda}"
+                        if chave not in lembretes_enviados.get("enviados_3dias", []):
+                            if enviar_email_preventiva(registro, "LEMBRETE"):
+                                if "enviados_3dias" not in lembretes_enviados:
+                                    lembretes_enviados["enviados_3dias"] = []
+                                lembretes_enviados["enviados_3dias"].append(chave)
+                                with open(arquivo_lembretes, 'w', encoding='utf-8') as f:
+                                    json.dump(lembretes_enviados, f, ensure_ascii=False)
+                    
+                    elif dias_restantes < 0 and registro.status == "EM ATRASO":
+                        chave = f"{registro.id}_{data_agenda}_atraso"
+                        if chave not in lembretes_enviados.get("enviados_atraso", []):
+                            if enviar_email_preventiva(registro, "ATRASO"):
+                                if "enviados_atraso" not in lembretes_enviados:
+                                    lembretes_enviados["enviados_atraso"] = []
+                                lembretes_enviados["enviados_atraso"].append(chave)
+                                with open(arquivo_lembretes, 'w', encoding='utf-8') as f:
+                                    json.dump(lembretes_enviados, f, ensure_ascii=False)
+        except Exception as e:
+            print(f"Erro ao verificar lembretes: {e}")
+    
+    # Executar verificação (a cada 6 horas)
+    if "ultima_verificacao_preventiva" not in st.session_state:
+        st.session_state.ultima_verificacao_preventiva = datetime.now()
+    
+    agora = datetime.now()
+    if (agora - st.session_state.ultima_verificacao_preventiva).total_seconds() > 21600:
+        st.session_state.ultima_verificacao_preventiva = agora
+        verificar_lembretes_preventiva()
+    
+    # ======================
+    # TABS PRINCIPAIS
+    # ======================
+    tab_agenda, tab_cadastro = st.tabs(["📅 Agenda de Manutenção", "🏭 Cadastro de Máquinas"])
+    
+    with tab_agenda:
+        st.subheader("📅 Plano de Manutenção Preventiva")
+        
+        # FILTROS
+        with st.expander("🔍 Filtros", expanded=True):
+            cadastros_filtro = carregar_cadastro_maquinas()
+            col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
+            
+            with col_f1:
+                opcoes_maquinas = ["(Todas)"] + [c.maquina for c in cadastros_filtro if c.maquina]
+                filtro_maquina = st.selectbox("Máquina", opcoes_maquinas, key="filtro_maquina_pv")
+            
+            with col_f2:
+                opcoes_setores = sorted(list(set([c.setor for c in cadastros_filtro if c.setor])))
+                opcoes_setores = ["(Todos)"] + opcoes_setores
+                filtro_setor = st.selectbox("Setor", opcoes_setores, key="filtro_setor_pv")
+            
+            with col_f3:
+                opcoes_status = ["(Todos)", "PROGRAMADO", "EM EXECUÇÃO", "EM ATRASO", "FINALIZADO"]
+                filtro_status = st.selectbox("Status", opcoes_status, key="filtro_status_pv")
+            
+            with col_f4:
+                filtro_data_ini = st.date_input("Data Inicial", value=None, key="filtro_data_ini_pv")
+            
+            with col_f5:
+                filtro_data_fim = st.date_input("Data Final", value=None, key="filtro_data_fim_pv")
+        
+        # Aplicar filtros
+        filtros = {}
+        if filtro_maquina != "(Todas)":
+            filtros['maquina'] = filtro_maquina
+        if filtro_setor != "(Todos)":
+            filtros['setor'] = filtro_setor
+        if filtro_status != "(Todos)":
+            filtros['status'] = filtro_status
+        if filtro_data_ini:
+            filtros['data_ini'] = filtro_data_ini
+        if filtro_data_fim:
+            filtros['data_fim'] = filtro_data_fim
+        
+        with st.spinner("Carregando agenda..."):
+            registros = carregar_preventivas(filtros if filtros else None)
+        
+        # CALENDÁRIO
+        st.markdown("---")
+        st.subheader("📆 Calendário Mensal")
+        
+        if "mes_calendario" not in st.session_state:
+            st.session_state.mes_calendario = datetime.now().replace(day=1)
+        
+        col_cal1, col_cal2, col_cal3 = st.columns([1, 3, 1])
+        with col_cal1:
+            if st.button("◀ Mês Anterior", use_container_width=True):
+                st.session_state.mes_calendario = st.session_state.mes_calendario - timedelta(days=1)
+                st.session_state.mes_calendario = st.session_state.mes_calendario.replace(day=1)
+                st.rerun()
+        
+        with col_cal2:
+            st.markdown(f"<h3 style='text-align: center;'>{st.session_state.mes_calendario.strftime('%B %Y')}</h3>", unsafe_allow_html=True)
+        
+        with col_cal3:
+            if st.button("Próximo Mês ▶", use_container_width=True):
+                next_month = st.session_state.mes_calendario.replace(day=28) + timedelta(days=4)
+                st.session_state.mes_calendario = next_month.replace(day=1)
+                st.rerun()
+        
+        # Mapa de eventos
+        eventos_por_data = {}
+        for reg in registros:
+            if reg.data:
+                data_str = reg.data.strftime("%Y-%m-%d")
+                if data_str not in eventos_por_data:
+                    eventos_por_data[data_str] = []
+                eventos_por_data[data_str].append(reg)
+        
+        # CSS do calendário
+        st.markdown("""
+        <style>
+        .calendario-dia {
+            min-height: 80px;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            padding: 5px;
+            margin: 2px;
+            background: #fafafa;
+        }
+        .calendario-dia-num {
+            font-size: 14px;
+            font-weight: bold;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 3px;
+            margin-bottom: 5px;
+        }
+        .calendario-evento {
+            font-size: 10px;
+            padding: 2px 4px;
+            margin: 2px 0;
+            border-radius: 3px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .evento-programado { background: #0078D4; color: white; }
+        .evento-execucao { background: #FFB900; color: #333; }
+        .evento-atraso { background: #E81123; color: white; }
+        .evento-finalizado { background: #107C10; color: white; }
+        </style>
+        """, unsafe_allow_html=True)
+        
+        # Gerar calendário
+        import calendar
+        cal = calendar.monthcalendar(st.session_state.mes_calendario.year, st.session_state.mes_calendario.month)
+        dias_semana = ["SEG", "TER", "QUA", "QUI", "SEX", "SAB", "DOM"]
+        
+        cols_header = st.columns(7)
+        for i, dia in enumerate(dias_semana):
+            with cols_header[i]:
+                st.markdown(f"<div style='text-align:center;font-weight:bold;padding:8px;background:#f0f0f0;border-radius:5px;'>{dia}</div>", unsafe_allow_html=True)
+        
+        for semana in cal:
+            cols = st.columns(7)
+            for i, dia in enumerate(semana):
+                with cols[i]:
+                    if dia == 0:
+                        st.markdown("<div class='calendario-dia' style='background:#f5f5f5;opacity:0.5;'></div>", unsafe_allow_html=True)
+                    else:
+                        data_atual = st.session_state.mes_calendario.replace(day=dia)
+                        data_str = data_atual.strftime("%Y-%m-%d")
+                        eventos = eventos_por_data.get(data_str, [])
+                        
+                        if data_atual.date() == datetime.now().date():
+                            bg_color = "#fff3cd"
+                        else:
+                            bg_color = "#fafafa"
+                        
+                        html_dia = f'<div class="calendario-dia" style="background:{bg_color};">'
+                        html_dia += f'<div class="calendario-dia-num">{dia}</div>'
+                        
+                        for evento in eventos[:3]:
+                            if evento.status == "PROGRAMADO":
+                                classe = "evento-programado"
+                            elif evento.status == "EM EXECUÇÃO":
+                                classe = "evento-execucao"
+                            elif evento.status == "EM ATRASO":
+                                classe = "evento-atraso"
+                            else:
+                                classe = "evento-finalizado"
+                            html_dia += f'<div class="calendario-evento {classe}" title="{evento.maquina}: {evento.descricao[:30]}">🔧 {evento.maquina[:15]}</div>'
+                        
+                        if len(eventos) > 3:
+                            html_dia += f'<div class="calendario-evento" style="background:#999;color:white;">+{len(eventos)-3}</div>'
+                        
+                        html_dia += '</div>'
+                        st.markdown(html_dia, unsafe_allow_html=True)
+        
+        # TABELA DO MÊS
+        st.markdown("---")
+        st.subheader(f"📋 Manutenções - {st.session_state.mes_calendario.strftime('%B %Y')}")
+        
+        ano_mes_atual = st.session_state.mes_calendario.strftime("%Y-%m")
+        registros_mes = [r for r in registros if r.data and r.data.strftime("%Y-%m") == ano_mes_atual]
+        
+        if registros_mes:
+            dados_tabela = []
+            for reg in registros_mes:
+                if reg.status == "PROGRAMADO":
+                    status_display = "🟦 PROGRAMADO"
+                elif reg.status == "EM EXECUÇÃO":
+                    status_display = "🟡 EM EXECUÇÃO"
+                elif reg.status == "EM ATRASO":
+                    status_display = "🔴 EM ATRASO"
+                else:
+                    status_display = "✅ FINALIZADO"
+                
+                dados_tabela.append({
+                    "ID": reg.id, "Data": reg.data.strftime("%d/%m/%Y"), "Máquina": reg.maquina,
+                    "Setor": reg.setor, "Descrição": reg.descricao[:50] + "..." if len(reg.descricao) > 50 else reg.descricao,
+                    "Execução": reg.execucao, "Análise": reg.analise[:30] + "..." if len(reg.analise) > 30 else reg.analise,
+                    "Status": status_display
+                })
+            st.dataframe(pd.DataFrame(dados_tabela), use_container_width=True, height=400)
+        else:
+            st.info("📭 Nenhuma manutenção programada para este mês.")
+        
+        # CRUD - GERENCIAR MANUTENÇÕES
+        st.markdown("---")
+        st.subheader("✏️ Gerenciar Manutenções")
+        
+        acao = st.radio("Ação:", ["➕ Nova Manutenção", "✏️ Editar Manutenção", "🗑️ Excluir Manutenção"], horizontal=True)
+        
+        if acao == "➕ Nova Manutenção":
+            with st.form("nova_preventiva"):
+                cadastros = carregar_cadastro_maquinas()
+                opcoes_ids = ["Selecione..."] + [c.id for c in cadastros]
+                opcoes_maquinas_cad = {c.id: c.maquina for c in cadastros}
+                opcoes_setores_cad = {c.id: c.setor for c in cadastros}
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    id_selecionado = st.selectbox("ID da Máquina*", opcoes_ids)
+                    if id_selecionado != "Selecione...":
+                        maquina_auto = opcoes_maquinas_cad.get(id_selecionado, "")
+                        setor_auto = opcoes_setores_cad.get(id_selecionado, "")
+                        st.text_input("Máquina*", value=maquina_auto, disabled=True)
+                        st.text_input("Setor*", value=setor_auto, disabled=True)
+                    else:
+                        st.text_input("Máquina*", disabled=True)
+                        st.text_input("Setor*", disabled=True)
+                    data_agendada = st.date_input("Data Agendada*", value=datetime.now().date())
+                
+                with col2:
+                    descricao = st.text_area("Descrição do Serviço*", height=100)
+                    execucao = st.text_input("Responsável pela Execução")
+                    analise = st.text_area("Análise / Resultado", height=80)
+                
+                submitted = st.form_submit_button("💾 SALVAR MANUTENÇÃO", type="primary", use_container_width=True)
+                
+                if submitted:
+                    if id_selecionado == "Selecione..." or not id_selecionado:
+                        st.error("❌ Selecione um ID de máquina cadastrada!")
+                    elif not descricao:
+                        st.error("❌ Preencha a descrição do serviço!")
+                    else:
+                        maquina_val = opcoes_maquinas_cad.get(id_selecionado, "")
+                        setor_val = opcoes_setores_cad.get(id_selecionado, "")
+                        novo_registro = RegistroPreventiva(
+                            id=id_selecionado, data=datetime.combine(data_agendada, datetime.min.time()),
+                            maquina=maquina_val, setor=setor_val, descricao=descricao,
+                            execucao=execucao, analise=analise
+                        )
+                        if salvar_preventiva(novo_registro, eh_alteracao=False):
+                            st.success("✅ Manutenção agendada!")
+                            if enviar_email_preventiva(novo_registro, "CRIAÇÃO"):
+                                st.info("📧 E-mail enviado aos responsáveis")
+                            st.rerun()
+        
+        elif acao == "✏️ Editar Manutenção":
+            with st.form("buscar_editar_preventiva"):
+                col1, col2 = st.columns([2, 1])
+                with col1:
+                    id_busca = st.text_input("ID da Máquina")
+                    data_busca = st.date_input("Data da Manutenção", value=datetime.now().date())
+                with col2:
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    buscar_btn = st.form_submit_button("🔍 Buscar", use_container_width=True)
+            
+            if buscar_btn and id_busca and data_busca:
+                registros_busca = carregar_preventivas({"id": id_busca})
+                registro_editar = None
+                linha_editar = None
+                
+                todos_dados = None
+                try:
+                    client = get_gspread_client()
+                    if client:
+                        spreadsheet = client.open_by_key(ID_PLANILHA_PREVENTIVA)
+                        sheet = spreadsheet.worksheet(ABA_PREVENTIVA)
+                        todos_dados = sheet.get_all_values()
+                except:
+                    pass
+                
+                for i, reg in enumerate(registros_busca):
+                    if reg.data and reg.data.date() == data_busca:
+                        registro_editar = reg
+                        if todos_dados:
+                            for idx, row in enumerate(todos_dados, start=1):
+                                if idx > 1 and len(row) > 1 and row[0] == reg.id and row[1] == reg.data.strftime("%d/%m/%Y"):
+                                    linha_editar = idx
+                                    break
+                        break
+                
+                if registro_editar:
+                    st.success(f"✅ Registro encontrado: {registro_editar.maquina}")
+                    with st.form("editar_preventiva_form"):
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.text_input("ID", value=registro_editar.id, disabled=True)
+                            maquina_edit = st.text_input("Máquina", value=registro_editar.maquina)
+                            setor_edit = st.text_input("Setor", value=registro_editar.setor)
+                            data_edit = st.date_input("Data Agendada", value=registro_editar.data.date() if registro_editar.data else datetime.now().date())
+                        with col2:
+                            descricao_edit = st.text_area("Descrição", value=registro_editar.descricao, height=80)
+                            execucao_edit = st.text_input("Responsável", value=registro_editar.execucao)
+                            analise_edit = st.text_area("Análise", value=registro_editar.analise, height=80)
+                        
+                        if st.form_submit_button("💾 SALVAR", type="primary", use_container_width=True):
+                            registro_atualizado = RegistroPreventiva(
+                                id=registro_editar.id, data=datetime.combine(data_edit, datetime.min.time()),
+                                maquina=maquina_edit, setor=setor_edit, descricao=descricao_edit,
+                                execucao=execucao_edit, analise=analise_edit
+                            )
+                            if linha_editar and atualizar_preventiva(registro_atualizado, linha_editar):
+                                st.success("✅ Registro atualizado!")
+                                st.rerun()
+                else:
+                    st.warning("❌ Nenhum registro encontrado")
+        
+        elif acao == "🗑️ Excluir Manutenção":
+            with st.form("excluir_preventiva"):
+                col1, col2 = st.columns([2, 1])
+                with col1:
+                    id_excluir = st.text_input("ID da Máquina")
+                    data_excluir = st.date_input("Data da Manutenção", value=datetime.now().date())
+                with col2:
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    buscar_excluir = st.form_submit_button("🔍 Buscar", use_container_width=True)
+            
+            if buscar_excluir and id_excluir and data_excluir:
+                registros_busca = carregar_preventivas({"id": id_excluir})
+                registro_excluir = None
+                linha_excluir = None
+                
+                try:
+                    client = get_gspread_client()
+                    if client:
+                        spreadsheet = client.open_by_key(ID_PLANILHA_PREVENTIVA)
+                        sheet = spreadsheet.worksheet(ABA_PREVENTIVA)
+                        todos_dados = sheet.get_all_values()
+                        for idx, row in enumerate(todos_dados, start=1):
+                            if idx > 1 and len(row) > 1 and row[0] == id_excluir and row[1] == data_excluir.strftime("%d/%m/%Y"):
+                                linha_excluir = idx
+                                break
+                except:
+                    pass
+                
+                for reg in registros_busca:
+                    if reg.data and reg.data.date() == data_excluir:
+                        registro_excluir = reg
+                        break
+                
+                if registro_excluir:
+                    st.warning(f"⚠️ Excluir: {registro_excluir.maquina} - {data_excluir.strftime('%d/%m/%Y')}")
+                    confirmar = st.checkbox("✅ Confirmo exclusão")
+                    if confirmar and st.button("🗑️ EXCLUIR", type="primary", use_container_width=True):
+                        if linha_excluir and excluir_preventiva(linha_excluir):
+                            st.success("✅ Registro excluído!")
+                            st.rerun()
+                else:
+                    st.warning("❌ Nenhum registro encontrado")
+    
+    # ======================
+    # TAB CADASTRO DE MÁQUINAS
+    # ======================
+    with tab_cadastro:
+        st.subheader("🏭 Cadastro de Máquinas")
+        
+        cadastros = carregar_cadastro_maquinas()
+        
+        if cadastros:
+            df_cadastro = pd.DataFrame([{"ID": c.id, "Máquina": c.maquina, "Setor": c.setor} for c in cadastros])
+            st.dataframe(df_cadastro, use_container_width=True, height=200)
+        else:
+            st.info("📭 Nenhuma máquina cadastrada")
+        
+        st.markdown("---")
+        acao_cadastro = st.radio("Ação:", ["➕ Nova Máquina", "✏️ Editar Máquina", "🗑️ Excluir Máquina"], horizontal=True)
+        
+        if acao_cadastro == "➕ Nova Máquina":
+            with st.form("nova_maquina"):
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    id_novo = st.text_input("ID da Máquina*")
+                with col2:
+                    maquina_nova = st.text_input("Nome da Máquina*")
+                with col3:
+                    setor_novo = st.selectbox("Setor", ["Produção", "Corte", "Vidraria", "Rodaria", "Embalagem", "Expedição", "Qualidade", "Ferramentaria", "Manutenção", "Outros"])
+                
+                if st.form_submit_button("💾 CADASTRAR", type="primary", use_container_width=True):
+                    if not id_novo or not maquina_nova:
+                        st.error("❌ Preencha ID e Nome")
+                    elif any(c.id == id_novo for c in cadastros):
+                        st.error(f"❌ ID {id_novo} já existe!")
+                    else:
+                        if salvar_cadastro_maquina(CadastroMaquina(id=id_novo, maquina=maquina_nova, setor=setor_novo)):
+                            st.success("✅ Cadastrado!")
+                            st.rerun()
+        
+        elif acao_cadastro == "✏️ Editar Máquina":
+            if cadastros:
+                with st.form("editar_maquina"):
+                    id_editar = st.selectbox("Selecione o ID", [c.id for c in cadastros])
+                    maquina_atual = next((c for c in cadastros if c.id == id_editar), None)
+                    
+                    if maquina_atual:
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            maquina_edit = st.text_input("Nome", value=maquina_atual.maquina)
+                        with col2:
+                            setor_edit = st.selectbox("Setor", ["Produção", "Corte", "Vidraria", "Rodaria", "Embalagem", "Expedição", "Qualidade", "Ferramentaria", "Manutenção", "Outros"],
+                                                     index=["Produção", "Corte", "Vidraria", "Rodaria", "Embalagem", "Expedição", "Qualidade", "Ferramentaria", "Manutenção", "Outros"].index(maquina_atual.setor) if maquina_atual.setor in ["Produção", "Corte", "Vidraria", "Rodaria", "Embalagem", "Expedição", "Qualidade", "Ferramentaria", "Manutenção", "Outros"] else 0)
+                        
+                        if st.form_submit_button("💾 SALVAR", type="primary", use_container_width=True):
+                            if salvar_cadastro_maquina(CadastroMaquina(id=id_editar, maquina=maquina_edit, setor=setor_edit), eh_alteracao=True):
+                                st.success("✅ Atualizado!")
+                                st.rerun()
+            else:
+                st.info("📭 Nenhuma máquina cadastrada")
+        
+        elif acao_cadastro == "🗑️ Excluir Máquina":
+            if cadastros:
+                with st.form("excluir_maquina"):
+                    id_excluir = st.selectbox("Selecione o ID", [c.id for c in cadastros])
+                    maquina_excluir = next((c for c in cadastros if c.id == id_excluir), None)
+                    
+                    if maquina_excluir:
+                        st.warning(f"⚠️ Excluir: {maquina_excluir.maquina}")
+                        confirmar = st.checkbox("✅ Confirmo exclusão")
+                        if confirmar and st.form_submit_button("🗑️ EXCLUIR", type="primary", use_container_width=True):
+                            if excluir_cadastro_maquina(id_excluir):
+                                st.success("✅ Excluído!")
+                                st.rerun()
+            else:
+                st.info("📭 Nenhuma máquina cadastrada")
+    
+    st.markdown(f"""
+    <div style="text-align:right;padding:16px 0 8px;
+        font-family:'JetBrains Mono',monospace;font-size:10px;
+        color:{THEME['text_muted']};letter-spacing:.1em;">
+        MANUTENÇÃO PREVENTIVA · {get_horario_brasilia()}
+    </div>
+    """, unsafe_allow_html=True)
 
 # ==================================================================================================
 # RENDERIZAR FAIXA DE ROLAGEM NO RODAPÉ (aparece em todas as abas)
@@ -5980,6 +6869,6 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
 # Caso o usuário não acesse o FECHAMENTO TURNO antes, definimos um valor padrão
 if 'ID_PLANILHA_FECHAMENTO' not in dir():
     ID_PLANILHA_FECHAMENTO = '1_HkKTRCSg24wDJ47v5wSd-UPBkbalLd6plV9IvlTY64'
-
+    
 # Renderiza a faixa de rolagem
 renderizar_faixa_rolagem()
