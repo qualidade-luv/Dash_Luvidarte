@@ -607,7 +607,7 @@ def get_horario_brasilia_obj():
 ID_PLANILHA_RECADOS = '1R0V4HpmRNXAd2TxVv8c_dVVoc1tXDPBOVSFBX1JKHvs'
 ABA_RECADOS = 'Rodapé'
 
-@st.cache_data(ttl=240)  # Atualiza a cada 60 segundos
+@st.cache_data(ttl=360)  # Atualiza a cada 60 segundos
 def carregar_mensagens_rodape():
     """
     Carrega as mensagens da planilha Recados - aba Rodapé.
@@ -930,7 +930,7 @@ def converter_tempo_para_minutos(valor):
 # FUNÇÕES DE CARREGAMENTO DE DADOS (COM CACHE E RETRY)
 # ======================
 @retry_on_quota()
-@st.cache_data(ttl=1200)
+@st.cache_data(ttl=2400)
 def carregar_dados_prensados():
     try:
         client = get_gspread_client()
@@ -975,7 +975,7 @@ def carregar_dados_prensados():
         return pd.DataFrame()
 
 @retry_on_quota()
-@st.cache_data(ttl=1200)
+@st.cache_data(ttl=2400)
 def carregar_dados_sopro():
     try:
         client = get_gspread_client()
@@ -1012,7 +1012,7 @@ def carregar_dados_sopro():
         return pd.DataFrame()
 
 @retry_on_quota()
-@st.cache_data(ttl=1200)
+@st.cache_data(ttl=2400)
 def carregar_dados_tempera():
     try:
         client = get_gspread_client()
@@ -1249,7 +1249,7 @@ def carregar_registros_ar_sem_cache() -> List[RegistroAR]:
     return registros
 
 # Função com cache para uso geral (visualização, edição, etc.)
-@st.cache_data(ttl=1200)
+@st.cache_data(ttl=2400)
 def carregar_registros_ar(filtros: Dict[str, Any] = None) -> List[RegistroAR]:
     registros = carregar_registros_ar_sem_cache()
     if filtros:
@@ -1496,7 +1496,7 @@ def carregar_registros_rm_sem_cache() -> List[RegistroRM]:
     return registros
 
 # Função com cache para uso geral
-@st.cache_data(ttl=1200)
+@st.cache_data(ttl=2400)
 def carregar_registros_rm(filtros: Dict[str, Any] = None) -> List[RegistroRM]:
     registros = carregar_registros_rm_sem_cache()
     if filtros:
@@ -2700,7 +2700,7 @@ elif aba_selecionada == 'TÊMPERA':
         except:
             return 0.0
 
-    @st.cache_data(ttl=1200)
+    @st.cache_data(ttl=2400)
     def carregar_dados_tempera():
         try:
             client = get_gspread_client()
@@ -5324,7 +5324,7 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
     # ======================
     # FUNÇÕES DE CARREGAMENTO
     # ======================
-    @st.cache_data(ttl=1200)
+    @st.cache_data(ttl=2400)
     def carregar_producoes_fechamento(data_selecionada: date):
         """Carrega produções do Google Sheets"""
         producoes = []
@@ -5383,7 +5383,7 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
         
         return producoes
     
-    @st.cache_data(ttl=1200)
+    @st.cache_data(ttl=2400)
     def carregar_checklists_fechamento(data_selecionada: date):
         """Carrega checklists do Google Sheets"""
         checklists = {"manha": False, "tarde": False, "noite": False}
@@ -5424,7 +5424,7 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
         
         return checklists, detalhes
     
-    @st.cache_data(ttl=1200)
+    @st.cache_data(ttl=2400)
     def carregar_faltas_fechamento(data_selecionada: date):
         """Carrega faltas do Google Sheets"""
         faltas = []
@@ -5460,7 +5460,7 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
         
         return faltas
     
-    @st.cache_data(ttl=1200)
+    @st.cache_data(ttl=2400)
     def carregar_ars_rms_fechamento(data_selecionada: date):
         """Carrega ARs e RMs das planilhas existentes filtradas por data"""
         ars = []
@@ -6073,7 +6073,7 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
     # FUNÇÕES DA PLANILHA PREVENTIVA
     # ======================
     @retry_on_quota()
-    @st.cache_data(ttl=300)
+    @st.cache_data(ttl=600)
     def carregar_preventivas(filtros: Dict[str, Any] = None) -> List[RegistroPreventiva]:
         registros = []
         
@@ -6154,7 +6154,7 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
             return registros
     
     @retry_on_quota()
-    @st.cache_data(ttl=300)
+    @st.cache_data(ttl=600)
     def carregar_cadastro_maquinas() -> List[CadastroMaquina]:
         registros = []
         try:
