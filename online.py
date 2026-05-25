@@ -5978,7 +5978,7 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
     """, unsafe_allow_html=True)
 
 # ==================================================================================================
-# MANUTENÇÃO PREVENTIVA - CORREÇÃO DOS BOTÕES (COM KEYS ÚNICOS)
+# MANUTENÇÃO PREVENTIVA - COM COLUNA ANÁLISE NA TABELA PRINCIPAL
 # ==================================================================================================
 elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
     render_page_header("MANUTENÇÃO PREVENTIVA", f"Plano de Manutenção · Atualizado {get_horario_brasilia()}", THEME['accent_purple'])
@@ -6019,6 +6019,9 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
         analise: str = ""
         status: str = "PROGRAMADO"
         linha: Optional[int] = None
+        eletrica: bool = False
+        mecanica: bool = False
+        liberado: bool = False
     
     @dataclass
     class CadastroMaquina:
@@ -6029,12 +6032,16 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
     # ======================
     # FUNÇÕES AUXILIARES
     # ======================
-    def calcular_status_preventiva(data_agendada: date, analise: str) -> str:
+    def calcular_status_preventiva(data_agendada: date, analise: str, eletrica: bool, mecanica: bool) -> str:
         hoje = datetime.now().date()
-        if analise and analise.strip():
+        
+        # Status FINALIZADO: tem análise E elétrica E mecânica
+        if analise and analise.strip() and eletrica and mecanica:
             return "FINALIZADO"
+        # Status EM ATRASO: data passou e não está finalizado
         elif data_agendada < hoje:
             return "EM ATRASO"
+        # Status EM EXECUÇÃO: data atual
         elif data_agendada == hoje:
             return "EM EXECUÇÃO"
         else:
@@ -6081,7 +6088,7 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
                 sheet = spreadsheet.worksheet(ABA_PREVENTIVA)
             except Exception as e:
                 sheet = spreadsheet.add_worksheet(title=ABA_PREVENTIVA, rows=1000, cols=20)
-                cabecalho = ["ID", "DATA", "MÁQUINA", "SETOR", "DESCRIÇÃO", "EXECUÇÃO", "ANÁLISE", "STATUS"]
+                cabecalho = ["ID", "DATA", "MÁQUINA", "SETOR", "DESCRIÇÃO", "EXECUÇÃO", "ANÁLISE", "STATUS", "ELÉTRICA", "MECÂNICA", "LIBERADO"]
                 sheet.append_row(cabecalho)
                 return registros
             
@@ -6109,8 +6116,16 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
                     registro.execucao = row[5].strip() if len(row) > 5 else ""
                     registro.analise = row[6].strip() if len(row) > 6 else ""
                     
+                    # Carregar checkboxes (se existirem as colunas)
+                    if len(row) > 8:
+                        registro.eletrica = row[8].strip().upper() == "TRUE" if len(row) > 8 else False
+                    if len(row) > 9:
+                        registro.mecanica = row[9].strip().upper() == "TRUE" if len(row) > 9 else False
+                    if len(row) > 10:
+                        registro.liberado = row[10].strip().upper() == "TRUE" if len(row) > 10 else False
+                    
                     if registro.data:
-                        registro.status = calcular_status_preventiva(registro.data.date(), registro.analise)
+                        registro.status = calcular_status_preventiva(registro.data.date(), registro.analise, registro.eletrica, registro.mecanica)
                     else:
                         registro.status = "PROGRAMADO"
                     
@@ -6185,13 +6200,14 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
             sheet = spreadsheet.worksheet(ABA_PREVENTIVA)
             
             if registro.data:
-                registro.status = calcular_status_preventiva(registro.data.date(), registro.analise)
+                registro.status = calcular_status_preventiva(registro.data.date(), registro.analise, registro.eletrica, registro.mecanica)
             
             data_formatada = registro.data.strftime("%d/%m/%Y") if registro.data else ""
             
             dados = [
                 registro.id, data_formatada, registro.maquina, registro.setor,
-                registro.descricao, registro.execucao, registro.analise, registro.status
+                registro.descricao, registro.execucao, registro.analise, registro.status,
+                str(registro.eletrica).upper(), str(registro.mecanica).upper(), str(registro.liberado).upper()
             ]
             
             sheet.append_row(dados)
@@ -6209,8 +6225,11 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
             spreadsheet = client.open_by_key(ID_PLANILHA_PREVENTIVA)
             sheet = spreadsheet.worksheet(ABA_PREVENTIVA)
             
+            # Atualizar liberado baseado nos checkboxes
+            registro.liberado = registro.eletrica and registro.mecanica
+            
             if registro.data:
-                registro.status = calcular_status_preventiva(registro.data.date(), registro.analise)
+                registro.status = calcular_status_preventiva(registro.data.date(), registro.analise, registro.eletrica, registro.mecanica)
             
             linha = encontrar_linha_preventiva(registro.id, registro.data.date())
             
@@ -6221,7 +6240,8 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
             
             dados = [
                 registro.id, data_formatada, registro.maquina, registro.setor,
-                registro.descricao, registro.execucao, registro.analise, registro.status
+                registro.descricao, registro.execucao, registro.analise, registro.status,
+                str(registro.eletrica).upper(), str(registro.mecanica).upper(), str(registro.liberado).upper()
             ]
             
             for col, valor in enumerate(dados, start=1):
@@ -6312,6 +6332,7 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
             ]
             
             data_str = registro.data.strftime("%d/%m/%Y") if registro.data else "Não agendada"
+            liberado_str = "✅ LIBERADO" if registro.liberado else "⏳ AGUARDANDO"
             
             msg = MIMEMultipart()
             msg["From"] = email_config["usuario"]
@@ -6327,6 +6348,9 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
             <p><strong>Data Agendada:</strong> {data_str}</p>
             <p><strong>Descrição:</strong> {registro.descricao}</p>
             <p><strong>Responsável:</strong> {registro.execucao or 'Não definido'}</p>
+            <p><strong>Liberação Elétrica:</strong> {'✅ SIM' if registro.eletrica else '❌ NÃO'}</p>
+            <p><strong>Liberação Mecânica:</strong> {'✅ SIM' if registro.mecanica else '❌ NÃO'}</p>
+            <p><strong>Status Liberação:</strong> {liberado_str}</p>
             <p><strong>Status:</strong> {registro.status}</p>
             </body></html>
             """
@@ -6502,8 +6526,9 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
                             else:
                                 classe = "evento-finalizado"
                             
-                            titulo = f"{evento.maquina}: {evento.descricao[:35]}"
-                            html_dia += f'<div class="calendario-evento {classe}" title="{titulo}">🔧 {evento.maquina[:12]}</div>'
+                            liberado_icon = "✅" if evento.liberado else "⏳"
+                            titulo = f"{evento.maquina}: {evento.descricao[:35]} | {liberado_icon}"
+                            html_dia += f'<div class="calendario-evento {classe}" title="{titulo}">🔧 {evento.maquina[:10]} {liberado_icon}</div>'
                         
                         if len(eventos) > 3:
                             html_dia += f'<div class="calendario-evento" style="background:#999;color:white;text-align:center;">+{len(eventos)-3}</div>'
@@ -6513,7 +6538,7 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
         
         # Legenda do calendário
         st.markdown("---")
-        col_leg1, col_leg2, col_leg3, col_leg4, col_leg5 = st.columns(5)
+        col_leg1, col_leg2, col_leg3, col_leg4, col_leg5, col_leg6 = st.columns(6)
         with col_leg1:
             st.markdown("<span style='background:#0078D4; padding:2px 8px; border-radius:4px; color:white; font-size:11px;'>🔹 PROGRAMADO</span>", unsafe_allow_html=True)
         with col_leg2:
@@ -6524,6 +6549,8 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
             st.markdown("<span style='background:#107C10; padding:2px 8px; border-radius:4px; color:white; font-size:11px;'>✅ FINALIZADO</span>", unsafe_allow_html=True)
         with col_leg5:
             st.markdown("<span style='background:#fff3cd; padding:2px 8px; border-radius:4px; color:#333; border:1px solid #FFB900; font-size:11px;'>📅 HOJE</span>", unsafe_allow_html=True)
+        with col_leg6:
+            st.markdown("<span style='font-size:11px;'>✅ Liberado | ⏳ Aguardando</span>", unsafe_allow_html=True)
         
         # ====================== TABELA DE REGISTROS DO MÊS ======================
         st.markdown("---")
@@ -6544,18 +6571,26 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
                 else:
                     status_display = "✅ FINALIZADO"
                 
+                liberado_display = "✅ LIBERADO" if reg.liberado else "⏳ AGUARDANDO"
+                analise_display = reg.analise[:40] + "..." if len(reg.analise) > 40 else reg.analise if reg.analise else "-"
+                
                 dados_tabela.append({
                     "ID": reg.id, 
                     "Data": reg.data.strftime("%d/%m/%Y"), 
                     "Máquina": reg.maquina,
                     "Setor": reg.setor, 
-                    "Descrição": reg.descricao[:50] + "..." if len(reg.descricao) > 50 else reg.descricao,
-                    "Execução": reg.execucao[:25] if reg.execucao else "-",
+                    "Descrição": reg.descricao[:40] + "..." if len(reg.descricao) > 40 else reg.descricao,
+                    "Análise": analise_display,
+                    "Elétrica": "✅" if reg.eletrica else "❌",
+                    "Mecânica": "✅" if reg.mecanica else "❌",
+                    "Liberado": liberado_display,
                     "Status": status_display
                 })
             
-            st.dataframe(pd.DataFrame(dados_tabela), use_container_width=True, height=350)
-            st.caption(f"Total: {len(registros_mes)} manutenções neste mês")
+            df_tabela = pd.DataFrame(dados_tabela)
+            st.dataframe(df_tabela, use_container_width=True, height=500)
+            
+            st.caption(f"Total: {len(registros_mes)} manutenções neste mês | 💡 Para FINALIZAR: marque Elétrica ✅ + Mecânica ✅ e preencha a Análise")
         else:
             st.info("📭 Nenhuma manutenção programada para este mês.")
         
@@ -6589,7 +6624,9 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
                 with col2:
                     descricao = st.text_area("Descrição do Serviço*", height=100, key="novo_descricao")
                     execucao = st.text_input("Responsável pela Execução", key="novo_execucao")
-                    analise = st.text_area("Análise / Resultado", height=80, key="novo_analise")
+                    analise = st.text_area("Análise / Resultado", height=80, key="novo_analise", placeholder="Preencha após a execução da manutenção")
+                
+                st.info("⚠️ As liberações Elétrica e Mecânica serão marcadas na edição após a execução da manutenção.")
                 
                 submitted = st.form_submit_button("💾 SALVAR MANUTENÇÃO", type="primary", use_container_width=True)
                 
@@ -6606,7 +6643,10 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
                             setor=dict_setor.get(id_selecionado, ""), 
                             descricao=descricao,
                             execucao=execucao, 
-                            analise=analise
+                            analise=analise,
+                            eletrica=False,
+                            mecanica=False,
+                            liberado=False
                         )
                         sucesso, mensagem = salvar_preventiva(novo_registro)
                         if sucesso:
@@ -6675,7 +6715,28 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
                     with col2:
                         descricao_edit = st.text_area("Descrição", value=reg.descricao, height=100, key="edit_descricao")
                         execucao_edit = st.text_input("Responsável", value=reg.execucao, key="edit_execucao")
-                        analise_edit = st.text_area("Análise", value=reg.analise, height=80, key="edit_analise")
+                        analise_edit = st.text_area("Análise / Resultado", value=reg.analise, height=80, key="edit_analise")
+                    
+                    # Checkboxes de liberação
+                    st.markdown("---")
+                    st.markdown("### 🔓 Liberações para Finalização")
+                    
+                    col_check1, col_check2 = st.columns(2)
+                    with col_check1:
+                        eletrica_check = st.checkbox("✅ Elétrica - Liberado", value=reg.eletrica, key="edit_eletrica")
+                    with col_check2:
+                        mecanica_check = st.checkbox("✅ Mecânica - Liberado", value=reg.mecanica, key="edit_mecanica")
+                    
+                    # Mostrar status da liberação
+                    liberado_status = eletrica_check and mecanica_check
+                    if liberado_status and analise_edit and analise_edit.strip():
+                        st.success("🎉 **Todas as condições atendidas! O status será alterado para FINALIZADO ao salvar.**")
+                    elif liberado_status:
+                        st.warning("⚠️ **Liberações marcadas, mas falta preencher a Análise para FINALIZAR.**")
+                    elif analise_edit and analise_edit.strip():
+                        st.warning("⚠️ **Análise preenchida, mas faltam as liberações Elétrica e Mecânica para FINALIZAR.**")
+                    else:
+                        st.warning("⚠️ **Para FINALIZAR a manutenção: marque Elétrica ✅ + Mecânica ✅ e preencha a Análise.**")
                     
                     col_btn1, col_btn2 = st.columns(2)
                     with col_btn1:
@@ -6691,13 +6752,19 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
                             setor=setor_val,
                             descricao=descricao_edit,
                             execucao=execucao_edit,
-                            analise=analise_edit
+                            analise=analise_edit,
+                            eletrica=eletrica_check,
+                            mecanica=mecanica_check,
+                            liberado=liberado_status
                         )
                         
                         sucesso, mensagem = atualizar_preventiva(registro_atualizado)
                         
                         if sucesso:
                             st.success(mensagem)
+                            # Enviar e-mail de finalização se for o caso
+                            if liberado_status and analise_edit and analise_edit.strip():
+                                enviar_email_preventiva(registro_atualizado, "FINALIZAÇÃO")
                             st.session_state.editando_registro = None
                             st.rerun()
                         else:
@@ -6710,7 +6777,7 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
         # ====================== EXCLUIR MANUTENÇÃO ======================
         elif acao == "🗑️ Excluir Manutenção":
             
-            # Botão para cancelar exclusão (com key única)
+            # Botão para cancelar exclusão
             if st.session_state.excluindo_registro is not None:
                 if st.button("❌ Cancelar Exclusão", key="btn_cancelar_exclusao_top", use_container_width=True):
                     st.session_state.excluindo_registro = None
@@ -6765,7 +6832,6 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
                         else:
                             st.error(mensagem)
                 
-                # Botão cancelar dentro da confirmação (com key única)
                 if st.button("❌ Cancelar", key="btn_cancelar_exclusao_bottom", use_container_width=True):
                     st.session_state.excluindo_registro = None
                     st.rerun()
