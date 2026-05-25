@@ -26,8 +26,8 @@ from functools import wraps
 # ======================
 # DECORATOR DE RETRY PARA ERROS DE QUOTA (429)
 # ======================
-def retry_on_quota(max_retries=5, delay=3):
-    """Decorator para tentar novamente quando ocorrer erro de quota (429) com backoff exponencial"""
+def retry_on_quota(max_retries=3, delay=5):
+    """Decorator para tentar novamente quando ocorrer erro de quota (429)"""
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -35,11 +35,10 @@ def retry_on_quota(max_retries=5, delay=3):
                 try:
                     return func(*args, **kwargs)
                 except Exception as e:
-                    error_msg = str(e)
-                    if "429" in error_msg or "Quota exceeded" in error_msg or "User rate limit" in error_msg:
+                    if "429" in str(e) or "Quota exceeded" in str(e):
                         if attempt < max_retries - 1:
-                            wait = delay * (2 ** attempt)  # Backoff exponencial: 3, 6, 12, 24 segundos
-                            st.warning(f"⚠️ Limite de requisições atingido. Tentativa {attempt + 1} de {max_retries} em {wait:.1f}s...")
+                            wait = delay * (attempt + 1)
+                            st.warning(f"Limite de requisições atingido. Tentando novamente em {wait}s...")
                             time.sleep(wait)
                             continue
                     raise
@@ -608,7 +607,7 @@ def get_horario_brasilia_obj():
 ID_PLANILHA_RECADOS = '1R0V4HpmRNXAd2TxVv8c_dVVoc1tXDPBOVSFBX1JKHvs'
 ABA_RECADOS = 'Rodapé'
 
-@st.cache_data(ttl=3600)  # Atualiza a cada 60 segundos
+@st.cache_data(ttl=240)  # Atualiza a cada 60 segundos
 def carregar_mensagens_rodape():
     """
     Carrega as mensagens da planilha Recados - aba Rodapé.
@@ -931,7 +930,7 @@ def converter_tempo_para_minutos(valor):
 # FUNÇÕES DE CARREGAMENTO DE DADOS (COM CACHE E RETRY)
 # ======================
 @retry_on_quota()
-@st.cache_data(ttl=7200)
+@st.cache_data(ttl=1200)
 def carregar_dados_prensados():
     try:
         client = get_gspread_client()
@@ -976,7 +975,7 @@ def carregar_dados_prensados():
         return pd.DataFrame()
 
 @retry_on_quota()
-@st.cache_data(ttl=7200)
+@st.cache_data(ttl=1200)
 def carregar_dados_sopro():
     try:
         client = get_gspread_client()
@@ -1013,7 +1012,7 @@ def carregar_dados_sopro():
         return pd.DataFrame()
 
 @retry_on_quota()
-@st.cache_data(ttl=7200)
+@st.cache_data(ttl=1200)
 def carregar_dados_tempera():
     try:
         client = get_gspread_client()
@@ -1250,7 +1249,7 @@ def carregar_registros_ar_sem_cache() -> List[RegistroAR]:
     return registros
 
 # Função com cache para uso geral (visualização, edição, etc.)
-@st.cache_data(ttl=7200)
+@st.cache_data(ttl=1200)
 def carregar_registros_ar(filtros: Dict[str, Any] = None) -> List[RegistroAR]:
     registros = carregar_registros_ar_sem_cache()
     if filtros:
@@ -1497,7 +1496,7 @@ def carregar_registros_rm_sem_cache() -> List[RegistroRM]:
     return registros
 
 # Função com cache para uso geral
-@st.cache_data(ttl=7200)
+@st.cache_data(ttl=1200)
 def carregar_registros_rm(filtros: Dict[str, Any] = None) -> List[RegistroRM]:
     registros = carregar_registros_rm_sem_cache()
     if filtros:
@@ -2701,7 +2700,7 @@ elif aba_selecionada == 'TÊMPERA':
         except:
             return 0.0
 
-    @st.cache_data(ttl=7200)
+    @st.cache_data(ttl=1200)
     def carregar_dados_tempera():
         try:
             client = get_gspread_client()
@@ -5325,7 +5324,7 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
     # ======================
     # FUNÇÕES DE CARREGAMENTO
     # ======================
-    @st.cache_data(ttl=7200)
+    @st.cache_data(ttl=1200)
     def carregar_producoes_fechamento(data_selecionada: date):
         """Carrega produções do Google Sheets"""
         producoes = []
@@ -5384,7 +5383,7 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
         
         return producoes
     
-    @st.cache_data(ttl=7200)
+    @st.cache_data(ttl=1200)
     def carregar_checklists_fechamento(data_selecionada: date):
         """Carrega checklists do Google Sheets"""
         checklists = {"manha": False, "tarde": False, "noite": False}
@@ -5425,7 +5424,7 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
         
         return checklists, detalhes
     
-    @st.cache_data(ttl=7200)
+    @st.cache_data(ttl=1200)
     def carregar_faltas_fechamento(data_selecionada: date):
         """Carrega faltas do Google Sheets"""
         faltas = []
@@ -5461,7 +5460,7 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
         
         return faltas
     
-    @st.cache_data(ttl=7200)
+    @st.cache_data(ttl=1200)
     def carregar_ars_rms_fechamento(data_selecionada: date):
         """Carrega ARs e RMs das planilhas existentes filtradas por data"""
         ars = []
@@ -6074,7 +6073,7 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
     # FUNÇÕES DA PLANILHA PREVENTIVA
     # ======================
     @retry_on_quota()
-    @st.cache_data(ttl=600)
+    @st.cache_data(ttl=300)
     def carregar_preventivas(filtros: Dict[str, Any] = None) -> List[RegistroPreventiva]:
         registros = []
         
@@ -6157,38 +6156,78 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
     @retry_on_quota()
     @st.cache_data(ttl=600)
     def carregar_cadastro_maquinas() -> List[CadastroMaquina]:
+        """Carrega o cadastro de máquinas do Google Sheets"""
         registros = []
         try:
             client = get_gspread_client()
             if client is None:
+                st.error("❌ Não foi possível conectar ao Google Sheets")
                 return registros
             
             spreadsheet = client.open_by_key(ID_PLANILHA_PREVENTIVA)
             
+            # Listar todas as abas disponíveis para debug
+            try:
+                worksheets = spreadsheet.worksheets()
+                nomes_abas = [ws.title for ws in worksheets]
+                print(f"Abas disponíveis na planilha: {nomes_abas}")
+            except:
+                pass
+            
+            # Tentar abrir a aba CADASTRO
             try:
                 sheet = spreadsheet.worksheet(ABA_CADASTRO_PREVENTIVA)
-            except:
+            except Exception as e:
+                st.warning(f"Aba '{ABA_CADASTRO_PREVENTIVA}' não encontrada. Criando nova aba...")
+                # Criar a aba se não existir
                 sheet = spreadsheet.add_worksheet(title=ABA_CADASTRO_PREVENTIVA, rows=1000, cols=10)
                 cabecalho = ["ID", "MÁQUINA", "SETOR"]
                 sheet.append_row(cabecalho)
                 return registros
             
+            # Ler todos os dados
             todos_dados = sheet.get_all_values()
-            for row in todos_dados[1:]:
-                if len(row) < 3 or not row[0] or not row[0].strip():
+            print(f"Total de linhas na aba CADASTRO: {len(todos_dados)}")
+            
+            if len(todos_dados) < 2:
+                st.info("Nenhum dado encontrado na aba CADASTRO. Adicione máquinas para começar.")
+                return registros
+            
+            # Mostrar cabeçalho para debug
+            if len(todos_dados) > 0:
+                print(f"Cabeçalho da aba CADASTRO: {todos_dados[0]}")
+            
+            # Processar linhas (pular cabeçalho)
+            for row_idx, row in enumerate(todos_dados[1:], start=2):
+                if len(row) < 3:
+                    print(f"Linha {row_idx} ignorada - poucas colunas: {len(row)}")
+                    continue
+                
+                id_val = row[0].strip() if row[0] else ""
+                maquina_val = row[1].strip() if len(row) > 1 and row[1] else ""
+                setor_val = row[2].strip() if len(row) > 2 and row[2] else ""
+                
+                if not id_val or not maquina_val:
+                    print(f"Linha {row_idx} ignorada - ID ou Máquina vazio")
                     continue
                 
                 try:
                     registro = CadastroMaquina()
-                    registro.id = row[0].strip()
-                    registro.maquina = row[1].strip() if len(row) > 1 else ""
-                    registro.setor = row[2].strip() if len(row) > 2 else ""
+                    registro.id = id_val
+                    registro.maquina = maquina_val
+                    registro.setor = setor_val
                     registros.append(registro)
-                except:
+                    print(f"✅ Máquina carregada: ID={id_val}, Máquina={maquina_val}, Setor={setor_val}")
+                except Exception as e:
+                    print(f"Erro ao processar linha {row_idx}: {e}")
                     continue
             
+            print(f"Total de máquinas carregadas: {len(registros)}")
             return registros
+            
         except Exception as e:
+            st.error(f"Erro ao carregar cadastro de máquinas: {str(e)}")
+            print(f"Erro detalhado: {traceback.format_exc()}")
             return registros
     
     def salvar_preventiva(registro: RegistroPreventiva) -> tuple:
@@ -6274,29 +6313,53 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
             return False, f"❌ Erro ao excluir: {str(e)}"
     
     def salvar_cadastro_maquina(registro: CadastroMaquina, eh_alteracao: bool = False) -> tuple:
+        """Salva ou atualiza uma máquina no cadastro"""
         try:
             client = get_gspread_client()
             if client is None:
-                return False, "❌ Erro ao conectar ao Google Sheets"
+                return False, "❌ Não foi possível conectar ao Google Sheets"
             
             spreadsheet = client.open_by_key(ID_PLANILHA_PREVENTIVA)
-            sheet = spreadsheet.worksheet(ABA_CADASTRO_PREVENTIVA)
+            
+            # Garantir que a aba existe
+            try:
+                sheet = spreadsheet.worksheet(ABA_CADASTRO_PREVENTIVA)
+            except:
+                sheet = spreadsheet.add_worksheet(title=ABA_CADASTRO_PREVENTIVA, rows=1000, cols=10)
+                cabecalho = ["ID", "MÁQUINA", "SETOR"]
+                sheet.append_row(cabecalho)
             
             dados = [registro.id, registro.maquina, registro.setor]
             
             if eh_alteracao:
-                cell = sheet.find(registro.id, in_column=1)
-                if cell:
-                    for col, valor in enumerate(dados, start=1):
-                        sheet.update_cell(cell.row, col, valor)
-                else:
+                # Buscar pela coluna ID (coluna 1)
+                try:
+                    cell = sheet.find(registro.id, in_column=1)
+                    if cell:
+                        # Atualizar linha existente
+                        for col, valor in enumerate(dados, start=1):
+                            sheet.update_cell(cell.row, col, valor)
+                    else:
+                        # Se não encontrou, adicionar nova linha
+                        sheet.append_row(dados)
+                except Exception as e:
+                    print(f"Erro na busca: {e}")
                     sheet.append_row(dados)
             else:
+                # Verificar se ID já existe
+                try:
+                    cell = sheet.find(registro.id, in_column=1)
+                    if cell:
+                        return False, f"❌ ID {registro.id} já existe!"
+                except:
+                    pass
                 sheet.append_row(dados)
             
             st.cache_data.clear()
             return True, "✅ Cadastro salvo com sucesso!"
+            
         except Exception as e:
+            print(f"Erro ao salvar cadastro: {traceback.format_exc()}")
             return False, f"❌ Erro ao salvar cadastro: {str(e)}"
     
     def excluir_cadastro_maquina(id_maquina: str) -> tuple:
