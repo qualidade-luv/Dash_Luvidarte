@@ -26,8 +26,8 @@ from functools import wraps
 # ======================
 # DECORATOR DE RETRY PARA ERROS DE QUOTA (429)
 # ======================
-def retry_on_quota(max_retries=5, delay=3):
-    """Decorator para tentar novamente quando ocorrer erro de quota (429) com backoff exponencial"""
+def retry_on_quota(max_retries=3, delay=5):
+    """Decorator para tentar novamente quando ocorrer erro de quota (429)"""
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -35,11 +35,10 @@ def retry_on_quota(max_retries=5, delay=3):
                 try:
                     return func(*args, **kwargs)
                 except Exception as e:
-                    error_msg = str(e)
-                    if "429" in error_msg or "Quota exceeded" in error_msg or "User rate limit" in error_msg:
+                    if "429" in str(e) or "Quota exceeded" in str(e):
                         if attempt < max_retries - 1:
-                            wait = delay * (2 ** attempt)  # Backoff exponencial: 3, 6, 12, 24 segundos
-                            st.warning(f"⚠️ Limite de requisições atingido. Tentativa {attempt + 1} de {max_retries} em {wait:.1f}s...")
+                            wait = delay * (attempt + 1)
+                            st.warning(f"Limite de requisições atingido. Tentando novamente em {wait}s...")
                             time.sleep(wait)
                             continue
                     raise
@@ -608,7 +607,7 @@ def get_horario_brasilia_obj():
 ID_PLANILHA_RECADOS = '1R0V4HpmRNXAd2TxVv8c_dVVoc1tXDPBOVSFBX1JKHvs'
 ABA_RECADOS = 'Rodapé'
 
-@st.cache_data(ttl=3600)  # Atualiza a cada 60 segundos
+@st.cache_data(ttl=240)  # Atualiza a cada 60 segundos
 def carregar_mensagens_rodape():
     """
     Carrega as mensagens da planilha Recados - aba Rodapé.
@@ -931,7 +930,7 @@ def converter_tempo_para_minutos(valor):
 # FUNÇÕES DE CARREGAMENTO DE DADOS (COM CACHE E RETRY)
 # ======================
 @retry_on_quota()
-@st.cache_data(ttl=7200)
+@st.cache_data(ttl=1200)
 def carregar_dados_prensados():
     try:
         client = get_gspread_client()
@@ -976,7 +975,7 @@ def carregar_dados_prensados():
         return pd.DataFrame()
 
 @retry_on_quota()
-@st.cache_data(ttl=7200)
+@st.cache_data(ttl=1200)
 def carregar_dados_sopro():
     try:
         client = get_gspread_client()
@@ -1013,7 +1012,7 @@ def carregar_dados_sopro():
         return pd.DataFrame()
 
 @retry_on_quota()
-@st.cache_data(ttl=7200)
+@st.cache_data(ttl=1200)
 def carregar_dados_tempera():
     try:
         client = get_gspread_client()
@@ -1250,7 +1249,7 @@ def carregar_registros_ar_sem_cache() -> List[RegistroAR]:
     return registros
 
 # Função com cache para uso geral (visualização, edição, etc.)
-@st.cache_data(ttl=7200)
+@st.cache_data(ttl=1200)
 def carregar_registros_ar(filtros: Dict[str, Any] = None) -> List[RegistroAR]:
     registros = carregar_registros_ar_sem_cache()
     if filtros:
@@ -1497,7 +1496,7 @@ def carregar_registros_rm_sem_cache() -> List[RegistroRM]:
     return registros
 
 # Função com cache para uso geral
-@st.cache_data(ttl=7200)
+@st.cache_data(ttl=1200)
 def carregar_registros_rm(filtros: Dict[str, Any] = None) -> List[RegistroRM]:
     registros = carregar_registros_rm_sem_cache()
     if filtros:
@@ -2701,7 +2700,7 @@ elif aba_selecionada == 'TÊMPERA':
         except:
             return 0.0
 
-    @st.cache_data(ttl=7200)
+    @st.cache_data(ttl=1200)
     def carregar_dados_tempera():
         try:
             client = get_gspread_client()
@@ -5325,7 +5324,7 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
     # ======================
     # FUNÇÕES DE CARREGAMENTO
     # ======================
-    @st.cache_data(ttl=7200)
+    @st.cache_data(ttl=1200)
     def carregar_producoes_fechamento(data_selecionada: date):
         """Carrega produções do Google Sheets"""
         producoes = []
@@ -5384,7 +5383,7 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
         
         return producoes
     
-    @st.cache_data(ttl=7200)
+    @st.cache_data(ttl=1200)
     def carregar_checklists_fechamento(data_selecionada: date):
         """Carrega checklists do Google Sheets"""
         checklists = {"manha": False, "tarde": False, "noite": False}
@@ -5425,7 +5424,7 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
         
         return checklists, detalhes
     
-    @st.cache_data(ttl=7200)
+    @st.cache_data(ttl=1200)
     def carregar_faltas_fechamento(data_selecionada: date):
         """Carrega faltas do Google Sheets"""
         faltas = []
@@ -5461,7 +5460,7 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
         
         return faltas
     
-    @st.cache_data(ttl=7200)
+    @st.cache_data(ttl=1200)
     def carregar_ars_rms_fechamento(data_selecionada: date):
         """Carrega ARs e RMs das planilhas existentes filtradas por data"""
         ars = []
@@ -5996,6 +5995,12 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
     if 'mes_calendario' not in st.session_state:
         st.session_state.mes_calendario = datetime.now().replace(day=1)
     
+    if 'id_selecionado_novo' not in st.session_state:
+        st.session_state.id_selecionado_novo = None
+    
+    if 'termo_busca_maquina' not in st.session_state:
+        st.session_state.termo_busca_maquina = ""
+    
     # ======================
     # CONSTANTES
     # ======================
@@ -6074,7 +6079,7 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
     # FUNÇÕES DA PLANILHA PREVENTIVA
     # ======================
     @retry_on_quota()
-    @st.cache_data(ttl=600)
+    @st.cache_data(ttl=300)
     def carregar_preventivas(filtros: Dict[str, Any] = None) -> List[RegistroPreventiva]:
         registros = []
         
@@ -6157,38 +6162,59 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
     @retry_on_quota()
     @st.cache_data(ttl=600)
     def carregar_cadastro_maquinas() -> List[CadastroMaquina]:
+        """Carrega o cadastro de máquinas do Google Sheets"""
         registros = []
         try:
             client = get_gspread_client()
             if client is None:
+                st.error("❌ Não foi possível conectar ao Google Sheets")
                 return registros
             
             spreadsheet = client.open_by_key(ID_PLANILHA_PREVENTIVA)
             
+            # Tentar abrir a aba CADASTRO
             try:
                 sheet = spreadsheet.worksheet(ABA_CADASTRO_PREVENTIVA)
-            except:
+            except Exception as e:
+                st.warning(f"Aba '{ABA_CADASTRO_PREVENTIVA}' não encontrada. Criando nova aba...")
+                # Criar a aba se não existir
                 sheet = spreadsheet.add_worksheet(title=ABA_CADASTRO_PREVENTIVA, rows=1000, cols=10)
                 cabecalho = ["ID", "MÁQUINA", "SETOR"]
                 sheet.append_row(cabecalho)
                 return registros
             
+            # Ler todos os dados
             todos_dados = sheet.get_all_values()
-            for row in todos_dados[1:]:
-                if len(row) < 3 or not row[0] or not row[0].strip():
+            
+            if len(todos_dados) < 2:
+                st.info("Nenhum dado encontrado na aba CADASTRO. Adicione máquinas para começar.")
+                return registros
+            
+            # Processar linhas (pular cabeçalho)
+            for row_idx, row in enumerate(todos_dados[1:], start=2):
+                if len(row) < 3:
+                    continue
+                
+                id_val = row[0].strip() if row[0] else ""
+                maquina_val = row[1].strip() if len(row) > 1 and row[1] else ""
+                setor_val = row[2].strip() if len(row) > 2 and row[2] else ""
+                
+                if not id_val or not maquina_val:
                     continue
                 
                 try:
                     registro = CadastroMaquina()
-                    registro.id = row[0].strip()
-                    registro.maquina = row[1].strip() if len(row) > 1 else ""
-                    registro.setor = row[2].strip() if len(row) > 2 else ""
+                    registro.id = id_val
+                    registro.maquina = maquina_val
+                    registro.setor = setor_val
                     registros.append(registro)
-                except:
+                except Exception as e:
                     continue
             
             return registros
+            
         except Exception as e:
+            st.error(f"Erro ao carregar cadastro de máquinas: {str(e)}")
             return registros
     
     def salvar_preventiva(registro: RegistroPreventiva) -> tuple:
@@ -6274,29 +6300,53 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
             return False, f"❌ Erro ao excluir: {str(e)}"
     
     def salvar_cadastro_maquina(registro: CadastroMaquina, eh_alteracao: bool = False) -> tuple:
+        """Salva ou atualiza uma máquina no cadastro"""
         try:
             client = get_gspread_client()
             if client is None:
-                return False, "❌ Erro ao conectar ao Google Sheets"
+                return False, "❌ Não foi possível conectar ao Google Sheets"
             
             spreadsheet = client.open_by_key(ID_PLANILHA_PREVENTIVA)
-            sheet = spreadsheet.worksheet(ABA_CADASTRO_PREVENTIVA)
+            
+            # Garantir que a aba existe
+            try:
+                sheet = spreadsheet.worksheet(ABA_CADASTRO_PREVENTIVA)
+            except:
+                sheet = spreadsheet.add_worksheet(title=ABA_CADASTRO_PREVENTIVA, rows=1000, cols=10)
+                cabecalho = ["ID", "MÁQUINA", "SETOR"]
+                sheet.append_row(cabecalho)
             
             dados = [registro.id, registro.maquina, registro.setor]
             
             if eh_alteracao:
-                cell = sheet.find(registro.id, in_column=1)
-                if cell:
-                    for col, valor in enumerate(dados, start=1):
-                        sheet.update_cell(cell.row, col, valor)
-                else:
+                # Buscar pela coluna ID (coluna 1)
+                try:
+                    cell = sheet.find(registro.id, in_column=1)
+                    if cell:
+                        # Atualizar linha existente
+                        for col, valor in enumerate(dados, start=1):
+                            sheet.update_cell(cell.row, col, valor)
+                    else:
+                        # Se não encontrou, adicionar nova linha
+                        sheet.append_row(dados)
+                except Exception as e:
+                    print(f"Erro na busca: {e}")
                     sheet.append_row(dados)
             else:
+                # Verificar se ID já existe
+                try:
+                    cell = sheet.find(registro.id, in_column=1)
+                    if cell:
+                        return False, f"❌ ID {registro.id} já existe!"
+                except:
+                    pass
                 sheet.append_row(dados)
             
             st.cache_data.clear()
             return True, "✅ Cadastro salvo com sucesso!"
+            
         except Exception as e:
+            print(f"Erro ao salvar cadastro: {traceback.format_exc()}")
             return False, f"❌ Erro ao salvar cadastro: {str(e)}"
     
     def excluir_cadastro_maquina(id_maquina: str) -> tuple:
@@ -6601,61 +6651,223 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
         
         acao = st.radio("Ação:", ["➕ Nova Manutenção", "✏️ Editar Manutenção", "🗑️ Excluir Manutenção"], horizontal=True)
         
-        # ====================== NOVA MANUTENÇÃO ======================
+        # ====================== NOVA MANUTENÇÃO COM COMBOBOX DE PESQUISA ======================
         if acao == "➕ Nova Manutenção":
             with st.form("nova_preventiva"):
-                cadastros = carregar_cadastro_maquinas()
-                opcoes_ids = ["Selecione..."] + [c.id for c in cadastros]
-                dict_maquina = {c.id: c.maquina for c in cadastros}
-                dict_setor = {c.id: c.setor for c in cadastros}
+                # Carregar cadastro de máquinas
+                cadastros_novo = carregar_cadastro_maquinas()
                 
-                col1, col2 = st.columns(2)
-                with col1:
-                    id_selecionado = st.selectbox("ID da Máquina*", opcoes_ids, key="novo_id")
+                if not cadastros_novo:
+                    st.warning("⚠️ Nenhuma máquina cadastrada. Por favor, cadastre máquinas na aba 'Cadastro de Máquinas' primeiro.")
+                    st.form_submit_button("💾 SALVAR MANUTENÇÃO", disabled=True, use_container_width=True)
+                else:
+                    # Criar dicionários para lookup rápido
+                    dict_info_maquinas = {c.id: {"nome": c.maquina, "setor": c.setor} for c in cadastros_novo}
                     
-                    if id_selecionado != "Selecione..." and id_selecionado in dict_maquina:
-                        st.text_input("Máquina*", value=dict_maquina[id_selecionado], disabled=True, key="novo_maquina")
-                        st.text_input("Setor*", value=dict_setor[id_selecionado], disabled=True, key="novo_setor")
-                    else:
-                        st.text_input("Máquina*", disabled=True, placeholder="Selecione um ID primeiro", key="novo_maquina")
-                        st.text_input("Setor*", disabled=True, placeholder="Selecione um ID primeiro", key="novo_setor")
+                    # Opção de ordenar por nome para facilitar busca
+                    maquinas_ordenadas = sorted(cadastros_novo, key=lambda x: x.maquina)
                     
-                    data_agendada = st.date_input("Data Agendada*", value=datetime.now().date(), key="novo_data")
-                
-                with col2:
-                    descricao = st.text_area("Descrição do Serviço*", height=100, key="novo_descricao")
-                    execucao = st.text_input("Responsável pela Execução", key="novo_execucao")
-                    analise = st.text_area("Análise / Resultado", height=80, key="novo_analise", placeholder="Preencha após a execução da manutenção")
-                
-                st.info("⚠️ As liberações Elétrica e Mecânica serão marcadas na edição após a execução da manutenção.")
-                
-                submitted = st.form_submit_button("💾 SALVAR MANUTENÇÃO", type="primary", use_container_width=True)
-                
-                if submitted:
-                    if id_selecionado == "Selecione...":
-                        st.error("❌ Selecione um ID de máquina cadastrada!")
-                    elif not descricao:
-                        st.error("❌ Preencha a descrição do serviço!")
+                    # CSS personalizado para o campo de busca
+                    st.markdown("""
+                    <style>
+                    div[data-testid="stTextInput"] input {
+                        font-size: 14px;
+                    }
+                    .search-info {
+                        font-size: 12px;
+                        color: #666;
+                        margin-top: -10px;
+                        margin-bottom: 10px;
+                    }
+                    </style>
+                    """, unsafe_allow_html=True)
+                    
+                    # Campo de busca com texto
+                    st.markdown("### 🔍 Buscar Máquina")
+                    st.caption("Digite parte do nome, ID ou setor da máquina")
+                    
+                    termo_busca = st.text_input(
+                        "🔎 Pesquisar",
+                        value=st.session_state.termo_busca_maquina,
+                        key="campo_busca_maquina",
+                        placeholder="Ex: Prensa, MAQ001, Produção...",
+                        label_visibility="collapsed"
+                    )
+                    
+                    # Atualizar session state
+                    st.session_state.termo_busca_maquina = termo_busca
+                    
+                    # Filtrar máquinas baseado no termo de busca
+                    if termo_busca:
+                        termo_lower = termo_busca.lower()
+                        maquinas_filtradas = [
+                            m for m in maquinas_ordenadas 
+                            if termo_lower in m.id.lower() 
+                            or termo_lower in m.maquina.lower() 
+                            or termo_lower in m.setor.lower()
+                        ]
                     else:
-                        novo_registro = RegistroPreventiva(
-                            id=id_selecionado, 
-                            data=datetime.combine(data_agendada, datetime.min.time()),
-                            maquina=dict_maquina.get(id_selecionado, ""), 
-                            setor=dict_setor.get(id_selecionado, ""), 
-                            descricao=descricao,
-                            execucao=execucao, 
-                            analise=analise,
-                            eletrica=False,
-                            mecanica=False,
-                            liberado=False
-                        )
-                        sucesso, mensagem = salvar_preventiva(novo_registro)
-                        if sucesso:
-                            st.success(mensagem)
-                            enviar_email_preventiva(novo_registro, "CRIAÇÃO")
-                            st.rerun()
+                        maquinas_filtradas = maquinas_ordenadas
+                    
+                    # Mostrar resultado da busca
+                    if termo_busca:
+                        if maquinas_filtradas:
+                            st.success(f"✅ Encontradas {len(maquinas_filtradas)} máquina(s)")
                         else:
-                            st.error(mensagem)
+                            st.warning(f"⚠️ Nenhuma máquina encontrada com '{termo_busca}'")
+                            st.info("💡 Dica: Tente buscar por parte do nome, ID ou setor")
+                    
+                    # Selectbox com as máquinas filtradas
+                    if maquinas_filtradas:
+                        opcoes_select = [
+                            f"{m.id} | {m.maquina} | {m.setor}" 
+                            for m in maquinas_filtradas
+                        ]
+                        
+                        selecao_formatada = st.selectbox(
+                            "📋 Selecione a máquina",
+                            options=opcoes_select,
+                            key="select_maquina_nova",
+                            help="Selecione a máquina desejada da lista filtrada"
+                        )
+                        
+                        # Extrair o ID da seleção
+                        if selecao_formatada:
+                            id_selecionado = selecao_formatada.split(" | ")[0].strip()
+                            st.session_state.id_selecionado_novo = id_selecionado
+                            
+                            # Buscar informações completas
+                            info = dict_info_maquinas.get(id_selecionado, {})
+                            maquina_selecionada = info.get("nome", "")
+                            setor_selecionado = info.get("setor", "")
+                        else:
+                            id_selecionado = None
+                            maquina_selecionada = ""
+                            setor_selecionado = ""
+                    else:
+                        id_selecionado = None
+                        maquina_selecionada = ""
+                        setor_selecionado = ""
+                    
+                    # Linha divisória
+                    st.markdown("---")
+                    
+                    # Campos do formulário
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.markdown("### 📋 Dados da Máquina")
+                        
+                        # ID (automático)
+                        st.text_input(
+                            "ID da Máquina*", 
+                            value=id_selecionado if id_selecionado else "", 
+                            disabled=True,
+                            key="novo_id_display",
+                            help="Selecionado automaticamente ao escolher a máquina"
+                        )
+                        
+                        # Nome da Máquina (automático)
+                        st.text_input(
+                            "Máquina*", 
+                            value=maquina_selecionada, 
+                            disabled=True,
+                            key="novo_maquina_display"
+                        )
+                        
+                        # Setor (automático)
+                        st.text_input(
+                            "Setor*", 
+                            value=setor_selecionado, 
+                            disabled=True,
+                            key="novo_setor_display"
+                        )
+                        
+                        # Data agendada
+                        data_agendada = st.date_input(
+                            "📅 Data Agendada*", 
+                            value=datetime.now().date(), 
+                            key="novo_data"
+                        )
+                    
+                    with col2:
+                        st.markdown("### 🔧 Informações da Manutenção")
+                        
+                        descricao = st.text_area(
+                            "📝 Descrição do Serviço*", 
+                            height=100, 
+                            key="novo_descricao",
+                            placeholder="Descreva detalhadamente o serviço a ser executado..."
+                        )
+                        
+                        execucao = st.text_input(
+                            "👤 Responsável pela Execução", 
+                            key="novo_execucao",
+                            placeholder="Nome do técnico responsável"
+                        )
+                        
+                        analise = st.text_area(
+                            "📊 Análise / Resultado", 
+                            height=80, 
+                            key="novo_analise", 
+                            placeholder="Preencha APÓS a execução da manutenção (resultados, observações, etc.)",
+                            help="Este campo deve ser preenchido após a conclusão da manutenção"
+                        )
+                    
+                    # Informação sobre liberações
+                    st.info("ℹ️ **Nota:** As liberações Elétrica e Mecânica serão marcadas na edição, após a execução da manutenção.")
+                    
+                    # Botão de submit
+                    col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
+                    with col_btn2:
+                        submitted = st.form_submit_button(
+                            "💾 SALVAR MANUTENÇÃO", 
+                            type="primary", 
+                            use_container_width=True
+                        )
+                    
+                    if submitted:
+                        # Validações
+                        if not id_selecionado:
+                            st.error("❌ Selecione uma máquina na lista!")
+                        elif not descricao or not descricao.strip():
+                            st.error("❌ Preencha a descrição do serviço!")
+                        elif not data_agendada:
+                            st.error("❌ Selecione uma data válida!")
+                        else:
+                            # Criar registro
+                            novo_registro = RegistroPreventiva(
+                                id=id_selecionado, 
+                                data=datetime.combine(data_agendada, datetime.min.time()),
+                                maquina=maquina_selecionada, 
+                                setor=setor_selecionado, 
+                                descricao=descricao.strip(),
+                                execucao=execucao.strip(), 
+                                analise=analise.strip() if analise else "",
+                                eletrica=False,
+                                mecanica=False,
+                                liberado=False
+                            )
+                            
+                            # Salvar
+                            sucesso, mensagem = salvar_preventiva(novo_registro)
+                            
+                            if sucesso:
+                                st.success(mensagem)
+                                # Tentar enviar email
+                                try:
+                                    enviar_email_preventiva(novo_registro, "CRIAÇÃO")
+                                except:
+                                    pass
+                                
+                                # Limpar campos da busca
+                                st.session_state.termo_busca_maquina = ""
+                                st.session_state.id_selecionado_novo = None
+                                
+                                # Recarregar página
+                                st.rerun()
+                            else:
+                                st.error(mensagem)
         
         # ====================== EDITAR MANUTENÇÃO ======================
         elif acao == "✏️ Editar Manutenção":
@@ -6694,19 +6906,18 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
                 st.success(f"✅ Editando: {reg.maquina} - {reg.data.strftime('%d/%m/%Y') if reg.data else '-'}")
                 
                 with st.form("form_editar_registro"):
-                    cadastros = carregar_cadastro_maquinas()
-                    dict_maquina = {c.id: c.maquina for c in cadastros}
-                    dict_setor = {c.id: c.setor for c in cadastros}
+                    cadastros_edit = carregar_cadastro_maquinas()
+                    dict_maquina_edit = {c.id: {"nome": c.maquina, "setor": c.setor} for c in cadastros_edit}
                     
                     col1, col2 = st.columns(2)
                     with col1:
                         st.text_input("ID", value=reg.id, disabled=True, key="edit_id_display")
                         
-                        if reg.id in dict_maquina:
-                            st.text_input("Máquina", value=dict_maquina[reg.id], disabled=True, key="edit_maquina_display")
-                            st.text_input("Setor", value=dict_setor[reg.id], disabled=True, key="edit_setor_display")
-                            maquina_val = dict_maquina[reg.id]
-                            setor_val = dict_setor[reg.id]
+                        if reg.id in dict_maquina_edit:
+                            st.text_input("Máquina", value=dict_maquina_edit[reg.id]["nome"], disabled=True, key="edit_maquina_display")
+                            st.text_input("Setor", value=dict_maquina_edit[reg.id]["setor"], disabled=True, key="edit_setor_display")
+                            maquina_val = dict_maquina_edit[reg.id]["nome"]
+                            setor_val = dict_maquina_edit[reg.id]["setor"]
                         else:
                             maquina_val = st.text_input("Máquina", value=reg.maquina, key="edit_maquina_input")
                             setor_val = st.text_input("Setor", value=reg.setor, key="edit_setor_input")
@@ -6765,7 +6976,10 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
                             st.success(mensagem)
                             # Enviar e-mail de finalização se for o caso
                             if liberado_status and analise_edit and analise_edit.strip():
-                                enviar_email_preventiva(registro_atualizado, "FINALIZAÇÃO")
+                                try:
+                                    enviar_email_preventiva(registro_atualizado, "FINALIZAÇÃO")
+                                except:
+                                    pass
                             st.session_state.editando_registro = None
                             st.rerun()
                         else:
