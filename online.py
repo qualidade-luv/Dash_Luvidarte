@@ -7236,6 +7236,10 @@ elif aba_selecionada == 'RASTREAMENTO DE PRODUÇÃO':
                     lambda row: (row['APROVADO'] / row['META_LIQUIDA'] * 100) if row['META_LIQUIDA'] > 0 else 0, axis=1
                 )
             
+            # Converter BOQUETA para numérico
+            if 'BOQUETA' in df_resultado.columns:
+                df_resultado['BOQUETA'] = pd.to_numeric(df_resultado['BOQUETA'], errors='coerce')
+            
             # Remover linhas sem FIFO
             df_resultado = df_resultado.dropna(subset=['FIFO'])
             df_resultado['FIFO'] = df_resultado['FIFO'].astype(str).str.strip()
@@ -7356,11 +7360,13 @@ elif aba_selecionada == 'RASTREAMENTO DE PRODUÇÃO':
     # ======================
     df_filtrado = df_raw.copy()
     
+    # Filtro de data
     if data_ini and 'DATA' in df_filtrado.columns:
         df_filtrado = df_filtrado[df_filtrado['DATA'] >= pd.to_datetime(data_ini)]
     if data_fim and 'DATA' in df_filtrado.columns:
         df_filtrado = df_filtrado[df_filtrado['DATA'] <= pd.to_datetime(data_fim)]
     
+    # Filtro de referência/código
     if filtro_referencia and filtro_referencia.strip():
         filtro_lower = filtro_referencia.lower().strip()
         if 'REFERENCIA' in df_filtrado.columns:
@@ -7369,18 +7375,26 @@ elif aba_selecionada == 'RASTREAMENTO DE PRODUÇÃO':
                 df_filtrado['CODIGO'].astype(str).str.lower().str.contains(filtro_lower, na=False)
             ]
     
+    # ======================
+    # FILTRO DE TIPO DE PRENSA (CORRIGIDO)
+    # Semi-Automática = 1, Automática = 2
+    # ======================
     if tipo_prensa != "(Todos)" and 'BOQUETA' in df_filtrado.columns:
         if "Semi" in tipo_prensa:
+            # Semi-Automática = 1
             df_filtrado = df_filtrado[df_filtrado['BOQUETA'] == 1]
         elif "Auto" in tipo_prensa:
+            # Automática = 2
             df_filtrado = df_filtrado[df_filtrado['BOQUETA'] == 2]
     
+    # Filtro de turno
     if turno != "(Todos)" and 'TURNO' in df_filtrado.columns:
         df_filtrado = df_filtrado[df_filtrado['TURNO'].astype(str).str.upper() == turno.upper()]
     
     # Adicionar coluna de situação
     df_filtrado['SITUACAO'] = df_filtrado.apply(get_situacao_texto, axis=1)
     
+    # Ordenar por DATA mais recente
     if 'DATA' in df_filtrado.columns:
         df_filtrado = df_filtrado.sort_values('DATA', ascending=False)
     
@@ -7411,12 +7425,16 @@ elif aba_selecionada == 'RASTREAMENTO DE PRODUÇÃO':
     # ======================
     # CÁLCULO DE PEÇAS POR SITUAÇÃO
     # ======================
+    # PROGRAMADAS: soma da META_LIQUIDA (quantidade programada para produzir)
     pecas_programadas = int(df_producao['META_LIQUIDA'].sum()) if 'META_LIQUIDA' in df_producao.columns else 0
     
+    # TÊMPERA: soma do APROVADO (peças aprovadas na produção que aguardam têmpera)
     pecas_tempera = int(df_tempera['APROVADO'].sum()) if 'APROVADO' in df_tempera.columns else 0
     
+    # EMBALAGEM: soma do AP_TEMPERA (peças aprovadas na têmpera que aguardam embalagem)
     pecas_embalagem = int(df_embalagem['AP_TEMPERA'].sum()) if 'AP_TEMPERA' in df_embalagem.columns else 0
     
+    # LIBERADAS: soma do AP_EMBALAGEM (peças já embaladas)
     pecas_liberadas = int(df_liberados['AP_EMBALAGEM'].sum()) if 'AP_EMBALAGEM' in df_liberados.columns else 0
     
     total_pecas = pecas_programadas + pecas_tempera + pecas_embalagem + pecas_liberadas
