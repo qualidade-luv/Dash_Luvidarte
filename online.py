@@ -7671,7 +7671,7 @@ elif aba_selecionada == 'RASTREAMENTO DE PRODUÇÃO':
                 return 'background-color: #D4F5D4; color: #107C10; font-weight: bold;'
             return ''
         
-        styled_df = df_resumo_display.style.applymap(color_situacao, subset=['📍 Situação'])
+        styled_df = df_resumo_display.style.map(color_situacao, subset=['📍 Situação'])
         
         st.dataframe(styled_df, use_container_width=True, height=500)
         
