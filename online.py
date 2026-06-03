@@ -528,7 +528,8 @@ ABAS = {
     'AVISO DE REJEIÇÃO': 'AR',
     'REQUISIÇÃO MANUTENÇÃO': 'RM',
     'FECHAMENTO TURNO': 'FT',
-    'MANUTENÇÃO PREVENTIVA': 'MP'
+    'MANUTENÇÃO PREVENTIVA': 'MP',
+    'RASTREAMENTO DE PRODUÇÃO': 'RP'
 }
 
 CAMINHO_PDF_AR = r"\\srv-luvidarte\dados\DOC\Engenharia_Luvidarte\SGQ - LUVIDARTE - ALTERADAS\0-AVISO DE REJEIÇÃO\1-PDF"
@@ -7142,6 +7143,630 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
         font-family:'JetBrains Mono',monospace;font-size:10px;
         color:{THEME['text_muted']};letter-spacing:.1em;">
         MANUTENÇÃO PREVENTIVA · {get_horario_brasilia()}
+    </div>
+    """, unsafe_allow_html=True)
+    
+# ==================================================================================================
+# RASTREAMENTO DE PRODUÇÃO
+# ==================================================================================================
+elif aba_selecionada == 'RASTREAMENTO DE PRODUÇÃO':
+    render_page_header("RASTREAMENTO DE PRODUÇÃO", f"Rastreabilidade de Lotes · Atualizado {get_horario_brasilia()}", THEME['accent_cyan'])
+    
+    # ======================
+    # CARREGAR DADOS DA PLANILHA PRENSADOS (TRS_INDUSTRIAL)
+    # ======================
+    @retry_on_quota()
+    @st.cache_data(ttl=300)
+    def carregar_dados_rastreamento():
+        """
+        Carrega os dados da planilha TRS_INDUSTRIAL com as colunas específicas
+        para rastreamento de produção.
+        """
+        try:
+            client = get_gspread_client()
+            if client is None:
+                st.error("❌ Erro ao conectar ao Google Sheets")
+                return pd.DataFrame()
+            
+            # Abrir planilha de PRENSADOS/SOPRO
+            sheet = client.open_by_key(ID_PLANILHA_PRENSADOS_SOPRO).worksheet('TRS_INDUSTRIAL')
+            todos_dados = sheet.get_all_values()
+            
+            if len(todos_dados) < 3:
+                return pd.DataFrame()
+            
+            # Cabeçalho na linha 2 (índice 1)
+            cabecalho = todos_dados[1]
+            # Dados começam na linha 3 (índice 2)
+            valores = todos_dados[2:]
+            
+            df = pd.DataFrame(valores, columns=cabecalho)
+            df.columns = df.columns.str.strip().str.upper()
+            
+            # Mapeamento das colunas
+            colunas_necessarias = {
+                'DATA': 'DATA',
+                'CODIGO': 'CODIGO',
+                'REFERÊNCIA': 'REFERENCIA',
+                'TURNO': 'TURNO',
+                'CLIENTE': 'CLIENTE',
+                'PRODUZIDO': 'PRODUZIDO',
+                'APROVADO': 'APROVADO',
+                'REFUGADO': 'REFUGADO',
+                'TRS 100%': 'META_LIQUIDA',
+                'INSPETOR': 'INSPETOR_1',
+                'FIFO': 'FIFO',           # Coluna ES
+                'D_TEMPERA': 'D_TEMPERA',  # Coluna ET
+                'AP_TEMPERA': 'AP_TEMPERA', # Coluna EU
+                'D_EMBALAGEM': 'D_EMBALAGEM', # Coluna EV
+                'AP_EMBALAGEM': 'AP_EMBALAGEM', # Coluna EW
+                'BOQUETA': 'BOQUETA'
+            }
+            
+            # Verificar quais colunas existem
+            colunas_existentes = {}
+            for original, novo in colunas_necessarias.items():
+                if original in df.columns:
+                    colunas_existentes[original] = novo
+            
+            # Criar DataFrame com as colunas que existem
+            df_resultado = pd.DataFrame()
+            for original, novo in colunas_existentes.items():
+                df_resultado[novo] = df[original]
+            
+            # Converter datas
+            if 'DATA' in df_resultado.columns:
+                df_resultado['DATA'] = df_resultado['DATA'].apply(converter_data_br)
+            
+            if 'D_TEMPERA' in df_resultado.columns:
+                df_resultado['D_TEMPERA'] = df_resultado['D_TEMPERA'].apply(converter_data_br)
+            
+            if 'D_EMBALAGEM' in df_resultado.columns:
+                df_resultado['D_EMBALAGEM'] = df_resultado['D_EMBALAGEM'].apply(converter_data_br)
+            
+            # Converter valores numéricos
+            colunas_numericas = ['PRODUZIDO', 'APROVADO', 'REFUGADO', 'META_LIQUIDA', 'AP_TEMPERA', 'AP_EMBALAGEM']
+            for col in colunas_numericas:
+                if col in df_resultado.columns:
+                    df_resultado[col] = pd.to_numeric(df_resultado[col], errors='coerce').fillna(0)
+            
+            # Calcular TRS
+            if 'TRS_PRODUCAO' not in df_resultado.columns and 'APROVADO' in df_resultado.columns and 'META_LIQUIDA' in df_resultado.columns:
+                df_resultado['TRS_PRODUCAO'] = df_resultado.apply(
+                    lambda row: (row['APROVADO'] / row['META_LIQUIDA'] * 100) if row['META_LIQUIDA'] > 0 else 0, axis=1
+                )
+            
+            # Remover linhas sem FIFO
+            df_resultado = df_resultado.dropna(subset=['FIFO'])
+            df_resultado['FIFO'] = df_resultado['FIFO'].astype(str).str.strip()
+            
+            # Identificar se produto precisa de têmpera (código terminado em 1)
+            if 'CODIGO' in df_resultado.columns:
+                df_resultado['PRECISA_TEMPERA'] = df_resultado['CODIGO'].astype(str).str.strip().str.endswith('1')
+            
+            # Ordenar por DATA mais recente primeiro
+            if 'DATA' in df_resultado.columns:
+                df_resultado = df_resultado.sort_values('DATA', ascending=False)
+            
+            return df_resultado
+            
+        except Exception as e:
+            st.error(f"Erro ao carregar dados de rastreamento: {e}")
+            return pd.DataFrame()
+    
+    # ======================
+    # FUNÇÕES PARA DETERMINAR ONDE O LOTE ESTÁ
+    # ======================
+    def is_em_producao(row):
+        """Lote está em PRODUÇÃO? (Ainda não foi produzido - PRODUZIDO = 0)"""
+        produzido = row.get('PRODUZIDO', 0)
+        if pd.isna(produzido) or produzido == 0:
+            return True
+        return False
+    
+    def is_em_tempera(row):
+        """Lote está em TÊMPERA? (Já produzido, precisa de têmpera, ainda não temperado)"""
+        produzido = row.get('PRODUZIDO', 0)
+        precisa_tempera = row.get('PRECISA_TEMPERA', False)
+        ap_tempera = row.get('AP_TEMPERA', 0)
+        
+        # Já foi produzido, precisa de têmpera, e ainda não foi temperado
+        if produzido > 0 and precisa_tempera and (pd.isna(ap_tempera) or ap_tempera == 0):
+            return True
+        return False
+    
+    def is_em_embalagem(row):
+        """Lote está em EMBALAGEM? (Já produzido, (já temperado se necessário), ainda não embalado)"""
+        produzido = row.get('PRODUZIDO', 0)
+        precisa_tempera = row.get('PRECISA_TEMPERA', False)
+        ap_tempera = row.get('AP_TEMPERA', 0)
+        ap_embalagem = row.get('AP_EMBALAGEM', 0)
+        
+        if produzido == 0:
+            return False
+        
+        # Se precisa de têmpera, verificar se já foi temperado
+        if precisa_tempera:
+            if pd.isna(ap_tempera) or ap_tempera == 0:
+                return False  # Ainda está na têmpera
+        
+        # Verificar se já foi embalado
+        if pd.isna(ap_embalagem) or ap_embalagem == 0:
+            return True
+        
+        return False
+    
+    def is_liberado(row):
+        """Lote está LIBERADO? (Completamente finalizado - embalado)"""
+        ap_embalagem = row.get('AP_EMBALAGEM', 0)
+        
+        if ap_embalagem > 0:
+            return True
+        return False
+    
+    def get_situacao_texto(row):
+        """Retorna o texto da situação atual do lote"""
+        if is_em_producao(row):
+            return "📋 PROGRAMADO PRODUZIR"
+        elif is_em_tempera(row):
+            return "🔥 PROCESSO DE TÊMPERA"
+        elif is_em_embalagem(row):
+            return "📦 PROCESSO DE EMBALAGEM"
+        elif is_liberado(row):
+            return "✅ LIBERADO PARA EXPEDIÇÃO"
+        else:
+            return "📋 PROGRAMADO PRODUZIR"
+    
+    # ======================
+    # SIDEBAR FILTROS
+    # ======================
+    with st.sidebar:
+        st.markdown(f"""
+        <div style='font-family:JetBrains Mono,monospace;font-size:10px;
+            letter-spacing:.2em;text-transform:uppercase;
+            color:{THEME['accent_cyan']};margin:20px 0 10px;
+            border-top:1px solid {THEME['border_bright']};padding-top:16px'>
+            ▸ Filtros · Rastreamento
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Datas - padrão últimos 7 dias
+        data_fim_padrao = datetime.now().date()
+        data_ini_padrao = data_fim_padrao - timedelta(days=7)
+        
+        data_ini = st.date_input("Data Inicial", value=data_ini_padrao, key="rast_data_ini")
+        data_fim = st.date_input("Data Final", value=data_fim_padrao, key="rast_data_fim")
+        
+        # Filtro de Referência/Produto
+        filtro_referencia = st.text_input("Referência/Código", placeholder="Digite parte do código ou referência", key="rast_ref")
+        
+        # Filtro de Tipo de Prensa
+        tipo_prensa = st.selectbox("Tipo de Prensa", ["(Todos)", "Semi-Automática", "Automática"], key="rast_tipo_prensa")
+        
+        # Filtro de Turno
+        turno = st.selectbox("Turno", ["(Todos)", "M", "T", "N"], key="rast_turno")
+        
+        st.markdown("---")
+        st.caption("📌 Os filtros acima são aplicados em TODOS os setores")
+    
+    # ======================
+    # CARREGAR DADOS
+    # ======================
+    with st.spinner("Carregando dados de rastreamento..."):
+        df_raw = carregar_dados_rastreamento()
+    
+    if df_raw.empty:
+        st.warning("⚠️ Não foi possível carregar os dados. Verifique a planilha.")
+        st.stop()
+    
+    # ======================
+    # APLICAR FILTROS GLOBAIS
+    # ======================
+    df_filtrado = df_raw.copy()
+    
+    # Filtro de data
+    if data_ini and 'DATA' in df_filtrado.columns:
+        df_filtrado = df_filtrado[df_filtrado['DATA'] >= pd.to_datetime(data_ini)]
+    if data_fim and 'DATA' in df_filtrado.columns:
+        df_filtrado = df_filtrado[df_filtrado['DATA'] <= pd.to_datetime(data_fim)]
+    
+    # Filtro de referência/código
+    if filtro_referencia and filtro_referencia.strip():
+        filtro_lower = filtro_referencia.lower().strip()
+        if 'REFERENCIA' in df_filtrado.columns:
+            df_filtrado = df_filtrado[
+                df_filtrado['REFERENCIA'].astype(str).str.lower().str.contains(filtro_lower, na=False) |
+                df_filtrado['CODIGO'].astype(str).str.lower().str.contains(filtro_lower, na=False)
+            ]
+    
+    # Filtro de tipo de prensa
+    if tipo_prensa != "(Todos)" and 'BOQUETA' in df_filtrado.columns:
+        if "Semi" in tipo_prensa:
+            df_filtrado = df_filtrado[df_filtrado['BOQUETA'] == 1]
+        elif "Auto" in tipo_prensa:
+            df_filtrado = df_filtrado[df_filtrado['BOQUETA'] == 2]
+    
+    # Filtro de turno
+    if turno != "(Todos)" and 'TURNO' in df_filtrado.columns:
+        df_filtrado = df_filtrado[df_filtrado['TURNO'].astype(str).str.upper() == turno.upper()]
+    
+    # Adicionar coluna de situação
+    df_filtrado['SITUACAO'] = df_filtrado.apply(get_situacao_texto, axis=1)
+    
+    # Garantir ordenação por DATA mais recente
+    if 'DATA' in df_filtrado.columns:
+        df_filtrado = df_filtrado.sort_values('DATA', ascending=False)
+    
+    # ======================
+    # SEPARAR LOTES POR SETOR
+    # ======================
+    # Setor 1: Apenas lotes que AINDA NÃO FORAM PRODUZIDOS (PRODUZIDO = 0)
+    df_producao = df_filtrado[df_filtrado['PRODUZIDO'] == 0].copy()
+    
+    # Setor 2: Lotes JÁ PRODUZIDOS, com código terminado em 1, e SEM AP_TEMPERA
+    df_tempera = df_filtrado[
+        (df_filtrado['PRODUZIDO'] > 0) & 
+        (df_filtrado['PRECISA_TEMPERA'] == True) & 
+        ((df_filtrado['AP_TEMPERA'] == 0) | (df_filtrado['AP_TEMPERA'].isna()))
+    ].copy()
+    
+    # Setor 3: Lotes JÁ PRODUZIDOS, (já temperados se necessário), e SEM AP_EMBALAGEM
+    # Exclui os que já estão na têmpera
+    df_embalagem = df_filtrado[
+        (df_filtrado['PRODUZIDO'] > 0) & 
+        (df_filtrado['AP_EMBALAGEM'] == 0) &
+        (~((df_filtrado['PRECISA_TEMPERA'] == True) & 
+           ((df_filtrado['AP_TEMPERA'] == 0) | (df_filtrado['AP_TEMPERA'].isna()))))
+    ].copy()
+    
+    # Lotes LIBERADOS
+    df_liberados = df_filtrado[df_filtrado['AP_EMBALAGEM'] > 0].copy()
+    
+    # ======================
+    # CÁLCULO DE PEÇAS POR SITUAÇÃO (para o gráfico)
+    # ======================
+    # Total de peças PROGRAMADAS (que serão produzidas - baseado na META_LIQUIDA)
+    pecas_programadas = int(df_producao['META_LIQUIDA'].sum()) if 'META_LIQUIDA' in df_producao.columns else 0
+    
+    # Total de peças em TÊMPERA (que estão aguardando têmpera)
+    pecas_tempera = int(df_tempera['APROVADO'].sum()) if 'APROVADO' in df_tempera.columns else 0
+    
+    # Total de peças em EMBALAGEM (que estão aguardando embalagem)
+    pecas_embalagem = int(df_embalagem['APROVADO'].sum()) if 'APROVADO' in df_embalagem.columns else 0
+    
+    # Total de peças LIBERADAS (já embaladas)
+    pecas_liberadas = int(df_liberados['AP_EMBALAGEM'].sum()) if 'AP_EMBALAGEM' in df_liberados.columns else 0
+    
+    # Total geral de peças
+    total_pecas = pecas_programadas + pecas_tempera + pecas_embalagem + pecas_liberadas
+    
+    # ======================
+    # KPI CARDS
+    # ======================
+    st.markdown("### 📊 Resumo do Rastreamento")
+    
+    total_lotes = len(df_filtrado)
+    lotes_programados_count = len(df_producao)
+    lotes_tempera_count = len(df_tempera)
+    lotes_embalagem_count = len(df_embalagem)
+    lotes_liberados_count = len(df_liberados)
+    
+    col_k1, col_k2, col_k3, col_k4, col_k5 = st.columns(5)
+    with col_k1:
+        st.metric("📦 Total de Lotes", f"{total_lotes:,}")
+    with col_k2:
+        st.metric("📋 Programados", f"{lotes_programados_count:,}")
+    with col_k3:
+        st.metric("🔥 Em Têmpera", f"{lotes_tempera_count:,}")
+    with col_k4:
+        st.metric("📦 Em Embalagem", f"{lotes_embalagem_count:,}")
+    with col_k5:
+        st.metric("✅ Liberados", f"{lotes_liberados_count:,}")
+    
+    st.markdown("<hr>", unsafe_allow_html=True)
+    
+    # ======================
+    # SETOR 1: PRODUÇÃO (Aguardando Produção)
+    # ======================
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, #0078D4 0%, #005a9e 100%); 
+                padding: 12px 20px; border-radius: 8px; margin: 20px 0 15px 0;">
+        <span style="font-size: 20px; margin-right: 10px;">🏭</span>
+        <span style="font-family: 'Rajdhani', sans-serif; font-size: 18px; font-weight: bold; color: white;">
+            SETOR 1 - PRODUÇÃO (Aguardando Produção) • {len(df_producao)} lotes | {pecas_programadas:,} peças programadas
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    colunas_producao = ['DATA', 'CODIGO', 'REFERENCIA', 'TURNO', 'CLIENTE', 'PRODUZIDO', 'APROVADO', 'REFUGADO', 'META_LIQUIDA', 'TRS_PRODUCAO', 'INSPETOR_1', 'FIFO']
+    colunas_existentes_producao = [c for c in colunas_producao if c in df_producao.columns]
+    
+    if colunas_existentes_producao and not df_producao.empty:
+        df_producao_display = df_producao[colunas_existentes_producao].copy()
+        
+        # Formatar para exibição
+        if 'DATA' in df_producao_display.columns:
+            df_producao_display['DATA'] = pd.to_datetime(df_producao_display['DATA']).dt.strftime('%d/%m/%Y')
+        
+        for col in ['PRODUZIDO', 'APROVADO', 'REFUGADO', 'META_LIQUIDA']:
+            if col in df_producao_display.columns:
+                df_producao_display[col] = df_producao_display[col].apply(lambda x: f"{int(x):,}".replace(",", ".") if pd.notna(x) and x > 0 else "0")
+        
+        if 'TRS_PRODUCAO' in df_producao_display.columns:
+            df_producao_display['TRS_PRODUCAO'] = df_producao_display['TRS_PRODUCAO'].apply(lambda x: f"{float(x):.1f}%" if pd.notna(x) and x > 0 else "0%")
+        
+        # Renomear colunas
+        renomear = {
+            'DATA': '📅 Data',
+            'CODIGO': '🔢 Código',
+            'REFERENCIA': '🏷️ Referência',
+            'TURNO': '⏰ Turno',
+            'CLIENTE': '👥 Cliente',
+            'PRODUZIDO': '📦 Produzido',
+            'APROVADO': '✅ Aprovado',
+            'REFUGADO': '❌ Refugado',
+            'META_LIQUIDA': '🎯 Meta Líquida',
+            'TRS_PRODUCAO': '📊 TRS Produção',
+            'INSPETOR_1': '🔍 Inspetor',
+            'FIFO': '🔖 Lote (FIFO)'
+        }
+        
+        df_producao_display = df_producao_display.rename(columns={k: v for k, v in renomear.items() if k in df_producao_display.columns})
+        
+        st.dataframe(df_producao_display, use_container_width=True, height=400)
+        st.caption(f"📌 Lotes aguardando produção (PRODUZIDO = 0)")
+    else:
+        st.info("✅ Nenhum lote aguardando produção para os filtros selecionados.")
+    
+    # ======================
+    # SETOR 2: TÊMPERA
+    # ======================
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, #E86C2C 0%, #c05520 100%); 
+                padding: 12px 20px; border-radius: 8px; margin: 30px 0 15px 0;">
+        <span style="font-size: 20px; margin-right: 10px;">🔥</span>
+        <span style="font-family: 'Rajdhani', sans-serif; font-size: 18px; font-weight: bold; color: white;">
+            SETOR 2 - TÊMPERA • {len(df_tempera)} lotes | {pecas_tempera:,} peças aguardando
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    colunas_tempera = ['DATA', 'D_TEMPERA', 'CODIGO', 'REFERENCIA', 'TURNO', 'CLIENTE', 'PRODUZIDO', 'APROVADO', 'AP_TEMPERA', 'FIFO']
+    colunas_existentes_tempera = [c for c in colunas_tempera if c in df_tempera.columns]
+    
+    if colunas_existentes_tempera and not df_tempera.empty:
+        df_tempera_display = df_tempera[colunas_existentes_tempera].copy()
+        
+        if 'DATA' in df_tempera_display.columns:
+            df_tempera_display['DATA'] = pd.to_datetime(df_tempera_display['DATA']).dt.strftime('%d/%m/%Y')
+        
+        if 'D_TEMPERA' in df_tempera_display.columns:
+            df_tempera_display['D_TEMPERA'] = df_tempera_display['D_TEMPERA'].apply(lambda x: x.strftime('%d/%m/%Y') if pd.notna(x) else "-")
+        
+        for col in ['PRODUZIDO', 'APROVADO', 'AP_TEMPERA']:
+            if col in df_tempera_display.columns:
+                df_tempera_display[col] = df_tempera_display[col].apply(lambda x: f"{int(x):,}".replace(",", ".") if pd.notna(x) and x > 0 else "-")
+        
+        renomear_tempera = {
+            'DATA': '📅 Data Produção',
+            'D_TEMPERA': '📅 Data Têmpera',
+            'CODIGO': '🔢 Código',
+            'REFERENCIA': '🏷️ Referência',
+            'TURNO': '⏰ Turno',
+            'CLIENTE': '👥 Cliente',
+            'PRODUZIDO': '📦 Produzido',
+            'APROVADO': '✅ Aprovado Prod.',
+            'AP_TEMPERA': '🔥 Aprovado Têmpera',
+            'FIFO': '🔖 Lote (FIFO)'
+        }
+        
+        df_tempera_display = df_tempera_display.rename(columns={k: v for k, v in renomear_tempera.items() if k in df_tempera_display.columns})
+        st.dataframe(df_tempera_display, use_container_width=True, height=300)
+        st.caption(f"📌 Lotes aguardando têmpera (Código termina em 1, AP_TEMPERA = 0)")
+    else:
+        st.info("✅ Nenhum lote aguardando têmpera para os filtros selecionados.")
+    
+    # ======================
+    # SETOR 3: EMBALAGEM
+    # ======================
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, #107C10 0%, #0a5a0a 100%); 
+                padding: 12px 20px; border-radius: 8px; margin: 30px 0 15px 0;">
+        <span style="font-size: 20px; margin-right: 10px;">📦</span>
+        <span style="font-family: 'Rajdhani', sans-serif; font-size: 18px; font-weight: bold; color: white;">
+            SETOR 3 - EMBALAGEM • {len(df_embalagem)} lotes | {pecas_embalagem:,} peças aguardando
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    colunas_embalagem = ['DATA', 'D_EMBALAGEM', 'CODIGO', 'REFERENCIA', 'TURNO', 'CLIENTE', 'PRODUZIDO', 'APROVADO', 'AP_EMBALAGEM', 'FIFO']
+    colunas_existentes_embalagem = [c for c in colunas_embalagem if c in df_embalagem.columns]
+    
+    if colunas_existentes_embalagem and not df_embalagem.empty:
+        df_embalagem_display = df_embalagem[colunas_existentes_embalagem].copy()
+        
+        if 'DATA' in df_embalagem_display.columns:
+            df_embalagem_display['DATA'] = pd.to_datetime(df_embalagem_display['DATA']).dt.strftime('%d/%m/%Y')
+        
+        if 'D_EMBALAGEM' in df_embalagem_display.columns:
+            df_embalagem_display['D_EMBALAGEM'] = df_embalagem_display['D_EMBALAGEM'].apply(lambda x: x.strftime('%d/%m/%Y') if pd.notna(x) else "-")
+        
+        for col in ['PRODUZIDO', 'APROVADO', 'AP_EMBALAGEM']:
+            if col in df_embalagem_display.columns:
+                df_embalagem_display[col] = df_embalagem_display[col].apply(lambda x: f"{int(x):,}".replace(",", ".") if pd.notna(x) and x > 0 else "-")
+        
+        renomear_embalagem = {
+            'DATA': '📅 Data Produção',
+            'D_EMBALAGEM': '📅 Data Embalagem',
+            'CODIGO': '🔢 Código',
+            'REFERENCIA': '🏷️ Referência',
+            'TURNO': '⏰ Turno',
+            'CLIENTE': '👥 Cliente',
+            'PRODUZIDO': '📦 Produzido',
+            'APROVADO': '✅ Aprovado Prod.',
+            'AP_EMBALAGEM': '📦 Aprovado Embalagem',
+            'FIFO': '🔖 Lote (FIFO)'
+        }
+        
+        df_embalagem_display = df_embalagem_display.rename(columns={k: v for k, v in renomear_embalagem.items() if k in df_embalagem_display.columns})
+        st.dataframe(df_embalagem_display, use_container_width=True, height=300)
+        st.caption(f"📌 Lotes aguardando embalagem (AP_EMBALAGEM = 0)")
+    else:
+        st.info("✅ Nenhum lote aguardando embalagem para os filtros selecionados.")
+    
+    # ======================
+    # RESUMO DOS LOTES COM SITUAÇÃO
+    # ======================
+    st.markdown("<hr>", unsafe_allow_html=True)
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, #6B46C1 0%, #553c9a 100%); 
+                padding: 12px 20px; border-radius: 8px; margin: 20px 0 15px 0;">
+        <span style="font-size: 20px; margin-right: 10px;">📋</span>
+        <span style="font-family: 'Rajdhani', sans-serif; font-size: 18px; font-weight: bold; color: white;">
+            RESUMO DOS LOTES - SITUAÇÃO ATUAL ({len(df_filtrado)} lotes)
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    colunas_resumo = ['FIFO', 'DATA', 'REFERENCIA', 'CODIGO', 'TURNO', 'PRODUZIDO', 'APROVADO', 'AP_TEMPERA', 'AP_EMBALAGEM', 'SITUACAO']
+    colunas_existentes_resumo = [c for c in colunas_resumo if c in df_filtrado.columns]
+    
+    if colunas_existentes_resumo and not df_filtrado.empty:
+        df_resumo = df_filtrado[colunas_existentes_resumo].copy()
+        
+        # Formatar data
+        if 'DATA' in df_resumo.columns:
+            df_resumo['DATA'] = pd.to_datetime(df_resumo['DATA']).dt.strftime('%d/%m/%Y')
+        
+        # Formatar valores
+        for col in ['PRODUZIDO', 'APROVADO', 'AP_TEMPERA', 'AP_EMBALAGEM']:
+            if col in df_resumo.columns:
+                df_resumo[col] = df_resumo[col].apply(lambda x: f"{int(x):,}".replace(",", ".") if pd.notna(x) and x > 0 else "-")
+        
+        # Renomear colunas
+        renomear_resumo = {
+            'FIFO': '🔖 Lote (FIFO)',
+            'DATA': '📅 Data Produção',
+            'REFERENCIA': '🏷️ Referência',
+            'CODIGO': '🔢 Código',
+            'TURNO': '⏰ Turno',
+            'PRODUZIDO': '📦 Produzido',
+            'APROVADO': '✅ Aprovado Prod.',
+            'AP_TEMPERA': '🔥 Aprovado Têmpera',
+            'AP_EMBALAGEM': '📦 Aprovado Embal.',
+            'SITUACAO': '📍 Situação'
+        }
+        
+        df_resumo_display = df_resumo.rename(columns={k: v for k, v in renomear_resumo.items() if k in df_resumo.columns})
+        
+        # Adicionar cores para a situação
+        def color_situacao(val):
+            if 'PROGRAMADO' in str(val):
+                return 'background-color: #FFF3CD; color: #856404; font-weight: bold;'
+            elif 'TÊMPERA' in str(val):
+                return 'background-color: #FFE0B2; color: #E86C2C; font-weight: bold;'
+            elif 'EMBALAGEM' in str(val):
+                return 'background-color: #D1ECF1; color: #0078D4; font-weight: bold;'
+            elif 'LIBERADO' in str(val):
+                return 'background-color: #D4F5D4; color: #107C10; font-weight: bold;'
+            return ''
+        
+        styled_df = df_resumo_display.style.applymap(color_situacao, subset=['📍 Situação'])
+        
+        st.dataframe(styled_df, use_container_width=True, height=500)
+        
+        # ======================
+        # GRÁFICO DE DISTRIBUIÇÃO POR SITUAÇÃO (USANDO PEÇAS)
+        # ======================
+        st.markdown("### 📊 Distribuição de Peças por Situação")
+        
+        # Dados para o gráfico
+        categorias = ['📋 PROGRAMADO PRODUZIR', '🔥 PROCESSO DE TÊMPERA', '📦 PROCESSO DE EMBALAGEM', '✅ LIBERADO PARA EXPEDIÇÃO']
+        valores = [pecas_programadas, pecas_tempera, pecas_embalagem, pecas_liberadas]
+        cores = ['#FFB900', '#E86C2C', '#0078D4', '#107C10']
+        
+        # Filtrar apenas categorias com valores > 0
+        dados_grafico = [(cat, val, cor) for cat, val, cor in zip(categorias, valores, cores) if val > 0]
+        
+        if dados_grafico:
+            fig, ax = plt.subplots(figsize=(10, 6), facecolor=THEME['bg_card'])
+            
+            categorias_filtradas = [d[0] for d in dados_grafico]
+            valores_filtrados = [d[1] for d in dados_grafico]
+            cores_filtradas = [d[2] for d in dados_grafico]
+            
+            # Gráfico de barras horizontais
+            bars = ax.barh(range(len(categorias_filtradas)), valores_filtrados, color=cores_filtradas, alpha=0.85, edgecolor='white', linewidth=1.5)
+            
+            ax.set_yticks(range(len(categorias_filtradas)))
+            ax.set_yticklabels(categorias_filtradas, fontsize=11)
+            ax.set_xlabel('Quantidade de Peças', fontsize=12)
+            ax.set_title('Distribuição de Peças por Estágio Produtivo', fontweight='bold', fontsize=14, pad=15)
+            
+            # Adicionar valores nas barras
+            for bar, valor in zip(bars, valores_filtrados):
+                ax.text(bar.get_width() + (max(valores_filtrados) * 0.01), 
+                       bar.get_y() + bar.get_height()/2,
+                       f'{valor:,.0f}'.replace(",", "."), 
+                       va='center', fontweight='bold', fontsize=11)
+            
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            ax.spines['left'].set_visible(False)
+            
+            fig.tight_layout()
+            st.pyplot(fig)
+            plt.close(fig)
+            
+            # Gráfico de pizza também (opcional)
+            st.markdown("### 🥧 Proporção de Peças")
+            
+            fig2, ax2 = plt.subplots(figsize=(8, 6), facecolor=THEME['bg_card'])
+            
+            wedges, texts, autotexts = ax2.pie(
+                valores_filtrados,
+                labels=categorias_filtradas,
+                colors=cores_filtradas,
+                autopct=lambda pct: f'{pct:.1f}%\n({int(pct/100*sum(valores_filtrados)):,} peças)'.replace(",", "."),
+                startangle=90,
+                textprops={'fontsize': 10}
+            )
+            
+            for autotext in autotexts:
+                autotext.set_color('white')
+                autotext.set_fontweight('bold')
+                autotext.set_fontsize(10)
+            
+            ax2.set_title('Proporção de Peças por Estágio', fontweight='bold', fontsize=14, pad=20)
+            
+            fig2.tight_layout()
+            st.pyplot(fig2)
+            plt.close(fig2)
+            
+            # Card de resumo
+            st.markdown("---")
+            col_r1, col_r2, col_r3, col_r4 = st.columns(4)
+            with col_r1:
+                st.metric("📋 Peças Programadas", f"{pecas_programadas:,}".replace(",", "."))
+            with col_r2:
+                st.metric("🔥 Peças em Têmpera", f"{pecas_tempera:,}".replace(",", "."))
+            with col_r3:
+                st.metric("📦 Peças em Embalagem", f"{pecas_embalagem:,}".replace(",", "."))
+            with col_r4:
+                st.metric("✅ Peças Liberadas", f"{pecas_liberadas:,}".replace(",", "."))
+            
+            if total_pecas > 0:
+                st.caption(f"📌 Total de peças consideradas: {total_pecas:,}".replace(",", "."))
+        else:
+            st.info("📭 Nenhum dado disponível para o gráfico de peças.")
+    else:
+        st.info("📭 Nenhum dado disponível para o resumo.")
+    
+    st.markdown(f"""
+    <div style="text-align:right;padding:16px 0 8px;
+        font-family:'JetBrains Mono',monospace;font-size:10px;
+        color:{THEME['text_muted']};letter-spacing:.1em;">
+        RASTREAMENTO DE PRODUÇÃO · {get_horario_brasilia()}
     </div>
     """, unsafe_allow_html=True)
     
