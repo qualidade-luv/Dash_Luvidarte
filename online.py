@@ -7195,11 +7195,11 @@ elif aba_selecionada == 'RASTREAMENTO DE PRODUÇÃO':
                 'REFUGADO': 'REFUGADO',
                 'TRS 100%': 'META_LIQUIDA',
                 'INSPETOR': 'INSPETOR_1',
-                'FIFO': 'FIFO',           # Coluna ES
-                'D_TEMPERA': 'D_TEMPERA',  # Coluna ET
-                'AP_TEMPERA': 'AP_TEMPERA', # Coluna EU
-                'D_EMBALAGEM': 'D_EMBALAGEM', # Coluna EV
-                'AP_EMBALAGEM': 'AP_EMBALAGEM', # Coluna EW
+                'FIFO': 'FIFO',
+                'D_TEMPERA': 'D_TEMPERA',
+                'AP_TEMPERA': 'AP_TEMPERA',
+                'D_EMBALAGEM': 'D_EMBALAGEM',
+                'AP_EMBALAGEM': 'AP_EMBALAGEM',
                 'BOQUETA': 'BOQUETA'
             }
             
@@ -7270,13 +7270,12 @@ elif aba_selecionada == 'RASTREAMENTO DE PRODUÇÃO':
         precisa_tempera = row.get('PRECISA_TEMPERA', False)
         ap_tempera = row.get('AP_TEMPERA', 0)
         
-        # Já foi produzido, precisa de têmpera, e ainda não foi temperado
         if produzido > 0 and precisa_tempera and (pd.isna(ap_tempera) or ap_tempera == 0):
             return True
         return False
     
     def is_em_embalagem(row):
-        """Lote está em EMBALAGEM? (Já produzido, (já temperado se necessário), ainda não embalado)"""
+        """Lote está em EMBALAGEM? (Já produzido, já temperado se necessário, ainda não embalado)"""
         produzido = row.get('PRODUZIDO', 0)
         precisa_tempera = row.get('PRECISA_TEMPERA', False)
         ap_tempera = row.get('AP_TEMPERA', 0)
@@ -7285,12 +7284,10 @@ elif aba_selecionada == 'RASTREAMENTO DE PRODUÇÃO':
         if produzido == 0:
             return False
         
-        # Se precisa de têmpera, verificar se já foi temperado
         if precisa_tempera:
             if pd.isna(ap_tempera) or ap_tempera == 0:
-                return False  # Ainda está na têmpera
+                return False
         
-        # Verificar se já foi embalado
         if pd.isna(ap_embalagem) or ap_embalagem == 0:
             return True
         
@@ -7299,7 +7296,6 @@ elif aba_selecionada == 'RASTREAMENTO DE PRODUÇÃO':
     def is_liberado(row):
         """Lote está LIBERADO? (Completamente finalizado - embalado)"""
         ap_embalagem = row.get('AP_EMBALAGEM', 0)
-        
         if ap_embalagem > 0:
             return True
         return False
@@ -7330,20 +7326,16 @@ elif aba_selecionada == 'RASTREAMENTO DE PRODUÇÃO':
         </div>
         """, unsafe_allow_html=True)
         
-        # Datas - padrão últimos 7 dias
         data_fim_padrao = datetime.now().date()
         data_ini_padrao = data_fim_padrao - timedelta(days=7)
         
         data_ini = st.date_input("Data Inicial", value=data_ini_padrao, key="rast_data_ini")
         data_fim = st.date_input("Data Final", value=data_fim_padrao, key="rast_data_fim")
         
-        # Filtro de Referência/Produto
         filtro_referencia = st.text_input("Referência/Código", placeholder="Digite parte do código ou referência", key="rast_ref")
         
-        # Filtro de Tipo de Prensa
         tipo_prensa = st.selectbox("Tipo de Prensa", ["(Todos)", "Semi-Automática", "Automática"], key="rast_tipo_prensa")
         
-        # Filtro de Turno
         turno = st.selectbox("Turno", ["(Todos)", "M", "T", "N"], key="rast_turno")
         
         st.markdown("---")
@@ -7364,13 +7356,11 @@ elif aba_selecionada == 'RASTREAMENTO DE PRODUÇÃO':
     # ======================
     df_filtrado = df_raw.copy()
     
-    # Filtro de data
     if data_ini and 'DATA' in df_filtrado.columns:
         df_filtrado = df_filtrado[df_filtrado['DATA'] >= pd.to_datetime(data_ini)]
     if data_fim and 'DATA' in df_filtrado.columns:
         df_filtrado = df_filtrado[df_filtrado['DATA'] <= pd.to_datetime(data_fim)]
     
-    # Filtro de referência/código
     if filtro_referencia and filtro_referencia.strip():
         filtro_lower = filtro_referencia.lower().strip()
         if 'REFERENCIA' in df_filtrado.columns:
@@ -7379,39 +7369,35 @@ elif aba_selecionada == 'RASTREAMENTO DE PRODUÇÃO':
                 df_filtrado['CODIGO'].astype(str).str.lower().str.contains(filtro_lower, na=False)
             ]
     
-    # Filtro de tipo de prensa
     if tipo_prensa != "(Todos)" and 'BOQUETA' in df_filtrado.columns:
         if "Semi" in tipo_prensa:
             df_filtrado = df_filtrado[df_filtrado['BOQUETA'] == 1]
         elif "Auto" in tipo_prensa:
             df_filtrado = df_filtrado[df_filtrado['BOQUETA'] == 2]
     
-    # Filtro de turno
     if turno != "(Todos)" and 'TURNO' in df_filtrado.columns:
         df_filtrado = df_filtrado[df_filtrado['TURNO'].astype(str).str.upper() == turno.upper()]
     
     # Adicionar coluna de situação
     df_filtrado['SITUACAO'] = df_filtrado.apply(get_situacao_texto, axis=1)
     
-    # Garantir ordenação por DATA mais recente
     if 'DATA' in df_filtrado.columns:
         df_filtrado = df_filtrado.sort_values('DATA', ascending=False)
     
     # ======================
     # SEPARAR LOTES POR SETOR
     # ======================
-    # Setor 1: Apenas lotes que AINDA NÃO FORAM PRODUZIDOS (PRODUZIDO = 0)
+    # SETOR 1: Apenas lotes que AINDA NÃO FORAM PRODUZIDOS (PRODUZIDO = 0)
     df_producao = df_filtrado[df_filtrado['PRODUZIDO'] == 0].copy()
     
-    # Setor 2: Lotes JÁ PRODUZIDOS, com código terminado em 1, e SEM AP_TEMPERA
+    # SETOR 2: Lotes JÁ PRODUZIDOS, com código terminado em 1, e SEM AP_TEMPERA
     df_tempera = df_filtrado[
         (df_filtrado['PRODUZIDO'] > 0) & 
         (df_filtrado['PRECISA_TEMPERA'] == True) & 
         ((df_filtrado['AP_TEMPERA'] == 0) | (df_filtrado['AP_TEMPERA'].isna()))
     ].copy()
     
-    # Setor 3: Lotes JÁ PRODUZIDOS, (já temperados se necessário), e SEM AP_EMBALAGEM
-    # Exclui os que já estão na têmpera
+    # SETOR 3: Lotes JÁ PRODUZIDOS, já temperados (se necessário), e SEM AP_EMBALAGEM
     df_embalagem = df_filtrado[
         (df_filtrado['PRODUZIDO'] > 0) & 
         (df_filtrado['AP_EMBALAGEM'] == 0) &
@@ -7423,21 +7409,16 @@ elif aba_selecionada == 'RASTREAMENTO DE PRODUÇÃO':
     df_liberados = df_filtrado[df_filtrado['AP_EMBALAGEM'] > 0].copy()
     
     # ======================
-    # CÁLCULO DE PEÇAS POR SITUAÇÃO (para o gráfico)
+    # CÁLCULO DE PEÇAS POR SITUAÇÃO
     # ======================
-    # Total de peças PROGRAMADAS (que serão produzidas - baseado na META_LIQUIDA)
     pecas_programadas = int(df_producao['META_LIQUIDA'].sum()) if 'META_LIQUIDA' in df_producao.columns else 0
     
-    # Total de peças em TÊMPERA (que estão aguardando têmpera)
     pecas_tempera = int(df_tempera['APROVADO'].sum()) if 'APROVADO' in df_tempera.columns else 0
     
-    # Total de peças em EMBALAGEM (que estão aguardando embalagem)
-    pecas_embalagem = int(df_embalagem['APROVADO'].sum()) if 'APROVADO' in df_embalagem.columns else 0
+    pecas_embalagem = int(df_embalagem['AP_TEMPERA'].sum()) if 'AP_TEMPERA' in df_embalagem.columns else 0
     
-    # Total de peças LIBERADAS (já embaladas)
     pecas_liberadas = int(df_liberados['AP_EMBALAGEM'].sum()) if 'AP_EMBALAGEM' in df_liberados.columns else 0
     
-    # Total geral de peças
     total_pecas = pecas_programadas + pecas_tempera + pecas_embalagem + pecas_liberadas
     
     # ======================
@@ -7466,7 +7447,7 @@ elif aba_selecionada == 'RASTREAMENTO DE PRODUÇÃO':
     st.markdown("<hr>", unsafe_allow_html=True)
     
     # ======================
-    # SETOR 1: PRODUÇÃO (Aguardando Produção)
+    # SETOR 1 - PRODUÇÃO (Aguardando Produção)
     # ======================
     st.markdown(f"""
     <div style="background: linear-gradient(135deg, #0078D4 0%, #005a9e 100%); 
@@ -7484,7 +7465,6 @@ elif aba_selecionada == 'RASTREAMENTO DE PRODUÇÃO':
     if colunas_existentes_producao and not df_producao.empty:
         df_producao_display = df_producao[colunas_existentes_producao].copy()
         
-        # Formatar para exibição
         if 'DATA' in df_producao_display.columns:
             df_producao_display['DATA'] = pd.to_datetime(df_producao_display['DATA']).dt.strftime('%d/%m/%Y')
         
@@ -7495,7 +7475,6 @@ elif aba_selecionada == 'RASTREAMENTO DE PRODUÇÃO':
         if 'TRS_PRODUCAO' in df_producao_display.columns:
             df_producao_display['TRS_PRODUCAO'] = df_producao_display['TRS_PRODUCAO'].apply(lambda x: f"{float(x):.1f}%" if pd.notna(x) and x > 0 else "0%")
         
-        # Renomear colunas
         renomear = {
             'DATA': '📅 Data',
             'CODIGO': '🔢 Código',
@@ -7512,14 +7491,13 @@ elif aba_selecionada == 'RASTREAMENTO DE PRODUÇÃO':
         }
         
         df_producao_display = df_producao_display.rename(columns={k: v for k, v in renomear.items() if k in df_producao_display.columns})
-        
         st.dataframe(df_producao_display, use_container_width=True, height=400)
         st.caption(f"📌 Lotes aguardando produção (PRODUZIDO = 0)")
     else:
         st.info("✅ Nenhum lote aguardando produção para os filtros selecionados.")
     
     # ======================
-    # SETOR 2: TÊMPERA
+    # SETOR 2 - TÊMPERA
     # ======================
     st.markdown(f"""
     <div style="background: linear-gradient(135deg, #E86C2C 0%, #c05520 100%); 
@@ -7567,7 +7545,7 @@ elif aba_selecionada == 'RASTREAMENTO DE PRODUÇÃO':
         st.info("✅ Nenhum lote aguardando têmpera para os filtros selecionados.")
     
     # ======================
-    # SETOR 3: EMBALAGEM
+    # SETOR 3 - EMBALAGEM (Usa AP_TEMPERA como quantidade a embalar)
     # ======================
     st.markdown(f"""
     <div style="background: linear-gradient(135deg, #107C10 0%, #0a5a0a 100%); 
@@ -7579,7 +7557,7 @@ elif aba_selecionada == 'RASTREAMENTO DE PRODUÇÃO':
     </div>
     """, unsafe_allow_html=True)
     
-    colunas_embalagem = ['DATA', 'D_EMBALAGEM', 'CODIGO', 'REFERENCIA', 'TURNO', 'CLIENTE', 'PRODUZIDO', 'APROVADO', 'AP_EMBALAGEM', 'FIFO']
+    colunas_embalagem = ['DATA', 'D_EMBALAGEM', 'CODIGO', 'REFERENCIA', 'TURNO', 'CLIENTE', 'PRODUZIDO', 'AP_TEMPERA', 'AP_EMBALAGEM', 'FIFO']
     colunas_existentes_embalagem = [c for c in colunas_embalagem if c in df_embalagem.columns]
     
     if colunas_existentes_embalagem and not df_embalagem.empty:
@@ -7591,7 +7569,7 @@ elif aba_selecionada == 'RASTREAMENTO DE PRODUÇÃO':
         if 'D_EMBALAGEM' in df_embalagem_display.columns:
             df_embalagem_display['D_EMBALAGEM'] = df_embalagem_display['D_EMBALAGEM'].apply(lambda x: x.strftime('%d/%m/%Y') if pd.notna(x) else "-")
         
-        for col in ['PRODUZIDO', 'APROVADO', 'AP_EMBALAGEM']:
+        for col in ['PRODUZIDO', 'AP_TEMPERA', 'AP_EMBALAGEM']:
             if col in df_embalagem_display.columns:
                 df_embalagem_display[col] = df_embalagem_display[col].apply(lambda x: f"{int(x):,}".replace(",", ".") if pd.notna(x) and x > 0 else "-")
         
@@ -7603,14 +7581,14 @@ elif aba_selecionada == 'RASTREAMENTO DE PRODUÇÃO':
             'TURNO': '⏰ Turno',
             'CLIENTE': '👥 Cliente',
             'PRODUZIDO': '📦 Produzido',
-            'APROVADO': '✅ Aprovado Prod.',
+            'AP_TEMPERA': '🔥 Aprovado Têmpera',
             'AP_EMBALAGEM': '📦 Aprovado Embalagem',
             'FIFO': '🔖 Lote (FIFO)'
         }
         
         df_embalagem_display = df_embalagem_display.rename(columns={k: v for k, v in renomear_embalagem.items() if k in df_embalagem_display.columns})
         st.dataframe(df_embalagem_display, use_container_width=True, height=300)
-        st.caption(f"📌 Lotes aguardando embalagem (AP_EMBALAGEM = 0)")
+        st.caption(f"📌 Lotes aguardando embalagem - Quantidade a embalar: {pecas_embalagem:,} peças (aprovadas na têmpera)")
     else:
         st.info("✅ Nenhum lote aguardando embalagem para os filtros selecionados.")
     
@@ -7634,16 +7612,13 @@ elif aba_selecionada == 'RASTREAMENTO DE PRODUÇÃO':
     if colunas_existentes_resumo and not df_filtrado.empty:
         df_resumo = df_filtrado[colunas_existentes_resumo].copy()
         
-        # Formatar data
         if 'DATA' in df_resumo.columns:
             df_resumo['DATA'] = pd.to_datetime(df_resumo['DATA']).dt.strftime('%d/%m/%Y')
         
-        # Formatar valores
         for col in ['PRODUZIDO', 'APROVADO', 'AP_TEMPERA', 'AP_EMBALAGEM']:
             if col in df_resumo.columns:
                 df_resumo[col] = df_resumo[col].apply(lambda x: f"{int(x):,}".replace(",", ".") if pd.notna(x) and x > 0 else "-")
         
-        # Renomear colunas
         renomear_resumo = {
             'FIFO': '🔖 Lote (FIFO)',
             'DATA': '📅 Data Produção',
@@ -7659,33 +7634,17 @@ elif aba_selecionada == 'RASTREAMENTO DE PRODUÇÃO':
         
         df_resumo_display = df_resumo.rename(columns={k: v for k, v in renomear_resumo.items() if k in df_resumo.columns})
         
-        # Adicionar cores para a situação
-        def color_situacao(val):
-            if 'PROGRAMADO' in str(val):
-                return 'background-color: #FFF3CD; color: #856404; font-weight: bold;'
-            elif 'TÊMPERA' in str(val):
-                return 'background-color: #FFE0B2; color: #E86C2C; font-weight: bold;'
-            elif 'EMBALAGEM' in str(val):
-                return 'background-color: #D1ECF1; color: #0078D4; font-weight: bold;'
-            elif 'LIBERADO' in str(val):
-                return 'background-color: #D4F5D4; color: #107C10; font-weight: bold;'
-            return ''
-        
-        styled_df = df_resumo_display.style.map(color_situacao, subset=['📍 Situação'])
-        
-        st.dataframe(styled_df, use_container_width=True, height=500)
+        st.dataframe(df_resumo_display, use_container_width=True, height=500)
         
         # ======================
         # GRÁFICO DE DISTRIBUIÇÃO POR SITUAÇÃO (USANDO PEÇAS)
         # ======================
         st.markdown("### 📊 Distribuição de Peças por Situação")
         
-        # Dados para o gráfico
         categorias = ['📋 PROGRAMADO PRODUZIR', '🔥 PROCESSO DE TÊMPERA', '📦 PROCESSO DE EMBALAGEM', '✅ LIBERADO PARA EXPEDIÇÃO']
         valores = [pecas_programadas, pecas_tempera, pecas_embalagem, pecas_liberadas]
         cores = ['#FFB900', '#E86C2C', '#0078D4', '#107C10']
         
-        # Filtrar apenas categorias com valores > 0
         dados_grafico = [(cat, val, cor) for cat, val, cor in zip(categorias, valores, cores) if val > 0]
         
         if dados_grafico:
@@ -7695,7 +7654,6 @@ elif aba_selecionada == 'RASTREAMENTO DE PRODUÇÃO':
             valores_filtrados = [d[1] for d in dados_grafico]
             cores_filtradas = [d[2] for d in dados_grafico]
             
-            # Gráfico de barras horizontais
             bars = ax.barh(range(len(categorias_filtradas)), valores_filtrados, color=cores_filtradas, alpha=0.85, edgecolor='white', linewidth=1.5)
             
             ax.set_yticks(range(len(categorias_filtradas)))
@@ -7703,7 +7661,6 @@ elif aba_selecionada == 'RASTREAMENTO DE PRODUÇÃO':
             ax.set_xlabel('Quantidade de Peças', fontsize=12)
             ax.set_title('Distribuição de Peças por Estágio Produtivo', fontweight='bold', fontsize=14, pad=15)
             
-            # Adicionar valores nas barras
             for bar, valor in zip(bars, valores_filtrados):
                 ax.text(bar.get_width() + (max(valores_filtrados) * 0.01), 
                        bar.get_y() + bar.get_height()/2,
@@ -7718,7 +7675,7 @@ elif aba_selecionada == 'RASTREAMENTO DE PRODUÇÃO':
             st.pyplot(fig)
             plt.close(fig)
             
-            # Gráfico de pizza também (opcional)
+            # Gráfico de pizza
             st.markdown("### 🥧 Proporção de Peças")
             
             fig2, ax2 = plt.subplots(figsize=(8, 6), facecolor=THEME['bg_card'])
@@ -7743,7 +7700,7 @@ elif aba_selecionada == 'RASTREAMENTO DE PRODUÇÃO':
             st.pyplot(fig2)
             plt.close(fig2)
             
-            # Card de resumo
+            # Cards de resumo
             st.markdown("---")
             col_r1, col_r2, col_r3, col_r4 = st.columns(4)
             with col_r1:
