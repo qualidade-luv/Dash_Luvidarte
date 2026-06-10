@@ -2097,41 +2097,105 @@ if aba_selecionada == 'PRENSADOS':
 
     st.markdown("<hr>", unsafe_allow_html=True)
 
-    # Análise de Paradas
+        # ==================================================================
+    # ANÁLISE DE PARADAS - VERSÃO CORRIGIDA
+    # ==================================================================
     render_section_header("Análise de Paradas", "▸")
 
-    horas_trabalhadas = 0
-    total_acertos = 0
-    total_manut = 0
-
+    # 1. HORAS TRABALHADAS PRODUTIVAS = soma direta da coluna HORAS TOTAIS
+    horas_trabalhadas_produtivas = 0
     if 'HORAS_TOTAIS_MIN' in df.columns:
-        horas_trabalhadas = df['HORAS_TOTAIS_MIN'].sum()
+        horas_trabalhadas_produtivas = df['HORAS_TOTAIS_MIN'].sum()
     else:
-        dias_uteis = df[~df['IS_SABADO']]['DATA'].nunique() if 'IS_SABADO' in df.columns else 0
-        dias_sabado = df[df['IS_SABADO']]['DATA'].nunique() if 'IS_SABADO' in df.columns else 0
-        horas_trabalhadas = (dias_uteis * 8 * 60) + (dias_sabado * 6 * 60)
+        # Fallback: procurar coluna que contenha 'HORAS TOTAIS' no nome
+        for col in df.columns:
+            col_upper = str(col).upper()
+            if 'HORAS TOTAIS' in col_upper or 'HORA TOTAL' in col_upper:
+                df['HORAS_TOTAIS_MIN'] = df[col].apply(converter_tempo_para_minutos)
+                horas_trabalhadas_produtivas = df['HORAS_TOTAIS_MIN'].sum()
+                break
 
-    total_acertos = df['ACERTOS_MIN_AJUSTADO'].sum() if 'ACERTOS_MIN_AJUSTADO' in df.columns else 0
-    total_manut = df['MANUT_MIN'].sum() if 'MANUT_MIN' in df.columns else 0
+    # 2. ERROS DE PROCESSO = soma da coluna ACERTOS (ignorando valores 2:45)
+    total_acertos = 0
+    if 'ACERTOS_MIN' in df.columns:
+        # Aplica a regra: ignorar quando valor for 2:45 (165 minutos)
+        def filtrar_acertos(val):
+            # Se for 165 minutos (2:45), retorna 0
+            if val == 165:
+                return 0
+            return val
+        
+        total_acertos = df['ACERTOS_MIN'].apply(filtrar_acertos).sum()
+    else:
+        # Fallback: procurar coluna que contenha 'ACERTO' no nome
+        for col in df.columns:
+            col_upper = str(col).upper()
+            if 'ACERTO' in col_upper and 'MIN' not in col_upper:
+                df['ACERTOS_MIN'] = df[col].apply(converter_tempo_para_minutos)
+                total_acertos = df['ACERTOS_MIN'].apply(filtrar_acertos).sum()
+                break
+
+    # 3. MANUTENÇÃO = soma da coluna MANUT.
+    total_manut = 0
+    if 'MANUT_MIN' in df.columns:
+        total_manut = df['MANUT_MIN'].sum()
+    else:
+        # Fallback: procurar coluna que contenha 'MANUT' no nome
+        for col in df.columns:
+            col_upper = str(col).upper()
+            if 'MANUT' in col_upper and 'MIN' not in col_upper:
+                df['MANUT_MIN'] = df[col].apply(converter_tempo_para_minutos)
+                total_manut = df['MANUT_MIN'].sum()
+                break
+
+    # Cálculo total de paradas
     total_paradas = total_acertos + total_manut
-    horas_produtivas = max(0, horas_trabalhadas - total_paradas)
 
+    # Exibir os 4 cards principais
     p1, p2, p3, p4 = st.columns(4)
-    with p1: render_kpi_card("Horas Trabalhadas", minutos_para_horas_str(horas_trabalhadas), THEME['accent_cyan'])
-    with p2: render_kpi_card("Erros Processo", minutos_para_horas_str(total_acertos), THEME['accent_yellow'])
-    with p3: render_kpi_card("Manutenção", minutos_para_horas_str(total_manut), THEME['accent_red'])
-    with p4: render_kpi_card("Horas Produtivas", minutos_para_horas_str(horas_produtivas), THEME['accent_lime'])
+    with p1: 
+        render_kpi_card(
+            "Horas Trabalhadas Produtivas", 
+            minutos_para_horas_str(horas_trabalhadas_produtivas), 
+            THEME['accent_cyan']
+        )
+    with p2: 
+        render_kpi_card(
+            "Erros Processo", 
+            minutos_para_horas_str(total_acertos), 
+            THEME['accent_yellow']
+        )
+    with p3: 
+        render_kpi_card(
+            "Manutenção", 
+            minutos_para_horas_str(total_manut), 
+            THEME['accent_red']
+        )
+    with p4: 
+        # Total de Horas Produtivas = Horas Trabalhadas - (Erros + Manutenção)
+        horas_produtivas = max(0, horas_trabalhadas_produtivas - total_paradas)
+        render_kpi_card(
+            "Horas Produtivas", 
+            minutos_para_horas_str(horas_produtivas), 
+            THEME['accent_lime']
+        )
 
+    # Gráfico de barras empilhadas: Manual vs Automática
     col1, col2 = st.columns(2)
 
     with col1:
         if 'BOQUETA' in df.columns:
             df_manual_p = df[df['BOQUETA'] == 1]
             df_auto_p = df[df['BOQUETA'] == 2]
-            acertos_m = df_manual_p['ACERTOS_MIN_AJUSTADO'].sum() if 'ACERTOS_MIN_AJUSTADO' in df.columns else 0
-            manut_m = df_manual_p['MANUT_MIN'].sum() if 'MANUT_MIN' in df.columns else 0
-            acertos_a = df_auto_p['ACERTOS_MIN_AJUSTADO'].sum() if 'ACERTOS_MIN_AJUSTADO' in df.columns else 0
-            manut_a = df_auto_p['MANUT_MIN'].sum() if 'MANUT_MIN' in df.columns else 0
+            
+            # Aplicar filtro de 2:45 também para Manual e Automática
+            def filtrar_acertos_maquina(series):
+                return series.apply(lambda x: 0 if x == 165 else x).sum() if len(series) > 0 else 0
+            
+            acertos_m = filtrar_acertos_maquina(df_manual_p['ACERTOS_MIN']) if 'ACERTOS_MIN' in df_manual_p.columns else 0
+            manut_m = df_manual_p['MANUT_MIN'].sum() if 'MANUT_MIN' in df_manual_p.columns else 0
+            acertos_a = filtrar_acertos_maquina(df_auto_p['ACERTOS_MIN']) if 'ACERTOS_MIN' in df_auto_p.columns else 0
+            manut_a = df_auto_p['MANUT_MIN'].sum() if 'MANUT_MIN' in df_auto_p.columns else 0
 
             categorias = ['Manual', 'Automática']
             acertos_v = [acertos_m, acertos_a]
@@ -2142,13 +2206,15 @@ if aba_selecionada == 'PRENSADOS':
 
             x = np.arange(len(categorias))
             w = 0.55
-            ax.bar(x, acertos_v, w, label='Acertos', color=THEME['accent_yellow'], alpha=0.88, edgecolor=THEME['bg_card'], linewidth=1.5)
+            ax.bar(x, acertos_v, w, label='Erros Processo', color=THEME['accent_yellow'], alpha=0.88, edgecolor=THEME['bg_card'], linewidth=1.5)
             ax.bar(x, manut_v, w, bottom=acertos_v, label='Manutenção', color=THEME['accent_red'], alpha=0.88, edgecolor=THEME['bg_card'], linewidth=1.5)
 
             for i, (a, m) in enumerate(zip(acertos_v, manut_v)):
                 total = a + m
-                if a > 0: ax.text(i, a/2, minutos_para_horas_str(a), ha='center', va='center', color='black', fontweight='bold', fontsize=10)
-                if m > 0: ax.text(i, a + m/2, minutos_para_horas_str(m), ha='center', va='center', color='black', fontweight='bold', fontsize=10)
+                if a > 0: 
+                    ax.text(i, a/2, minutos_para_horas_str(a), ha='center', va='center', color='black', fontweight='bold', fontsize=10)
+                if m > 0: 
+                    ax.text(i, a + m/2, minutos_para_horas_str(m), ha='center', va='center', color='black', fontweight='bold', fontsize=10)
                 if total > 0:
                     ax.text(i, total * 1.05, minutos_para_horas_str(total),
                             ha='center', va='bottom', color=THEME['text_primary'], fontweight='bold', fontsize=11)
@@ -2162,13 +2228,19 @@ if aba_selecionada == 'PRENSADOS':
             plt.close(fig)
 
     with col2:
-        if horas_trabalhadas > 0:
-            labels_p = ['Produtivas', 'Erros Processo', 'Manutenção']
-            vals_p = [horas_produtivas, total_acertos, total_manut]
+        if horas_trabalhadas_produtivas > 0:
+            # Ajustar valores para o gráfico de pizza
+            horas_prod = max(0, horas_trabalhadas_produtivas - total_paradas)
+            labels_p = ['Horas Produtivas', 'Erros Processo', 'Manutenção']
+            vals_p = [horas_prod, total_acertos, total_manut]
             cores_p = [THEME['accent_lime'], THEME['accent_yellow'], THEME['accent_red']]
-            lf, vf, cf = zip(*[(l, v, c) for l, v, c in zip(labels_p, vals_p, cores_p) if v > 0]) if any(v > 0 for v in vals_p) else ([], [], [])
-
-            if vf:
+            
+            # Filtrar apenas valores > 0
+            dados_pizza = [(l, v, c) for l, v, c in zip(labels_p, vals_p, cores_p) if v > 0]
+            
+            if dados_pizza:
+                lf, vf, cf = zip(*dados_pizza)
+                
                 fig, ax = plt.subplots(figsize=(7, 5), facecolor=THEME['bg_card'])
                 fig.patch.set_facecolor(THEME['bg_card'])
                 ax.set_facecolor(THEME['bg_card'])
@@ -2185,7 +2257,7 @@ if aba_selecionada == 'PRENSADOS':
                     at.set_fontsize(10)
 
                 ax.set_title(
-                    f"Distribuição do Tempo\n{minutos_para_horas_str(horas_trabalhadas)} trabalhadas",
+                    f"Distribuição do Tempo\n{minutos_para_horas_str(horas_trabalhadas_produtivas)} Horas Trabalhadas Produtivas",
                     fontsize=13, fontweight='bold', color=THEME['text_primary'], pad=14
                 )
                 fig.tight_layout(pad=1.5)
