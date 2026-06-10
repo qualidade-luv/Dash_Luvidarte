@@ -2220,46 +2220,78 @@ if aba_selecionada == 'PRENSADOS':
             plt.close(fig)
 
     with col2:
-        # GRÁFICO DE PIZZA - SEMPRE mostrar Horas Trabalhadas Produtivas no título
+        # GRÁFICO DE PIZZA - SEMPRE mostrar as 3 fatias
         if horas_trabalhadas_produtivas > 0:
-            # Calcular o valor efetivamente produtivo (não pode ser negativo)
-            valor_produtivo = max(0, horas_trabalhadas_produtivas - (total_acertos + total_manut))
+            # Calcular o tempo produtivo real
+            tempo_produtivo_real = max(0, horas_trabalhadas_produtivas - (total_acertos + total_manut))
             
-            # Preparar dados para o gráfico
+            # Forçar as 3 fatias a aparecerem no gráfico
+            total_paradas = total_acertos + total_manut
+            
+            # Se as paradas excedem as horas trabalhadas, ajustamos proporcionalmente
+            if total_paradas > horas_trabalhadas_produtivas and total_paradas > 0:
+                fator = horas_trabalhadas_produtivas / total_paradas
+                acertos_ajustado = total_acertos * fator
+                manut_ajustado = total_manut * fator
+                produtivo_ajustado = 0
+            else:
+                acertos_ajustado = total_acertos
+                manut_ajustado = total_manut
+                produtivo_ajustado = tempo_produtivo_real
+            
+            # Garantir que todos os valores sejam números positivos
+            produtivo_ajustado = float(produtivo_ajustado) if produtivo_ajustado > 0 else 0.1
+            acertos_ajustado = float(acertos_ajustado) if acertos_ajustado > 0 else 0.1
+            manut_ajustado = float(manut_ajustado) if manut_ajustado > 0 else 0.1
+            
+            # Valores para o gráfico (sempre 3 fatias)
             labels_p = ['Horas Trabalhadas Produtivas', 'Erros Processo', 'Manutenção']
-            vals_p = [valor_produtivo, total_acertos, total_manut]
+            vals_p = [produtivo_ajustado, acertos_ajustado, manut_ajustado]
             cores_p = [THEME['accent_lime'], THEME['accent_yellow'], THEME['accent_red']]
             
-            # Filtrar apenas valores > 0 para mostrar no gráfico
-            dados_pizza = [(l, v, c) for l, v, c in zip(labels_p, vals_p, cores_p) if v > 0]
+            # Criar o gráfico de pizza
+            fig, ax = plt.subplots(figsize=(7, 5), facecolor=THEME['bg_card'])
+            fig.patch.set_facecolor(THEME['bg_card'])
+            ax.set_facecolor(THEME['bg_card'])
+
+            # Função para formatar o autopct - mostra apenas se > 0.5%
+            def make_autopct(vals):
+                def autopct(pct):
+                    return f'{pct:.1f}%' if pct > 0.5 else ''
+                return autopct
             
-            if dados_pizza:
-                lf, vf, cf = zip(*dados_pizza)
-                
-                fig, ax = plt.subplots(figsize=(7, 5), facecolor=THEME['bg_card'])
-                fig.patch.set_facecolor(THEME['bg_card'])
-                ax.set_facecolor(THEME['bg_card'])
+            wedges, texts, autotexts = ax.pie(
+                vals_p, 
+                labels=labels_p, 
+                colors=cores_p,
+                autopct=make_autopct(vals_p),
+                startangle=90,
+                textprops={'color': THEME['text_primary'], 'fontsize': 10},
+                wedgeprops={'edgecolor': THEME['bg_card'], 'linewidth': 2}
+            )
+            
+            # Configurar textos apenas para fatias com percentual visível
+            for autotext in autotexts:
+                if autotext.get_text():
+                    autotext.set_color('white')
+                    autotext.set_fontweight('bold')
+                    autotext.set_fontsize(10)
 
-                wedges, texts, autotexts = ax.pie(
-                    vf, labels=lf, colors=cf,
-                    autopct='%1.1f%%', startangle=90,
-                    textprops={'color': THEME['text_primary'], 'fontsize': 10},
-                    wedgeprops={'edgecolor': THEME['bg_card'], 'linewidth': 2}
-                )
-                for at in autotexts:
-                    at.set_color('white')
-                    at.set_fontweight('bold')
-                    at.set_fontsize(10)
-
-                ax.set_title(
-                    f"Distribuição do Tempo\n{minutos_para_horas_str(horas_trabalhadas_produtivas)} Horas Trabalhadas",
-                    fontsize=13, fontweight='bold', color=THEME['text_primary'], pad=14
-                )
-                fig.tight_layout(pad=1.5)
-                st.pyplot(fig)
-                plt.close(fig)
-            else:
-                st.info("Sem dados para exibir no gráfico")
+            # Título do gráfico
+            ax.set_title(
+                f"Distribuição do Tempo\n{minutos_para_horas_str(horas_trabalhadas_produtivas)} Horas Trabalhadas",
+                fontsize=13, fontweight='bold', color=THEME['text_primary'], pad=14
+            )
+            
+            # Adicionar legenda explicativa se necessário
+            if tempo_produtivo_real == 0 and total_paradas > horas_trabalhadas_produtivas:
+                fig.text(0.5, -0.05, 
+                         f"⚠️ Paradas ({minutos_para_horas_str(total_paradas)}) excedem Horas Trabalhadas",
+                         ha='center', fontsize=8, color=THEME['accent_red'], style='italic')
+            
+            fig.tight_layout()
+            st.pyplot(fig)
+            plt.close(fig)
         else:
             st.info("Sem dados de tempo para exibir")
             
