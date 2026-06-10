@@ -2097,7 +2097,7 @@ if aba_selecionada == 'PRENSADOS':
 
     st.markdown("<hr>", unsafe_allow_html=True)
 
-        # ==================================================================
+    # ==================================================================
     # ANÁLISE DE PARADAS - COM HORAS TRABALHADAS PRODUTIVAS NO PIZZA
     # ==================================================================
     render_section_header("Análise de Paradas", "▸")
@@ -2275,10 +2275,10 @@ if aba_selecionada == 'PRENSADOS':
             st.info("Sem dados de tempo para exibir")
 
         # ==================================================================
-    # GRÁFICO DE COLUNAS POR TURNO (Horas Trabalhadas, Erros, Manutenção)
+    # GRÁFICO DE COLUNAS POR TURNO (Horas Trabalhadas, Erros, Manutenção) + TRS (linha)
     # ==================================================================
     if not df.empty and 'TURNO' in df.columns:
-        render_section_header("Análise por Turno", "▸")
+        render_section_header("Tempo de Parada x Produtividade (TRS)", "▸")
         
         # Mapeamento de turnos
         mapeamento_turnos = {
@@ -2304,7 +2304,8 @@ if aba_selecionada == 'PRENSADOS':
                     'Lider': mapeamento_turnos.get(turno, {}).get('lider', ''),
                     'Horas Trabalhadas': 0,
                     'Erros Processo': 0,
-                    'Manutenção': 0
+                    'Manutenção': 0,
+                    'TRS Médio (%)': 0
                 })
                 continue
             
@@ -2333,52 +2334,121 @@ if aba_selecionada == 'PRENSADOS':
             if 'MANUT_MIN' in df_turno.columns:
                 manut_turno = df_turno['MANUT_MIN'].sum()
             
+            # Calcular TRS médio do turno (TRS Final %)
+            trs_medio_turno = 0
+            if 'TRS FINAL (%)' in df_turno.columns:
+                trs_medio_turno = df_turno['TRS FINAL (%)'].mean()
+            else:
+                # Calcular TRS a partir dos dados disponíveis
+                total_aprovado = df_turno['APROVADO'].sum() if 'APROVADO' in df_turno.columns else 0
+                total_meta = df_turno['TRS 100%'].sum() if 'TRS 100%' in df_turno.columns else 1
+                trs_medio_turno = (total_aprovado / total_meta * 100) if total_meta > 0 else 0
+            
             turno_data.append({
                 'Turno': turno,
                 'TurnoNome': mapeamento_turnos.get(turno, {}).get('nome', turno),
                 'Lider': mapeamento_turnos.get(turno, {}).get('lider', ''),
                 'Horas Trabalhadas': horas_turno,
                 'Erros Processo': erros_turno,
-                'Manutenção': manut_turno
+                'Manutenção': manut_turno,
+                'TRS Médio (%)': trs_medio_turno
             })
         
         if turno_data:
             df_turno_graf = pd.DataFrame(turno_data)
             
-            # Criar rótulos para o eixo X (Turno + Líder)
-            rotulos_x = [f"{row['Turno']} ({row['TurnoNome']})\n{row['Lider']}" for _, row in df_turno_graf.iterrows()]
+            # Criar figura com dois eixos Y (barras no esquerdo, linha TRS no direito)
+            fig, ax1 = plt.subplots(figsize=(14, 7), facecolor=THEME['bg_card'])
+            fig.patch.set_facecolor(THEME['bg_card'])
             
-            # Criar gráfico de barras agrupadas
-            fig, ax = plt.subplots(figsize=(12, 6), facecolor=THEME['bg_card'])
-            apply_chart_style(ax, fig, "Tempo por Turno", ylabel="Minutos")
+            # ====================== EIXO ESQUERDO (BARRAS) ======================
+            ax1.set_xlabel("Turno", fontsize=12, fontweight='bold')
+            ax1.set_ylabel("Minutos", fontsize=12, fontweight='bold', color=THEME['text_primary'])
+            ax1.tick_params(axis='y', labelcolor=THEME['text_primary'])
+            ax1.set_facecolor(THEME['bg_card'])
+            ax1.grid(True, alpha=0.3, color=THEME['grid'], linewidth=0.8, linestyle='--')
+            ax1.set_axisbelow(True)
             
+            # Barras agrupadas
             x = np.arange(len(df_turno_graf))
             width = 0.25
             
-            bars1 = ax.bar(x - width, df_turno_graf['Horas Trabalhadas'], width, 
-                          label='Horas Trabalhadas', color=THEME['accent_lime'], alpha=0.85)
-            bars2 = ax.bar(x, df_turno_graf['Erros Processo'], width, 
-                          label='Erros Processo', color=THEME['accent_yellow'], alpha=0.85)
-            bars3 = ax.bar(x + width, df_turno_graf['Manutenção'], width, 
-                          label='Manutenção', color=THEME['accent_red'], alpha=0.85)
+            bars1 = ax1.bar(x - width, df_turno_graf['Horas Trabalhadas'], width, 
+                           label='Horas Trabalhadas', color=THEME['accent_lime'], alpha=0.85, 
+                           edgecolor='white', linewidth=1.5)
+            bars2 = ax1.bar(x, df_turno_graf['Erros Processo'], width, 
+                           label='Erros Processo', color=THEME['accent_yellow'], alpha=0.85, 
+                           edgecolor='white', linewidth=1.5)
+            bars3 = ax1.bar(x + width, df_turno_graf['Manutenção'], width, 
+                           label='Manutenção', color=THEME['accent_red'], alpha=0.85, 
+                           edgecolor='white', linewidth=1.5)
             
             # Adicionar valores nas barras
             for bars in [bars1, bars2, bars3]:
                 for bar in bars:
                     height = bar.get_height()
                     if height > 0:
-                        ax.text(bar.get_x() + bar.get_width()/2., height + 5,
-                               f'{minutos_para_horas_str(int(height))}',
-                               ha='center', va='bottom', fontsize=8, rotation=0)
+                        ax1.text(bar.get_x() + bar.get_width()/2., height + 5,
+                                f'{minutos_para_horas_str(int(height))}',
+                                ha='center', va='bottom', fontsize=8, rotation=0, 
+                                color=THEME['text_primary'], fontweight='bold')
             
-            ax.set_xticks(x)
-            ax.set_xticklabels(rotulos_x, fontsize=10, fontweight='bold')
-            ax.set_ylabel("Minutos", fontsize=11)
-            ax.legend(loc='upper left', fontsize=10)
-            
-            # Ajustar limite do eixo Y
+            # Ajustar limite do eixo Y esquerdo
             max_valor = max(df_turno_graf[['Horas Trabalhadas', 'Erros Processo', 'Manutenção']].max())
-            ax.set_ylim(0, max_valor * 1.15 if max_valor > 0 else 100)
+            ax1.set_ylim(0, max_valor * 1.2 if max_valor > 0 else 100)
+            
+            # ====================== EIXO DIREITO (LINHA TRS) ======================
+            ax2 = ax1.twinx()
+            ax2.set_ylabel("TRS Médio (%)", fontsize=12, fontweight='bold', color=THEME['accent_purple'])
+            
+            # Plotar linha do TRS
+            trs_values = df_turno_graf['TRS Médio (%)'].values
+            line = ax2.plot(x, trs_values, marker='o', markersize=10, linewidth=2.5, 
+                           color=THEME['accent_purple'], label='TRS Médio (%)',
+                           markerfacecolor=THEME['bg_card'], 
+                           markeredgecolor=THEME['accent_purple'], 
+                           markeredgewidth=2)
+            
+            # Adicionar valores do TRS acima dos pontos
+            for i, (x_pos, trs_val) in enumerate(zip(x, trs_values)):
+                if trs_val > 0:
+                    ax2.annotate(f'{trs_val:.1f}%', 
+                                (x_pos, trs_val),
+                                textcoords="offset points", 
+                                xytext=(0, 12),
+                                ha='center', 
+                                fontsize=10, 
+                                fontweight='bold',
+                                color=THEME['accent_purple'],
+                                bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.8, edgecolor=THEME['accent_purple']))
+            
+            # Linha de meta 85%
+            ax2.axhline(y=85, color=THEME['accent_red'], linestyle='--', alpha=0.7, linewidth=2, label='Meta 85%')
+            
+            # Configurar eixo Y direito
+            ax2.tick_params(axis='y', labelcolor=THEME['accent_purple'])
+            ax2.set_ylim(0, 105)
+            
+            # ====================== CONFIGURAÇÃO DO EIXO X ======================
+            rotulos_x = [f"{row['Turno']} ({row['TurnoNome']})\n{row['Lider']}" for _, row in df_turno_graf.iterrows()]
+            ax1.set_xticks(x)
+            ax1.set_xticklabels(rotulos_x, fontsize=11, fontweight='bold')
+            
+            # ====================== LEGENDAS ======================
+            # Combinar legendas dos dois eixos
+            lines1, labels1 = ax1.get_legend_handles_labels()
+            lines2, labels2 = ax2.get_legend_handles_labels()
+            ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left', fontsize=10, 
+                      framealpha=0.15, facecolor=THEME['bg_card'], edgecolor=THEME['border_bright'])
+            
+            # ====================== TÍTULO ======================
+            ax1.set_title("Tempo de Parada x Produtividade (TRS)", 
+                         fontsize=16, fontweight='bold', color=THEME['text_primary'], pad=20)
+            
+            # Remover bordas superiores
+            ax1.spines['top'].set_visible(False)
+            ax2.spines['top'].set_visible(False)
+            ax1.spines['right'].set_visible(False)
             
             fig.tight_layout()
             st.pyplot(fig)
@@ -2391,15 +2461,17 @@ if aba_selecionada == 'PRENSADOS':
                     df_tabela_turno[col] = df_tabela_turno[col].apply(
                         lambda x: minutos_para_horas_str(int(x)) if x > 0 else "00:00"
                     )
-                df_tabela_turno = df_tabela_turno[['Turno', 'TurnoNome', 'Lider', 'Horas Trabalhadas', 'Erros Processo', 'Manutenção']]
+                df_tabela_turno = df_tabela_turno[['Turno', 'TurnoNome', 'Lider', 'Horas Trabalhadas', 'Erros Processo', 'Manutenção', 'TRS Médio (%)']]
                 df_tabela_turno = df_tabela_turno.rename(columns={
                     'Turno': 'Turno',
                     'TurnoNome': 'Turno Nome',
                     'Lider': 'Líder Industrial',
                     'Horas Trabalhadas': 'Horas Trabalhadas',
                     'Erros Processo': 'Erros Processo',
-                    'Manutenção': 'Manutenção'
+                    'Manutenção': 'Manutenção',
+                    'TRS Médio (%)': 'TRS Médio (%)'
                 })
+                df_tabela_turno['TRS Médio (%)'] = df_tabela_turno['TRS Médio (%)'].apply(lambda x: f"{x:.1f}%")
                 st.dataframe(df_tabela_turno, use_container_width=True, hide_index=True)
         else:
             st.info("Sem dados de turno para exibir")    
