@@ -2274,18 +2274,39 @@ if aba_selecionada == 'PRENSADOS':
         else:
             st.info("Sem dados de tempo para exibir")
 
-    # ==================================================================
+        # ==================================================================
     # GRÁFICO DE COLUNAS POR TURNO (Horas Trabalhadas, Erros, Manutenção)
     # ==================================================================
     if not df.empty and 'TURNO' in df.columns:
         render_section_header("Análise por Turno", "▸")
         
+        # Mapeamento de turnos
+        mapeamento_turnos = {
+            'M': {'nome': 'Manhã', 'lider': 'Felipe'},
+            'T': {'nome': 'Tarde', 'lider': 'Ubaldo'},
+            'N': {'nome': 'Noite', 'lider': 'Carlos'}
+        }
+        
+        # Ordem dos turnos: M, T, N
+        ordem_turnos = ['M', 'T', 'N']
+        
         # Calcular dados por turno
-        turnos = df['TURNO'].dropna().unique()
         turno_data = []
         
-        for turno in turnos:
+        for turno in ordem_turnos:
             df_turno = df[df['TURNO'] == turno]
+            
+            if df_turno.empty:
+                # Se não houver dados para o turno, adiciona com valores zero
+                turno_data.append({
+                    'Turno': turno,
+                    'TurnoNome': mapeamento_turnos.get(turno, {}).get('nome', turno),
+                    'Lider': mapeamento_turnos.get(turno, {}).get('lider', ''),
+                    'Horas Trabalhadas': 0,
+                    'Erros Processo': 0,
+                    'Manutenção': 0
+                })
+                continue
             
             # Calcular horas trabalhadas no turno
             horas_turno = 0
@@ -2313,7 +2334,9 @@ if aba_selecionada == 'PRENSADOS':
                 manut_turno = df_turno['MANUT_MIN'].sum()
             
             turno_data.append({
-                'Turno': str(turno),
+                'Turno': turno,
+                'TurnoNome': mapeamento_turnos.get(turno, {}).get('nome', turno),
+                'Lider': mapeamento_turnos.get(turno, {}).get('lider', ''),
                 'Horas Trabalhadas': horas_turno,
                 'Erros Processo': erros_turno,
                 'Manutenção': manut_turno
@@ -2321,10 +2344,12 @@ if aba_selecionada == 'PRENSADOS':
         
         if turno_data:
             df_turno_graf = pd.DataFrame(turno_data)
-            df_turno_graf = df_turno_graf.sort_values('Turno')
+            
+            # Criar rótulos para o eixo X (Turno + Líder)
+            rotulos_x = [f"{row['Turno']} ({row['TurnoNome']})\n{row['Lider']}" for _, row in df_turno_graf.iterrows()]
             
             # Criar gráfico de barras agrupadas
-            fig, ax = plt.subplots(figsize=(10, 6), facecolor=THEME['bg_card'])
+            fig, ax = plt.subplots(figsize=(12, 6), facecolor=THEME['bg_card'])
             apply_chart_style(ax, fig, "Tempo por Turno", ylabel="Minutos")
             
             x = np.arange(len(df_turno_graf))
@@ -2347,7 +2372,7 @@ if aba_selecionada == 'PRENSADOS':
                                ha='center', va='bottom', fontsize=8, rotation=0)
             
             ax.set_xticks(x)
-            ax.set_xticklabels(df_turno_graf['Turno'], fontsize=11, fontweight='bold')
+            ax.set_xticklabels(rotulos_x, fontsize=10, fontweight='bold')
             ax.set_ylabel("Minutos", fontsize=11)
             ax.legend(loc='upper left', fontsize=10)
             
@@ -2366,7 +2391,11 @@ if aba_selecionada == 'PRENSADOS':
                     df_tabela_turno[col] = df_tabela_turno[col].apply(
                         lambda x: minutos_para_horas_str(int(x)) if x > 0 else "00:00"
                     )
+                df_tabela_turno = df_tabela_turno[['Turno', 'TurnoNome', 'Lider', 'Horas Trabalhadas', 'Erros Processo', 'Manutenção']]
                 df_tabela_turno = df_tabela_turno.rename(columns={
+                    'Turno': 'Turno',
+                    'TurnoNome': 'Turno Nome',
+                    'Lider': 'Líder Industrial',
                     'Horas Trabalhadas': 'Horas Trabalhadas',
                     'Erros Processo': 'Erros Processo',
                     'Manutenção': 'Manutenção'
