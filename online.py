@@ -2274,7 +2274,7 @@ if aba_selecionada == 'PRENSADOS':
         else:
             st.info("Sem dados de tempo para exibir")
 
-        # ==================================================================
+       # ==================================================================
     # GRÁFICO DE COLUNAS POR TURNO (Horas Trabalhadas, Erros, Manutenção) + TRS (linha)
     # ==================================================================
     if not df.empty and 'TURNO' in df.columns:
@@ -2297,7 +2297,6 @@ if aba_selecionada == 'PRENSADOS':
             df_turno = df[df['TURNO'] == turno]
             
             if df_turno.empty:
-                # Se não houver dados para o turno, adiciona com valores zero
                 turno_data.append({
                     'Turno': turno,
                     'TurnoNome': mapeamento_turnos.get(turno, {}).get('nome', turno),
@@ -2305,7 +2304,7 @@ if aba_selecionada == 'PRENSADOS':
                     'Horas Trabalhadas': 0,
                     'Erros Processo': 0,
                     'Manutenção': 0,
-                    'TRS Médio (%)': 0
+                    'TRS': 0
                 })
                 continue
             
@@ -2334,15 +2333,11 @@ if aba_selecionada == 'PRENSADOS':
             if 'MANUT_MIN' in df_turno.columns:
                 manut_turno = df_turno['MANUT_MIN'].sum()
             
-            # Calcular TRS médio do turno (TRS Final %)
-            trs_medio_turno = 0
-            if 'TRS FINAL (%)' in df_turno.columns:
-                trs_medio_turno = df_turno['TRS FINAL (%)'].mean()
-            else:
-                # Calcular TRS a partir dos dados disponíveis
-                total_aprovado = df_turno['APROVADO'].sum() if 'APROVADO' in df_turno.columns else 0
-                total_meta = df_turno['TRS 100%'].sum() if 'TRS 100%' in df_turno.columns else 1
-                trs_medio_turno = (total_aprovado / total_meta * 100) if total_meta > 0 else 0
+            # ===== CALCULAR TRS CORRETO (usando a mesma fórmula da seção TRS por Turno) =====
+            # TRS 1ª Escolha = (APROVADO / TRS 100% * 100)
+            total_aprovado = df_turno['APROVADO'].sum() if 'APROVADO' in df_turno.columns else 0
+            total_meta = df_turno['TRS 100%'].sum() if 'TRS 100%' in df_turno.columns else 1
+            trs_correto = (total_aprovado / total_meta * 100) if total_meta > 0 else 0
             
             turno_data.append({
                 'Turno': turno,
@@ -2351,7 +2346,7 @@ if aba_selecionada == 'PRENSADOS':
                 'Horas Trabalhadas': horas_turno,
                 'Erros Processo': erros_turno,
                 'Manutenção': manut_turno,
-                'TRS Médio (%)': trs_medio_turno
+                'TRS': trs_correto
             })
         
         if turno_data:
@@ -2399,12 +2394,12 @@ if aba_selecionada == 'PRENSADOS':
             
             # ====================== EIXO DIREITO (LINHA TRS) ======================
             ax2 = ax1.twinx()
-            ax2.set_ylabel("TRS Médio (%)", fontsize=12, fontweight='bold', color=THEME['accent_purple'])
+            ax2.set_ylabel("TRS 1ª Escolha (%)", fontsize=12, fontweight='bold', color=THEME['accent_purple'])
             
-            # Plotar linha do TRS
-            trs_values = df_turno_graf['TRS Médio (%)'].values
+            # Plotar linha do TRS (usando o TRS correto)
+            trs_values = df_turno_graf['TRS'].values
             line = ax2.plot(x, trs_values, marker='o', markersize=10, linewidth=2.5, 
-                           color=THEME['accent_purple'], label='TRS Médio (%)',
+                           color=THEME['accent_purple'], label='TRS 1ª Escolha (%)',
                            markerfacecolor=THEME['bg_card'], 
                            markeredgecolor=THEME['accent_purple'], 
                            markeredgewidth=2)
@@ -2422,9 +2417,6 @@ if aba_selecionada == 'PRENSADOS':
                                 color=THEME['accent_purple'],
                                 bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.8, edgecolor=THEME['accent_purple']))
             
-            # Linha de meta 85%
-            ax2.axhline(y=85, color=THEME['accent_red'], linestyle='--', alpha=0.7, linewidth=2, label='Meta 85%')
-            
             # Configurar eixo Y direito
             ax2.tick_params(axis='y', labelcolor=THEME['accent_purple'])
             ax2.set_ylim(0, 105)
@@ -2435,7 +2427,6 @@ if aba_selecionada == 'PRENSADOS':
             ax1.set_xticklabels(rotulos_x, fontsize=11, fontweight='bold')
             
             # ====================== LEGENDAS ======================
-            # Combinar legendas dos dois eixos
             lines1, labels1 = ax1.get_legend_handles_labels()
             lines2, labels2 = ax2.get_legend_handles_labels()
             ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left', fontsize=10, 
@@ -2445,7 +2436,7 @@ if aba_selecionada == 'PRENSADOS':
             ax1.set_title("Tempo de Parada x Produtividade (TRS)", 
                          fontsize=16, fontweight='bold', color=THEME['text_primary'], pad=20)
             
-            # Remover bordas superiores
+            # Remover bordas superiores e direita do ax1
             ax1.spines['top'].set_visible(False)
             ax2.spines['top'].set_visible(False)
             ax1.spines['right'].set_visible(False)
@@ -2461,7 +2452,7 @@ if aba_selecionada == 'PRENSADOS':
                     df_tabela_turno[col] = df_tabela_turno[col].apply(
                         lambda x: minutos_para_horas_str(int(x)) if x > 0 else "00:00"
                     )
-                df_tabela_turno = df_tabela_turno[['Turno', 'TurnoNome', 'Lider', 'Horas Trabalhadas', 'Erros Processo', 'Manutenção', 'TRS Médio (%)']]
+                df_tabela_turno = df_tabela_turno[['Turno', 'TurnoNome', 'Lider', 'Horas Trabalhadas', 'Erros Processo', 'Manutenção', 'TRS']]
                 df_tabela_turno = df_tabela_turno.rename(columns={
                     'Turno': 'Turno',
                     'TurnoNome': 'Turno Nome',
@@ -2469,9 +2460,9 @@ if aba_selecionada == 'PRENSADOS':
                     'Horas Trabalhadas': 'Horas Trabalhadas',
                     'Erros Processo': 'Erros Processo',
                     'Manutenção': 'Manutenção',
-                    'TRS Médio (%)': 'TRS Médio (%)'
+                    'TRS': 'TRS 1ª Escolha (%)'
                 })
-                df_tabela_turno['TRS Médio (%)'] = df_tabela_turno['TRS Médio (%)'].apply(lambda x: f"{x:.1f}%")
+                df_tabela_turno['TRS 1ª Escolha (%)'] = df_tabela_turno['TRS 1ª Escolha (%)'].apply(lambda x: f"{x:.1f}%")
                 st.dataframe(df_tabela_turno, use_container_width=True, hide_index=True)
         else:
             st.info("Sem dados de turno para exibir")    
