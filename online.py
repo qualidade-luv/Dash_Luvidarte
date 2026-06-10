@@ -2076,24 +2076,72 @@ if aba_selecionada == 'PRENSADOS':
             else:
                 st.info("Sem dados para Prensa Manual")
 
-    with col2:
-        st.markdown(f"""<div style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.2em;
-            text-transform:uppercase;color:{THEME['text_muted']};margin-bottom:8px">▸ Automática</div>""", unsafe_allow_html=True)
-        if 'BOQUETA' in df.columns:
-            df_auto = df[df['BOQUETA'] == 2]
-            if not df_auto.empty:
-                t_ap_a = df_auto['APROVADO'].sum()
-                t_emb_a = df_auto['EMBALADO'].sum()
-                t_mt_a = df_auto['TRS 100%'].sum() if 'TRS 100%' in df_auto.columns else 1
-                trs1_a = (t_ap_a / t_mt_a * 100) if t_mt_a > 0 else 0
-                trs_final_a = (t_emb_a / t_mt_a * 100) if t_mt_a > 0 else 0
-                prod_a = df_auto['PRODUZIDO'].sum()
-                
-                trs_color_a = THEME['accent_lime'] if trs1_a >= 85 else THEME['accent_orange'] if trs1_a >= 70 else THEME['accent_red']
-                render_kpi_card("TRS 1ª Escolha — Automática", f"{trs1_a:.1f}%", trs_color_a)
-                st.caption(f"TRS Final: {trs_final_a:.1f}% | Produção: {prod_a:,.0f} un".replace(",","."))
+        with col2:
+        # GRÁFICO DE PIZZA - SEMPRE mostrar Horas Trabalhadas Produtivas + Erros + Manutenção
+        if horas_trabalhadas_produtivas > 0:
+            # IMPORTANTE: Usar horas_trabalhadas_produtivas (não horas_produtivas)
+            # Isso mantém o total correto no gráfico, mostrando a proporção entre os três
+            
+            # Calcular o valor efetivamente produtivo (não pode ser negativo)
+            valor_produtivo = max(0, horas_trabalhadas_produtivas - (total_acertos + total_manut))
+            
+            # Mas para o gráfico, se o valor produtivo for zero, ainda mostramos uma fatia mínima
+            # para que o "Horas Trabalhadas Produtivas" apareça no gráfico
+            if valor_produtivo == 0 and (total_acertos > 0 or total_manut > 0):
+                # Ajuste: quando horas produtivas é zero, ajustamos os valores para mostrar a proporção
+                # baseada no total de horas trabalhadas
+                total_paradas = total_acertos + total_manut
+                if total_paradas > horas_trabalhadas_produtivas:
+                    # Redimensiona as paradas proporcionalmente para caberem no total
+                    fator = horas_trabalhadas_produtivas / total_paradas
+                    acertos_ajustados = total_acertos * fator
+                    manut_ajustados = total_manut * fator
+                    valor_produtivo_ajustado = 0
+                    
+                    labels_p = ['Horas Trabalhadas Produtivas', 'Erros Processo', 'Manutenção']
+                    vals_p = [0, acertos_ajustados, manut_ajustados]
+                    cores_p = [THEME['accent_lime'], THEME['accent_yellow'], THEME['accent_red']]
+                else:
+                    labels_p = ['Horas Trabalhadas Produtivas', 'Erros Processo', 'Manutenção']
+                    vals_p = [valor_produtivo, total_acertos, total_manut]
+                    cores_p = [THEME['accent_lime'], THEME['accent_yellow'], THEME['accent_red']]
             else:
-                st.info("Sem dados para Prensa Automática")
+                labels_p = ['Horas Trabalhadas Produtivas', 'Erros Processo', 'Manutenção']
+                vals_p = [valor_produtivo, total_acertos, total_manut]
+                cores_p = [THEME['accent_lime'], THEME['accent_yellow'], THEME['accent_red']]
+            
+            # Filtrar apenas valores > 0 para mostrar no gráfico
+            dados_pizza = [(l, v, c) for l, v, c in zip(labels_p, vals_p, cores_p) if v > 0]
+            
+            if dados_pizza:
+                lf, vf, cf = zip(*dados_pizza)
+                
+                fig, ax = plt.subplots(figsize=(7, 5), facecolor=THEME['bg_card'])
+                fig.patch.set_facecolor(THEME['bg_card'])
+                ax.set_facecolor(THEME['bg_card'])
+
+                wedges, texts, autotexts = ax.pie(
+                    vf, labels=lf, colors=cf,
+                    autopct='%1.1f%%', startangle=90,
+                    textprops={'color': THEME['text_primary'], 'fontsize': 10},
+                    wedgeprops={'edgecolor': THEME['bg_card'], 'linewidth': 2}
+                )
+                for at in autotexts:
+                    at.set_color('white')
+                    at.set_fontweight('bold')
+                    at.set_fontsize(10)
+
+                ax.set_title(
+                    f"Distribuição do Tempo\n{minutos_para_horas_str(horas_trabalhadas_produtivas)} Horas Trabalhadas",
+                    fontsize=13, fontweight='bold', color=THEME['text_primary'], pad=14
+                )
+                fig.tight_layout(pad=1.5)
+                st.pyplot(fig)
+                plt.close(fig)
+            else:
+                st.info("Sem dados para exibir no gráfico")
+        else:
+            st.info("Sem dados de tempo para exibir")
 
     st.markdown("<hr>", unsafe_allow_html=True)
 
