@@ -2098,7 +2098,7 @@ if aba_selecionada == 'PRENSADOS':
     st.markdown("<hr>", unsafe_allow_html=True)
 
         # ==================================================================
-    # ANÁLISE DE PARADAS - VERSÃO CORRIGIDA
+    # ANÁLISE DE PARADAS - VERSÃO CORRIGIDA (SEM HORAS PRODUTIVAS)
     # ==================================================================
     render_section_header("Análise de Paradas", "▸")
 
@@ -2148,16 +2148,13 @@ if aba_selecionada == 'PRENSADOS':
                 total_manut = df['MANUT_MIN'].sum()
                 break
 
-    # Cálculo total de paradas
-    total_paradas = total_acertos + total_manut
-
-    # Exibir os 4 cards principais
-    p1, p2, p3, p4 = st.columns(4)
+    # Exibir APENAS 3 cards (sem Horas Produtivas)
+    p1, p2, p3 = st.columns(3)
     with p1: 
         render_kpi_card(
             "Horas Trabalhadas Produtivas", 
             minutos_para_horas_str(horas_trabalhadas_produtivas), 
-            THEME['accent_cyan']
+            THEME['accent_lime']  # COR VERDE
         )
     with p2: 
         render_kpi_card(
@@ -2171,16 +2168,8 @@ if aba_selecionada == 'PRENSADOS':
             minutos_para_horas_str(total_manut), 
             THEME['accent_red']
         )
-    with p4: 
-        # Total de Horas Produtivas = Horas Trabalhadas - (Erros + Manutenção)
-        horas_produtivas = max(0, horas_trabalhadas_produtivas - total_paradas)
-        render_kpi_card(
-            "Horas Produtivas", 
-            minutos_para_horas_str(horas_produtivas), 
-            THEME['accent_lime']
-        )
 
-    # Gráfico de barras empilhadas: Manual vs Automática
+    # Gráfico de barras empilhadas: Manual vs Automática (APENAS 1 GRÁFICO)
     col1, col2 = st.columns(2)
 
     with col1:
@@ -2228,12 +2217,11 @@ if aba_selecionada == 'PRENSADOS':
             plt.close(fig)
 
     with col2:
-        if horas_trabalhadas_produtivas > 0:
-            # Ajustar valores para o gráfico de pizza
-            horas_prod = max(0, horas_trabalhadas_produtivas - total_paradas)
-            labels_p = ['Horas Produtivas', 'Erros Processo', 'Manutenção']
-            vals_p = [horas_prod, total_acertos, total_manut]
-            cores_p = [THEME['accent_lime'], THEME['accent_yellow'], THEME['accent_red']]
+        # GRÁFICO DE PIZZA - Distribuição de Erros vs Manutenção (sem Horas Produtivas)
+        if (total_acertos + total_manut) > 0:
+            labels_p = ['Erros Processo', 'Manutenção']
+            vals_p = [total_acertos, total_manut]
+            cores_p = [THEME['accent_yellow'], THEME['accent_red']]
             
             # Filtrar apenas valores > 0
             dados_pizza = [(l, v, c) for l, v, c in zip(labels_p, vals_p, cores_p) if v > 0]
@@ -2257,15 +2245,14 @@ if aba_selecionada == 'PRENSADOS':
                     at.set_fontsize(10)
 
                 ax.set_title(
-                    f"Distribuição do Tempo\n{minutos_para_horas_str(horas_trabalhadas_produtivas)} Horas Trabalhadas Produtivas",
+                    f"Distribuição das Paradas\nTotal: {minutos_para_horas_str(total_acertos + total_manut)}",
                     fontsize=13, fontweight='bold', color=THEME['text_primary'], pad=14
                 )
                 fig.tight_layout(pad=1.5)
                 st.pyplot(fig)
                 plt.close(fig)
         else:
-            st.info("Sem dados de tempo para exibir")
-
+            st.info("Sem dados de paradas para exibir")
     st.markdown("<hr>", unsafe_allow_html=True)
 
     # TRS por Turno
