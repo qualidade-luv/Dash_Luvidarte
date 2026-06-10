@@ -2273,6 +2273,107 @@ if aba_selecionada == 'PRENSADOS':
                 st.info("Sem dados para exibir no gráfico")
         else:
             st.info("Sem dados de tempo para exibir")
+
+    # ==================================================================
+    # GRÁFICO DE COLUNAS POR TURNO (Horas Trabalhadas, Erros, Manutenção)
+    # ==================================================================
+    if not df.empty and 'TURNO' in df.columns:
+        render_section_header("Análise por Turno", "▸")
+        
+        # Calcular dados por turno
+        turnos = df['TURNO'].dropna().unique()
+        turno_data = []
+        
+        for turno in turnos:
+            df_turno = df[df['TURNO'] == turno]
+            
+            # Calcular horas trabalhadas no turno
+            horas_turno = 0
+            if 'HORAS_TOTAIS_MIN' in df_turno.columns:
+                horas_turno = df_turno['HORAS_TOTAIS_MIN'].sum()
+            else:
+                for col in df_turno.columns:
+                    col_upper = str(col).upper()
+                    if 'HORAS TOTAIS' in col_upper or 'HORA TOTAL' in col_upper:
+                        horas_turno = df_turno[col].apply(converter_tempo_para_minutos).sum()
+                        break
+            
+            # Calcular erros no turno (ignorando 2:45)
+            erros_turno = 0
+            if 'ACERTOS_MIN' in df_turno.columns:
+                def filtrar_acertos_turno(val):
+                    if val == 165:
+                        return 0
+                    return val
+                erros_turno = df_turno['ACERTOS_MIN'].apply(filtrar_acertos_turno).sum()
+            
+            # Calcular manutenção no turno
+            manut_turno = 0
+            if 'MANUT_MIN' in df_turno.columns:
+                manut_turno = df_turno['MANUT_MIN'].sum()
+            
+            turno_data.append({
+                'Turno': str(turno),
+                'Horas Trabalhadas': horas_turno,
+                'Erros Processo': erros_turno,
+                'Manutenção': manut_turno
+            })
+        
+        if turno_data:
+            df_turno_graf = pd.DataFrame(turno_data)
+            df_turno_graf = df_turno_graf.sort_values('Turno')
+            
+            # Criar gráfico de barras agrupadas
+            fig, ax = plt.subplots(figsize=(10, 6), facecolor=THEME['bg_card'])
+            apply_chart_style(ax, fig, "Tempo por Turno", ylabel="Minutos")
+            
+            x = np.arange(len(df_turno_graf))
+            width = 0.25
+            
+            bars1 = ax.bar(x - width, df_turno_graf['Horas Trabalhadas'], width, 
+                          label='Horas Trabalhadas', color=THEME['accent_lime'], alpha=0.85)
+            bars2 = ax.bar(x, df_turno_graf['Erros Processo'], width, 
+                          label='Erros Processo', color=THEME['accent_yellow'], alpha=0.85)
+            bars3 = ax.bar(x + width, df_turno_graf['Manutenção'], width, 
+                          label='Manutenção', color=THEME['accent_red'], alpha=0.85)
+            
+            # Adicionar valores nas barras
+            for bars in [bars1, bars2, bars3]:
+                for bar in bars:
+                    height = bar.get_height()
+                    if height > 0:
+                        ax.text(bar.get_x() + bar.get_width()/2., height + 5,
+                               f'{minutos_para_horas_str(int(height))}',
+                               ha='center', va='bottom', fontsize=8, rotation=0)
+            
+            ax.set_xticks(x)
+            ax.set_xticklabels(df_turno_graf['Turno'], fontsize=11, fontweight='bold')
+            ax.set_ylabel("Minutos", fontsize=11)
+            ax.legend(loc='upper left', fontsize=10)
+            
+            # Ajustar limite do eixo Y
+            max_valor = max(df_turno_graf[['Horas Trabalhadas', 'Erros Processo', 'Manutenção']].max())
+            ax.set_ylim(0, max_valor * 1.15 if max_valor > 0 else 100)
+            
+            fig.tight_layout()
+            st.pyplot(fig)
+            plt.close(fig)
+            
+            # Tabela resumo por turno
+            with st.expander("📊 Ver tabela detalhada por Turno"):
+                df_tabela_turno = df_turno_graf.copy()
+                for col in ['Horas Trabalhadas', 'Erros Processo', 'Manutenção']:
+                    df_tabela_turno[col] = df_tabela_turno[col].apply(
+                        lambda x: minutos_para_horas_str(int(x)) if x > 0 else "00:00"
+                    )
+                df_tabela_turno = df_tabela_turno.rename(columns={
+                    'Horas Trabalhadas': 'Horas Trabalhadas',
+                    'Erros Processo': 'Erros Processo',
+                    'Manutenção': 'Manutenção'
+                })
+                st.dataframe(df_tabela_turno, use_container_width=True, hide_index=True)
+        else:
+            st.info("Sem dados de turno para exibir")    
             
     st.markdown("<hr>", unsafe_allow_html=True)
 
