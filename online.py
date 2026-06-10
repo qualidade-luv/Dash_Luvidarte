@@ -2163,7 +2163,7 @@ if aba_selecionada == 'PRENSADOS':
 
     with col2:
         if horas_trabalhadas > 0:
-            labels_p = ['Produtivas', 'Acertos', 'Manutenção']
+            labels_p = ['Produtivas', 'Erros Processo', 'Manutenção']
             vals_p = [horas_produtivas, total_acertos, total_manut]
             cores_p = [THEME['accent_lime'], THEME['accent_yellow'], THEME['accent_red']]
             lf, vf, cf = zip(*[(l, v, c) for l, v, c in zip(labels_p, vals_p, cores_p) if v > 0]) if any(v > 0 for v in vals_p) else ([], [], [])
