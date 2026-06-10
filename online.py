@@ -2220,29 +2220,34 @@ if aba_selecionada == 'PRENSADOS':
             plt.close(fig)
 
     with col2:
-        # GRÁFICO DE PIZZA - SEMPRE mostrar as 3 fatias (mesmo com valor zero)
+        # GRÁFICO DE PIZZA - FORÇAR as 3 fatias a aparecerem SEMPRE
         if horas_trabalhadas_produtivas > 0:
-            # Calcular o tempo produtivo real
-            tempo_produtivo_real = max(0, horas_trabalhadas_produtivas - (total_acertos + total_manut))
-            
-            # Para o gráfico, vamos usar valores ajustados que garantam que as 3 fatias apareçam
-            # Mas o título manterá o valor correto de Horas Trabalhadas
-            
+            # Valores originais
             total_paradas = total_acertos + total_manut
             
-            # Caso 1: Paradas não excedem Horas Trabalhadas
-            if total_paradas <= horas_trabalhadas_produtivas:
-                vals_p = [tempo_produtivo_real, total_acertos, total_manut]
-            else:
-                # Caso 2: Paradas excedem - ajustamos proporcionalmente
-                # Mas mantemos um valor mínimo para Horas Produtivas (1 minuto)
-                fator = (horas_trabalhadas_produtivas - 1) / total_paradas if total_paradas > 0 else 1
-                vals_p = [1, total_acertos * fator, total_manut * fator]
+            # Para o gráfico, vamos criar uma versão "para visualização" que sempre mostra as 3 fatias
+            # Mas o título mantém o valor correto
             
-            # Garantir que nenhum valor seja negativo ou zero (para todas as 3 fatias aparecerem)
-            vals_p = [max(0.1, v) for v in vals_p]
+            if total_paradas > horas_trabalhadas_produtivas:
+                # Caso as paradas excedam o tempo: ajustamos paradas para caberem
+                # e Horas Produtivas fica com um valor mínimo (1 minuto) para aparecer
+                fator_ajuste = (horas_trabalhadas_produtivas - 1) / total_paradas if total_paradas > 0 else 1
+                acertos_viz = max(0.1, total_acertos * fator_ajuste)
+                manut_viz = max(0.1, total_manut * fator_ajuste)
+                produtivo_viz = 1  # 1 minuto (valor simbólico para aparecer no gráfico)
+            else:
+                # Caso normal: usa valores reais, mas garante mínimo de 0.1
+                acertos_viz = max(0.1, total_acertos)
+                manut_viz = max(0.1, total_manut)
+                produtivo_viz = max(0.1, horas_trabalhadas_produtivas - total_paradas)
+            
+            # Garantir que todos os valores sejam positivos
+            produtivo_viz = max(0.1, produtivo_viz)
+            acertos_viz = max(0.1, acertos_viz)
+            manut_viz = max(0.1, manut_viz)
             
             labels_p = ['Horas Trabalhadas Produtivas', 'Erros Processo', 'Manutenção']
+            vals_p = [produtivo_viz, acertos_viz, manut_viz]
             cores_p = [THEME['accent_lime'], THEME['accent_yellow'], THEME['accent_red']]
             
             # Criar o gráfico de pizza
@@ -2250,24 +2255,17 @@ if aba_selecionada == 'PRENSADOS':
             fig.patch.set_facecolor(THEME['bg_card'])
             ax.set_facecolor(THEME['bg_card'])
 
-            # Função para formatar o autopct
-            def make_autopct(vals):
-                def autopct(pct):
-                    # Só mostra porcentagem se for > 1% para não poluir
-                    return f'{pct:.1f}%' if pct > 1 else ''
-                return autopct
-            
             wedges, texts, autotexts = ax.pie(
                 vals_p, 
                 labels=labels_p, 
                 colors=cores_p,
-                autopct=make_autopct(vals_p),
+                autopct=lambda pct: f'{pct:.1f}%' if pct > 1 else '',
                 startangle=90,
                 textprops={'color': THEME['text_primary'], 'fontsize': 10},
                 wedgeprops={'edgecolor': THEME['bg_card'], 'linewidth': 2}
             )
             
-            # Configurar textos
+            # Configurar textos das porcentagens
             for autotext in autotexts:
                 if autotext.get_text():
                     autotext.set_color('white')
@@ -2280,10 +2278,10 @@ if aba_selecionada == 'PRENSADOS':
                 fontsize=13, fontweight='bold', color=THEME['text_primary'], pad=14
             )
             
-            # Adicionar legenda explicativa se necessário
-            if tempo_produtivo_real == 0 and total_paradas > horas_trabalhadas_produtivas:
+            # Adicionar nota explicativa se houve ajuste
+            if total_paradas > horas_trabalhadas_produtivas:
                 fig.text(0.5, -0.05, 
-                         f"⚠️ Paradas ({minutos_para_horas_str(total_paradas)}) excedem Horas Trabalhadas\nGráfico ajustado para visualização",
+                         f"⚠️ Gráfico ajustado para visualização (paradas excedem horas trabalhadas)",
                          ha='center', fontsize=8, color=THEME['accent_red'], style='italic')
             
             fig.tight_layout()
