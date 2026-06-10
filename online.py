@@ -2118,7 +2118,7 @@ if aba_selecionada == 'PRENSADOS':
 
     p1, p2, p3, p4 = st.columns(4)
     with p1: render_kpi_card("Horas Trabalhadas", minutos_para_horas_str(horas_trabalhadas), THEME['accent_cyan'])
-    with p2: render_kpi_card("Erros Processo", minutos_para_horas_str(total_acertos), THEME['accent_yellow'])
+    with p2: render_kpi_card("Acertos", minutos_para_horas_str(total_acertos), THEME['accent_yellow'])
     with p3: render_kpi_card("Manutenção", minutos_para_horas_str(total_manut), THEME['accent_red'])
     with p4: render_kpi_card("Horas Produtivas", minutos_para_horas_str(horas_produtivas), THEME['accent_lime'])
 
