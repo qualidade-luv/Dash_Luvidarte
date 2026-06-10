@@ -2151,14 +2151,6 @@ if aba_selecionada == 'PRENSADOS':
     # Calcular Horas Produtivas para o gráfico de pizza
     horas_produtivas = max(0, horas_trabalhadas_produtivas - (total_acertos + total_manut))
 
-    # ===== VERIFICAÇÃO DE DADOS =====
-    # Se não houver horas trabalhadas, tenta estimar baseado nas paradas
-    if horas_trabalhadas_produtivas == 0 and (total_acertos > 0 or total_manut > 0):
-        st.warning("⚠️ Dados de 'Horas Trabalhadas' não encontrados. Exibindo apenas paradas.")
-        usar_modo_paradas_only = True
-    else:
-        usar_modo_paradas_only = False
-
     # Exibir APENAS 3 cards (Horas Trabalhadas Produtivas, Erros, Manutenção)
     p1, p2, p3 = st.columns(3)
     with p1: 
@@ -2228,84 +2220,48 @@ if aba_selecionada == 'PRENSADOS':
             plt.close(fig)
 
     with col2:
-        # GRÁFICO DE PIZZA - Com Horas Trabalhadas Produtivas + Erros + Manutenção
-        if usar_modo_paradas_only:
-            # Modo sem Horas Trabalhadas: mostrar apenas paradas
-            if (total_acertos + total_manut) > 0:
-                labels_p = ['Erros Processo', 'Manutenção']
-                vals_p = [total_acertos, total_manut]
-                cores_p = [THEME['accent_yellow'], THEME['accent_red']]
+        # GRÁFICO DE PIZZA - SEMPRE mostrar Horas Trabalhadas Produtivas no título
+        if horas_trabalhadas_produtivas > 0:
+            # Calcular o valor efetivamente produtivo (não pode ser negativo)
+            valor_produtivo = max(0, horas_trabalhadas_produtivas - (total_acertos + total_manut))
+            
+            # Preparar dados para o gráfico
+            labels_p = ['Horas Trabalhadas Produtivas', 'Erros Processo', 'Manutenção']
+            vals_p = [valor_produtivo, total_acertos, total_manut]
+            cores_p = [THEME['accent_lime'], THEME['accent_yellow'], THEME['accent_red']]
+            
+            # Filtrar apenas valores > 0 para mostrar no gráfico
+            dados_pizza = [(l, v, c) for l, v, c in zip(labels_p, vals_p, cores_p) if v > 0]
+            
+            if dados_pizza:
+                lf, vf, cf = zip(*dados_pizza)
                 
-                dados_pizza = [(l, v, c) for l, v, c in zip(labels_p, vals_p, cores_p) if v > 0]
-                
-                if dados_pizza:
-                    lf, vf, cf = zip(*dados_pizza)
-                    
-                    fig, ax = plt.subplots(figsize=(7, 5), facecolor=THEME['bg_card'])
-                    fig.patch.set_facecolor(THEME['bg_card'])
-                    ax.set_facecolor(THEME['bg_card'])
+                fig, ax = plt.subplots(figsize=(7, 5), facecolor=THEME['bg_card'])
+                fig.patch.set_facecolor(THEME['bg_card'])
+                ax.set_facecolor(THEME['bg_card'])
 
-                    wedges, texts, autotexts = ax.pie(
-                        vf, labels=lf, colors=cf,
-                        autopct='%1.1f%%', startangle=90,
-                        textprops={'color': THEME['text_primary'], 'fontsize': 10},
-                        wedgeprops={'edgecolor': THEME['bg_card'], 'linewidth': 2}
-                    )
-                    for at in autotexts:
-                        at.set_color('white')
-                        at.set_fontweight('bold')
-                        at.set_fontsize(10)
+                wedges, texts, autotexts = ax.pie(
+                    vf, labels=lf, colors=cf,
+                    autopct='%1.1f%%', startangle=90,
+                    textprops={'color': THEME['text_primary'], 'fontsize': 10},
+                    wedgeprops={'edgecolor': THEME['bg_card'], 'linewidth': 2}
+                )
+                for at in autotexts:
+                    at.set_color('white')
+                    at.set_fontweight('bold')
+                    at.set_fontsize(10)
 
-                    ax.set_title(
-                        f"Distribuição das Paradas\nTotal: {minutos_para_horas_str(total_acertos + total_manut)}",
-                        fontsize=13, fontweight='bold', color=THEME['text_primary'], pad=14
-                    )
-                    fig.tight_layout(pad=1.5)
-                    st.pyplot(fig)
-                    plt.close(fig)
-                else:
-                    st.info("Sem dados de paradas para exibir")
+                ax.set_title(
+                    f"Distribuição do Tempo\n{minutos_para_horas_str(horas_trabalhadas_produtivas)} Horas Trabalhadas",
+                    fontsize=13, fontweight='bold', color=THEME['text_primary'], pad=14
+                )
+                fig.tight_layout(pad=1.5)
+                st.pyplot(fig)
+                plt.close(fig)
             else:
                 st.info("Sem dados para exibir no gráfico")
         else:
-            # Modo normal: mostrar Horas Trabalhadas Produtivas + Erros + Manutenção
-            if horas_trabalhadas_produtivas > 0:
-                labels_p = ['Horas Trabalhadas Produtivas', 'Erros Processo', 'Manutenção']
-                vals_p = [horas_produtivas, total_acertos, total_manut]
-                cores_p = [THEME['accent_lime'], THEME['accent_yellow'], THEME['accent_red']]
-                
-                # Filtrar apenas valores > 0
-                dados_pizza = [(l, v, c) for l, v, c in zip(labels_p, vals_p, cores_p) if v > 0]
-                
-                if dados_pizza:
-                    lf, vf, cf = zip(*dados_pizza)
-                    
-                    fig, ax = plt.subplots(figsize=(7, 5), facecolor=THEME['bg_card'])
-                    fig.patch.set_facecolor(THEME['bg_card'])
-                    ax.set_facecolor(THEME['bg_card'])
-
-                    wedges, texts, autotexts = ax.pie(
-                        vf, labels=lf, colors=cf,
-                        autopct='%1.1f%%', startangle=90,
-                        textprops={'color': THEME['text_primary'], 'fontsize': 10},
-                        wedgeprops={'edgecolor': THEME['bg_card'], 'linewidth': 2}
-                    )
-                    for at in autotexts:
-                        at.set_color('white')
-                        at.set_fontweight('bold')
-                        at.set_fontsize(10)
-
-                    ax.set_title(
-                        f"Distribuição do Tempo\n{minutos_para_horas_str(horas_trabalhadas_produtivas)} Horas Trabalhadas",
-                        fontsize=13, fontweight='bold', color=THEME['text_primary'], pad=14
-                    )
-                    fig.tight_layout(pad=1.5)
-                    st.pyplot(fig)
-                    plt.close(fig)
-                else:
-                    st.info("Sem dados para exibir no gráfico")
-            else:
-                st.info("Sem dados de tempo para exibir")
+            st.info("Sem dados de tempo para exibir")
             
     st.markdown("<hr>", unsafe_allow_html=True)
 
