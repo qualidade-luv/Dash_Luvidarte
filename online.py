@@ -1847,8 +1847,8 @@ st.markdown(f"""
 with st.sidebar:
     st.markdown(f"""
     <div style="text-align: center; padding: 20px 0 16px; border-bottom: 1px solid {THEME['border_bright']}; margin-bottom: 20px;">
-        <div style="font-family: 'Rajdhani', sans-serif; font-size: 24px; font-weight: 700; color: {THEME['accent_cyan']}; letter-spacing: 0.2em;">⚙ ERP LUVIDARTE</div>
-        <div style="font-family: 'JetBrains Mono', monospace; font-size: 9px; color: {THEME['text_muted']}; letter-spacing: 0.2em; text-transform: uppercase;">Industria de Vidros e Iluminação Ltda</div>
+        <div style="font-family: 'Rajdhani', sans-serif; font-size: 24px; font-weight: 700; color: {THEME['accent_cyan']}; letter-spacing: 0.2em;">⚙ TRS</div>
+        <div style="font-family: 'JetBrains Mono', monospace; font-size: 9px; color: {THEME['text_muted']}; letter-spacing: 0.2em; text-transform: uppercase;">Industrial Dashboard</div>
     </div>
     """, unsafe_allow_html=True)
 
