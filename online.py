@@ -5537,6 +5537,8 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
 # ==================================================================================================
 # FECHAMENTO TURNO - VERSÃO GOOGLE SHEETS (COM TRS BRUTO + ARs/RMs)
 # ==================================================================================================
+# FECHAMENTO TURNO - VERSÃO GOOGLE SHEETS (COM TRS BRUTO + ARs/RMs) - COM RELATÓRIO
+# ==================================================================================================
 elif aba_selecionada == 'FECHAMENTO TURNO':
     render_page_header("FECHAMENTO DE TURNO", f"Controle de Produção · Atualizado {get_horario_brasilia()}", THEME['accent_purple'])
     
@@ -5595,6 +5597,76 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
         except:
             return 0
     
+    def minutos_para_horas_str(minutos):
+        if pd.isna(minutos) or minutos is None or minutos == 0:
+            return "00:00"
+        horas = int(minutos) // 60
+        mins = int(minutos) % 60
+        return f"{horas:02d}:{mins:02d}"
+    
+    def get_turno_por_horario(inicio_str, fim_str, is_sabado=False):
+        """
+        Determina o turno com base nos horários de início e fim
+        Manhã: 06:00 até 14:00
+        Tarde: 14:00 até 22:00
+        Noite: 22:00 até 06:00 (próximo dia)
+        
+        Para sábado:
+        Manhã: 06:00 até 11:00
+        Tarde: 11:00 até 16:00
+        Sem turno Noite
+        """
+        try:
+            if not inicio_str or not fim_str:
+                return "Não definido"
+            
+            # Extrair horas
+            if ':' in inicio_str:
+                h_inicio = int(inicio_str.split(':')[0])
+                m_inicio = int(inicio_str.split(':')[1]) if len(inicio_str.split(':')) > 1 else 0
+            else:
+                return "Não definido"
+            
+            if ':' in fim_str:
+                h_fim = int(fim_str.split(':')[0])
+                m_fim = int(fim_str.split(':')[1]) if len(fim_str.split(':')) > 1 else 0
+            else:
+                return "Não definido"
+            
+            minutos_inicio = h_inicio * 60 + m_inicio
+            minutos_fim = h_fim * 60 + m_fim
+            
+            if is_sabado:
+                # Sábado: Manhã 06:00-11:00, Tarde 11:00-16:00
+                if 360 <= minutos_inicio < 660:  # 06:00 até 11:00
+                    return "Manhã"
+                elif 660 <= minutos_inicio < 960:  # 11:00 até 16:00
+                    return "Tarde"
+                else:
+                    return "Fora do horário"
+            else:
+                # Dias normais
+                if 360 <= minutos_inicio < 840:  # 06:00 até 14:00
+                    return "Manhã"
+                elif 840 <= minutos_inicio < 1320:  # 14:00 até 22:00
+                    return "Tarde"
+                elif minutos_inicio >= 1320 or minutos_inicio < 360:  # 22:00 até 06:00
+                    return "Noite"
+                else:
+                    return "Fora do horário"
+                    
+        except Exception as e:
+            return "Não definido"
+    
+    def get_carinha_trs(trs_value):
+        """Retorna a carinha baseada no TRS Bruto"""
+        if trs_value >= 100:
+            return "😊"
+        elif trs_value >= 80:
+            return "🙂"
+        else:
+            return "😢"
+    
     # ======================
     # FUNÇÕES DE CARREGAMENTO
     # ======================
@@ -5636,12 +5708,23 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
                     # TRS BRUTO = (Produzido / Meta) * 100
                     trs_bruto = round((produzido_val / meta_val * 100), 1) if meta_val > 0 else 0
                     
+                    # Verificar se é sábado (data_registro é um date)
+                    is_sabado = False
+                    if data_registro and hasattr(data_registro, 'weekday'):
+                        is_sabado = data_registro.weekday() == 5  # Sábado = 5
+                    
+                    inicio = row[3] if len(row) > 3 else ""
+                    fim = row[4] if len(row) > 4 else ""
+                    
+                    # Determinar turno baseado nos horários
+                    turno_calculado = get_turno_por_horario(inicio, fim, is_sabado)
+                    
                     producoes.append({
                         'id': row[0] if len(row) > 0 else "",
                         'data': data_registro,
                         'referencia': row[2] if len(row) > 2 else "",
-                        'inicio': row[3] if len(row) > 3 else "",
-                        'fim': row[4] if len(row) > 4 else "",
+                        'inicio': inicio,
+                        'fim': fim,
                         'produzido': produzido_val,
                         'observacoes': row[6] if len(row) > 6 else "",
                         'meta': meta_val,
@@ -5649,7 +5732,8 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
                         'justificativa': row[9] if len(row) > 9 else "",
                         'setup': row[10] if len(row) > 10 else "",
                         'manut': row[11] if len(row) > 11 else "",
-                        'trs_bruto': trs_bruto
+                        'trs_bruto': trs_bruto,
+                        'turno': turno_calculado
                     })
             
         except Exception as e:
@@ -5753,14 +5837,10 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
                 todos_dados_ar = sheet_ar.get_all_values()
                 
                 if len(todos_dados_ar) >= 2:
-                    # Mapear cabeçalho da AR
-                    cabecalho_ar = [str(c).strip().upper() for c in todos_dados_ar[0]]
-                    
                     for row in todos_dados_ar[1:]:
                         if len(row) < 5:
                             continue
                         
-                        # A AR tem estrutura: Número, Data, Hora, Código, Emissor, Referência, Decisão, Descrição, Status, Disposição, Data Finalização, Turno
                         data_ar_str = row[1] if len(row) > 1 else ""
                         data_ar = converter_data_sheets(data_ar_str)
                         
@@ -5780,10 +5860,10 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
                                 'data_fechamento': converter_data_sheets(row[10]) if len(row) > 10 and row[10] else None,
                                 'turno': row[11] if len(row) > 11 else "",
                                 'setor_destino': 'Qualidade',
-                                'responsavel': row[4] if len(row) > 4 else ""  # Emissor como responsável
+                                'responsavel': row[4] if len(row) > 4 else ""
                             })
             except Exception as e:
-                st.warning(f"Aviso: Não foi possível carregar ARs: {e}")
+                pass
             
             # ======================
             # CARREGAR RMs (Requisição de Manutenção)
@@ -5797,7 +5877,6 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
                         if len(row) < 10:
                             continue
                         
-                        # A RM tem estrutura: ID, Data, Hora, Emissor, Equipamento, Setor, Caráter, Setor2, Problema, Trabalho, Análise, Status, Data Finalização, Emissor2
                         data_rm_str = row[1] if len(row) > 1 else ""
                         data_rm = converter_data_sheets(data_rm_str)
                         
@@ -5817,22 +5896,240 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
                                 'analise': row[10] if len(row) > 10 else "",
                                 'status': row[11] if len(row) > 11 else "ABERTO",
                                 'data_fechamento': converter_data_sheets(row[12]) if len(row) > 12 and row[12] else None,
-                                'responsavel': row[13] if len(row) > 13 else ""  # Emissor2
+                                'responsavel': row[13] if len(row) > 13 else ""
                             })
             except Exception as e:
-                st.warning(f"Aviso: Não foi possível carregar RMs: {e}")
+                pass
             
         except Exception as e:
-            st.error(f"Erro ao carregar ARs/RMs: {e}")
+            pass
         
         return ars, rms
+    
+    # ======================
+    # FUNÇÃO PARA GERAR RELATÓRIO RESUMO
+    # ======================
+    def gerar_relatorio_resumo(producoes, ars, rms, turno_selecionado, data_fechamento):
+        """
+        Gera o relatório resumo com base nos dados fornecidos
+        """
+        st.markdown("---")
+        
+        # TÍTULO DO RELATÓRIO
+        data_str = data_fechamento.strftime("%d/%m/%Y")
+        turno_label = "GERAL" if turno_selecionado == "Todos" else turno_selecionado.upper()
+        
+        st.markdown(f"""
+        <div style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); 
+                    padding: 20px 25px; border-radius: 12px; margin: 10px 0 25px 0;
+                    border-left: 6px solid {THEME['accent_purple']};">
+            <div style="font-family: 'Rajdhani', sans-serif; font-size: 28px; font-weight: 700; 
+                        color: white; letter-spacing: 0.1em; text-transform: uppercase;">
+                📊 RESUMO DO DIA
+            </div>
+            <div style="font-family: 'JetBrains Mono', monospace; font-size: 14px; 
+                        color: #a0aec0; margin-top: 4px;">
+                {data_str} • TURNO: {turno_label}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # ======================
+        # FILTRAR PRODUÇÕES POR TURNO
+        # ======================
+        if turno_selecionado != "Todos":
+            producoes_filtradas = [p for p in producoes if p.get('turno') == turno_selecionado]
+        else:
+            producoes_filtradas = producoes.copy()
+        
+        # ======================
+        # TABELA DE PRODUÇÃO
+        # ======================
+        st.markdown(f"""
+        <div style="font-family: 'Rajdhani', sans-serif; font-size: 18px; font-weight: 600; 
+                    color: {THEME['text_primary']}; margin: 20px 0 10px 0; 
+                    border-bottom: 2px solid {THEME['border_bright']}; padding-bottom: 8px;">
+            📋 REGISTRO DE PRODUÇÃO
+        </div>
+        """, unsafe_allow_html=True)
+        
+        if producoes_filtradas:
+            # Preparar dados da tabela
+            dados_tabela = []
+            for p in producoes_filtradas:
+                trs = p.get('trs_bruto', 0)
+                carinha = get_carinha_trs(trs)
+                
+                dados_tabela.append({
+                    'Data': p.get('data', '').strftime('%d/%m/%Y') if p.get('data') else '-',
+                    'Início': p.get('inicio', '-'),
+                    'Fim': p.get('fim', '-'),
+                    'Meta': f"{p.get('meta', 0):,}".replace(",", "."),
+                    'Produzido': f"{p.get('produzido', 0):,}".replace(",", "."),
+                    'Setup': p.get('setup', '-'),
+                    'Manutenção': p.get('manut', '-'),
+                    'TRS Bruto (%)': f"{trs:.1f}%" if trs > 0 else "0%",
+                    'Status': carinha
+                })
+            
+            df_tabela = pd.DataFrame(dados_tabela)
+            
+            # Aplicar estilo à tabela
+            def style_tabela(row):
+                styles = [''] * len(row)
+                try:
+                    trs_str = row['TRS Bruto (%)'].replace('%', '').strip()
+                    if trs_str:
+                        trs_val = float(trs_str)
+                        if trs_val >= 100:
+                            styles[7] = 'color: #107C10; font-weight: bold; background-color: #d4edda;'
+                            styles[8] = 'font-size: 20px;'
+                        elif trs_val >= 80:
+                            styles[7] = 'color: #FFB900; font-weight: bold; background-color: #fff3cd;'
+                            styles[8] = 'font-size: 20px;'
+                        else:
+                            styles[7] = 'color: #E81123; font-weight: bold; background-color: #f8d7da;'
+                            styles[8] = 'font-size: 20px;'
+                except:
+                    pass
+                return styles
+            
+            styled_df = df_tabela.style.apply(style_tabela, axis=1)
+            st.dataframe(styled_df, use_container_width=True, height=400, hide_index=True)
+        else:
+            st.info("📭 Nenhuma produção registrada para este turno/data.")
+        
+        # ======================
+        # CARDS - RESUMO DO DIA
+        # ======================
+        st.markdown("---")
+        st.markdown(f"""
+        <div style="font-family: 'Rajdhani', sans-serif; font-size: 18px; font-weight: 600; 
+                    color: {THEME['text_primary']}; margin: 20px 0 10px 0; 
+                    border-bottom: 2px solid {THEME['border_bright']}; padding-bottom: 8px;">
+            📊 RESUMO DO DIA
+        </div>
+        """, unsafe_allow_html=True)
+        
+        total_produzido = sum(p.get('produzido', 0) for p in producoes_filtradas)
+        total_meta = sum(p.get('meta', 0) for p in producoes_filtradas)
+        eficiencia = (total_produzido / total_meta * 100) if total_meta > 0 else 0
+        total_setup_min = sum(str_time_to_minutes_ft(p.get('setup', '')) for p in producoes_filtradas)
+        total_manut_min = sum(str_time_to_minutes_ft(p.get('manut', '')) for p in producoes_filtradas)
+        
+        col_c1, col_c2, col_c3, col_c4, col_c5 = st.columns(5)
+        with col_c1:
+            st.metric("📦 Total Produzido", f"{total_produzido:,}".replace(",", "."))
+        with col_c2:
+            st.metric("🎯 Meta", f"{total_meta:,}".replace(",", "."))
+        with col_c3:
+            cor_ef = "🟢" if eficiencia >= 85 else "🟡" if eficiencia >= 70 else "🔴"
+            st.metric(f"{cor_ef} Eficiência", f"{eficiencia:.1f}%")
+        with col_c4:
+            st.metric("🔧 Setup Total", minutos_para_horas_str(total_setup_min))
+        with col_c5:
+            st.metric("⚙️ Manutenção Total", minutos_para_horas_str(total_manut_min))
+        
+        # ======================
+        # CARDS - RESUMO ARs e RMs
+        # ======================
+        st.markdown("---")
+        st.markdown(f"""
+        <div style="font-family: 'Rajdhani', sans-serif; font-size: 18px; font-weight: 600; 
+                    color: {THEME['text_primary']}; margin: 20px 0 10px 0; 
+                    border-bottom: 2px solid {THEME['border_bright']}; padding-bottom: 8px;">
+            🔧 RESUMO DE ARs E RMs
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Filtrar ARs e RMs (usando os já carregados)
+        ars_turno = ars.copy()
+        rms_turno = rms.copy()
+        
+        total_ars = len(ars_turno)
+        total_rms = len(rms_turno)
+        
+        ars_abertos = sum(1 for a in ars_turno if str(a.get('status', '')).upper().strip() in ['ABERTO', 'EM ANDAMENTO'])
+        rms_abertos = sum(1 for r in rms_turno if str(r.get('status', '')).upper().strip() in ['ABERTO', 'EM ANDAMENTO'])
+        
+        col_a1, col_a2, col_a3, col_a4 = st.columns(4)
+        with col_a1:
+            st.metric("📋 Total ARs", total_ars)
+        with col_a2:
+            st.metric("🔩 Total RMs", total_rms)
+        with col_a3:
+            st.metric("🟡 ARs em Aberto", ars_abertos)
+        with col_a4:
+            st.metric("🟡 RMs em Aberto", rms_abertos)
+        
+        # ======================
+        # CARDS - RESUMO EXECUTIVO
+        # ======================
+        st.markdown("---")
+        st.markdown(f"""
+        <div style="font-family: 'Rajdhani', sans-serif; font-size: 18px; font-weight: 600; 
+                    color: {THEME['text_primary']}; margin: 20px 0 10px 0; 
+                    border-bottom: 2px solid {THEME['border_bright']}; padding-bottom: 8px;">
+            📋 RESUMO EXECUTIVO
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Calcular itens com baixa produtividade
+        itens_baixa = sum(1 for p in producoes_filtradas if (p.get('produzido', 0) or 0) / max(p.get('meta', 1), 1) * 100 < 80)
+        
+        col_e1, col_e2, col_e3 = st.columns(3)
+        with col_e1:
+            st.markdown(f"""
+            <div style="background: {THEME['bg_card']}; padding: 15px; border-radius: 10px; 
+                        border-left: 4px solid {THEME['accent_cyan']}; height: 100%;">
+                <b style="color: {THEME['accent_cyan']};">🏭 PRODUÇÃO</b><br>
+                • Total Produzido: <b>{total_produzido:,}</b> un<br>
+                • Meta Total: <b>{total_meta:,}</b> un<br>
+                • Eficiência Global: <b>{eficiencia:.1f}%</b>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col_e2:
+            st.markdown(f"""
+            <div style="background: {THEME['bg_card']}; padding: 15px; border-radius: 10px; 
+                        border-left: 4px solid {THEME['accent_red']}; height: 100%;">
+                <b style="color: {THEME['accent_red']};">⚠️ PARADAS</b><br>
+                • Setup Total: <b>{minutos_para_horas_str(total_setup_min)}</b><br>
+                • Manutenção Total: <b>{minutos_para_horas_str(total_manut_min)}</b><br>
+                • Total Paradas: <b>{minutos_para_horas_str(total_setup_min + total_manut_min)}</b>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col_e3:
+            st.markdown(f"""
+            <div style="background: {THEME['bg_card']}; padding: 15px; border-radius: 10px; 
+                        border-left: 4px solid {THEME['accent_lime']}; height: 100%;">
+                <b style="color: {THEME['accent_lime']};">📊 INDICADORES</b><br>
+                • Itens baixa prod.: <b>{itens_baixa}</b><br>
+                • ARs/RMs do dia: <b>{total_ars + total_rms}</b> ({ars_abertos + rms_abertos} abertos)<br>
+                • Eficiência: <b>{eficiencia:.1f}%</b>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # ======================
+        # BOTÃO PARA IMPRIMIR/BAIXAR RELATÓRIO
+        # ======================
+        st.markdown("---")
+        col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
+        with col_btn2:
+            if st.button("🖨️ Imprimir Relatório", use_container_width=True, type="primary"):
+                st.info("Para imprimir o relatório, utilize Ctrl+P (ou Cmd+P) no seu navegador.")
+                st.balloons()
     
     # ======================
     # INTERFACE DO FECHAMENTO TURNO
     # ======================
     
-    # Seleção de data
-    col_data1, col_data2 = st.columns([1, 3])
+    # ======================
+    # HEADER COM DATA E BOTÃO GERAR RESUMO
+    # ======================
+    col_data1, col_data2, col_data3 = st.columns([1, 1, 2])
+    
     with col_data1:
         st.markdown("#### 📅 Selecione a Data")
         data_fechamento = st.date_input(
@@ -5841,20 +6138,56 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
             key="fechamento_data"
         )
     
+    with col_data2:
+        st.markdown("#### 🕐 Selecione o Turno")
+        # Verificar se é sábado para mostrar opções corretas
+        is_sabado = data_fechamento.weekday() == 5
+        if is_sabado:
+            opcoes_turno = ["Todos", "Manhã", "Tarde"]
+            turno_selecionado_rel = st.selectbox(
+                "Turno",
+                options=opcoes_turno,
+                key="turno_selecionado_rel"
+            )
+        else:
+            opcoes_turno = ["Todos", "Manhã", "Tarde", "Noite"]
+            turno_selecionado_rel = st.selectbox(
+                "Turno",
+                options=opcoes_turno,
+                key="turno_selecionado_rel"
+            )
+    
+    with col_data3:
+        st.markdown("#### ⚙️ Ações")
+        col_btn1, col_btn2 = st.columns(2)
+        with col_btn1:
+            gerar_resumo = st.button("📊 Gerar Resumo", use_container_width=True, type="primary")
+        with col_btn2:
+            st.button("🔄 Atualizar Dados", use_container_width=True)
+    
     st.markdown("<hr>", unsafe_allow_html=True)
     
-    # Carregar dados
+    # ======================
+    # CARREGAR DADOS
+    # ======================
     with st.spinner("Carregando dados do Google Sheets..."):
         producoes = carregar_producoes_fechamento(data_fechamento)
         checklists, checklists_detalhes = carregar_checklists_fechamento(data_fechamento)
         faltas = carregar_faltas_fechamento(data_fechamento)
         ars, rms = carregar_ars_rms_fechamento(data_fechamento)
     
-    # Consolidar ARs e RMs
-    todos_documentos = ars + rms
+    # ======================
+    # GERAR RELATÓRIO SE BOTÃO FOR CLICADO
+    # ======================
+    if gerar_resumo:
+        gerar_relatorio_resumo(producoes, ars, rms, turno_selecionado_rel, data_fechamento)
+    
+    # ======================
+    # DASHBOARD RESUMIDO (MANTIDO PARA VISUALIZAÇÃO RÁPIDA)
+    # ======================
+    st.markdown("### 📊 Resumo Rápido do Dia")
     
     # KPIs do dia
-    st.markdown("### 📊 Resumo do Dia")
     col_k1, col_k2, col_k3, col_k4, col_k5 = st.columns(5)
     
     total_produzido = sum(p.get('produzido', 0) or 0 for p in producoes)
@@ -5878,7 +6211,7 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
     
     st.markdown("<hr>", unsafe_allow_html=True)
     
-    # Tabs
+    # Tabs para visualização detalhada
     tab1, tab2, tab3, tab4 = st.tabs(["📋 Produções do Dia", "✅ Checklists Turno", "🟥 Faltas", "🔧 ARs & RMs"])
     
     with tab1:
@@ -5886,12 +6219,12 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
         if producoes:
             df_display = pd.DataFrame(producoes)
             
-            colunas_exibir = ['referencia', 'inicio', 'fim', 'produzido', 'meta', 'setup', 'manut', 'observacoes', 'justificativa', 'trs_bruto']
+            colunas_exibir = ['referencia', 'inicio', 'fim', 'produzido', 'meta', 'setup', 'manut', 'observacoes', 'justificativa', 'trs_bruto', 'turno']
             colunas_existentes = [c for c in colunas_exibir if c in df_display.columns]
             
             if colunas_existentes:
                 df_display = df_display[colunas_existentes]
-                df_display.columns = ['Referência', 'Início', 'Fim', 'Produzido', 'Meta', 'Setup', 'Manut.', 'Observações', 'Justificativa', 'TRS Bruto (%)'][:len(colunas_existentes)]
+                df_display.columns = ['Referência', 'Início', 'Fim', 'Produzido', 'Meta', 'Setup', 'Manut.', 'Observações', 'Justificativa', 'TRS Bruto (%)', 'Turno'][:len(colunas_existentes)]
                 
                 def color_trs(val):
                     if isinstance(val, (int, float)):
@@ -5969,6 +6302,8 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
     with tab4:
         st.subheader("🔧 ARs & RMs - Documentos do Dia")
         st.caption(f"Documentos abertos em {data_fechamento.strftime('%d/%m/%Y')}")
+        
+        todos_documentos = ars + rms
         
         if todos_documentos:
             total_ars = len(ars)
@@ -6090,158 +6425,8 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
                                 st.markdown(f"**📊 Análise:** {doc.get('analise', '-')}")
             else:
                 st.info("📭 Nenhum documento encontrado com os filtros selecionados.")
-            
-            if todos_documentos:
-                st.markdown("---")
-                st.subheader("📊 Distribuição dos Documentos")
-                
-                col_graf1, col_graf2 = st.columns(2)
-                
-                with col_graf1:
-                    fig, ax = plt.subplots(figsize=(6, 5), facecolor=THEME['bg_card'])
-                    status_labels = ['Finalizado', 'Aberto', 'Não Respondido']
-                    status_values = [finalizadas, abertas, nao_respondidas]
-                    status_cores = ['#28a745', '#ffc107', '#dc3545']
-                    
-                    labels_filtrados = []
-                    valores_filtrados = []
-                    cores_filtradas = []
-                    for l, v, c in zip(status_labels, status_values, status_cores):
-                        if v > 0:
-                            labels_filtrados.append(l)
-                            valores_filtrados.append(v)
-                            cores_filtradas.append(c)
-                    
-                    if valores_filtrados:
-                        wedges, texts, autotexts = ax.pie(
-                            valores_filtrados, 
-                            labels=labels_filtrados, 
-                            colors=cores_filtradas,
-                            autopct='%1.1f%%',
-                            startangle=90,
-                            textprops={'fontsize': 10}
-                        )
-                        for autotext in autotexts:
-                            autotext.set_color('white')
-                            autotext.set_fontweight('bold')
-                        ax.set_title('Status dos Documentos', fontweight='bold')
-                    st.pyplot(fig)
-                    plt.close(fig)
-                
-                with col_graf2:
-                    fig, ax = plt.subplots(figsize=(6, 5), facecolor=THEME['bg_card'])
-                    tipos = ['AR', 'RM']
-                    valores_tipo = [total_ars, total_rms]
-                    cores_tipo = [THEME['accent_cyan'], THEME['accent_orange']]
-                    bars = ax.bar(tipos, valores_tipo, color=cores_tipo, alpha=0.8)
-                    ax.set_title('Documentos por Tipo', fontweight='bold')
-                    ax.set_ylabel('Quantidade')
-                    for bar, valor in zip(bars, valores_tipo):
-                        if valor > 0:
-                            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.1, 
-                                    str(valor), ha='center', va='bottom', fontweight='bold')
-                    ax.spines['top'].set_visible(False)
-                    ax.spines['right'].set_visible(False)
-                    fig.tight_layout()
-                    st.pyplot(fig)
-                    plt.close(fig)
         else:
             st.info("📭 Nenhuma AR ou RM encontrada para esta data.")
-    
-    if producoes:
-        st.markdown("<hr>", unsafe_allow_html=True)
-        st.subheader("📈 Análise do Dia")
-        
-        col_g1, col_g2 = st.columns(2)
-        
-        with col_g1:
-            df_grafico = pd.DataFrame(producoes)
-            df_grafico = df_grafico[['referencia', 'produzido', 'meta']].head(15)
-            
-            fig, ax = plt.subplots(figsize=(10, 5), facecolor=THEME['bg_card'])
-            apply_chart_style(ax, fig, "Produção vs Meta por Referência", ylabel="Quantidade")
-            
-            x = range(len(df_grafico))
-            width = 0.35
-            
-            bars1 = ax.bar([i - width/2 for i in x], df_grafico['produzido'], width, label='Produzido', color=THEME['accent_cyan'], alpha=0.8)
-            bars2 = ax.bar([i + width/2 for i in x], df_grafico['meta'], width, label='Meta', color=THEME['accent_orange'], alpha=0.8)
-            
-            ax.set_xticks(x)
-            ax.set_xticklabels(df_grafico['referencia'], rotation=45, ha='right', fontsize=8)
-            ax.legend(loc='upper right')
-            
-            fig.tight_layout()
-            st.pyplot(fig)
-            plt.close(fig)
-        
-        with col_g2:
-            df_eficiencia = pd.DataFrame(producoes)
-            df_eficiencia['eficiencia'] = df_eficiencia.apply(
-                lambda row: (row['produzido'] / row['meta'] * 100) if row['meta'] > 0 else 0, axis=1
-            )
-            df_eficiencia = df_eficiencia[['referencia', 'eficiencia']].head(15)
-            
-            fig, ax = plt.subplots(figsize=(10, 5), facecolor=THEME['bg_card'])
-            apply_chart_style(ax, fig, "Eficiência por Referência", ylabel="Eficiência (%)")
-            
-            cores = [THEME['accent_lime'] if v >= 85 else THEME['accent_orange'] if v >= 70 else THEME['accent_red'] for v in df_eficiencia['eficiencia']]
-            
-            bars = ax.barh(range(len(df_eficiencia)), df_eficiencia['eficiencia'], color=cores, alpha=0.8)
-            ax.axvline(x=85, color=THEME['accent_lime'], linestyle='--', alpha=0.7, label='Meta 85%')
-            ax.axvline(x=70, color=THEME['accent_orange'], linestyle='--', alpha=0.7, label='Alerta 70%')
-            
-            ax.set_yticks(range(len(df_eficiencia)))
-            ax.set_yticklabels(df_eficiencia['referencia'], fontsize=8)
-            ax.set_xlim(0, 110)
-            ax.legend(loc='lower right')
-            
-            for bar, v in zip(bars, df_eficiencia['eficiencia']):
-                ax.text(bar.get_width() + 1, bar.get_y() + bar.get_height()/2, f'{v:.1f}%', va='center', fontsize=8)
-            
-            fig.tight_layout()
-            st.pyplot(fig)
-            plt.close(fig)
-    
-    st.markdown("<hr>", unsafe_allow_html=True)
-    st.subheader("📋 Resumo Executivo")
-    
-    with st.container():
-        col_r1, col_r2, col_r3 = st.columns(3)
-        
-        with col_r1:
-            st.markdown(f"""
-            <div style="background: {THEME['bg_card']}; padding: 15px; border-radius: 10px; border-left: 4px solid {THEME['accent_cyan']};">
-                <b>🏭 PRODUÇÃO</b><br>
-                • Total Produzido: <b>{total_produzido:,}</b> un<br>
-                • Meta Total: <b>{total_meta:,}</b> un<br>
-                • Eficiência Global: <b>{eficiencia:.1f}%</b>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col_r2:
-            st.markdown(f"""
-            <div style="background: {THEME['bg_card']}; padding: 15px; border-radius: 10px; border-left: 4px solid {THEME['accent_red']};">
-                <b>⚠️ PARADAS</b><br>
-                • Setup Total: <b>{minutos_para_horas_str(total_setup_min)}</b><br>
-                • Manutenção Total: <b>{minutos_para_horas_str(total_manut_min)}</b><br>
-                • Total Paradas: <b>{minutos_para_horas_str(total_setup_min + total_manut_min)}</b>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col_r3:
-            itens_baixa = sum(1 for p in producoes if (p.get('produzido', 0) or 0) / max(p.get('meta', 1), 1) * 100 < 80)
-            ars_abertas = sum(1 for d in todos_documentos if str(d.get('status', '')).upper().strip() in ['ABERTO', 'EM ANDAMENTO'])
-            
-            st.markdown(f"""
-            <div style="background: {THEME['bg_card']}; padding: 15px; border-radius: 10px; border-left: 4px solid {THEME['accent_lime']};">
-                <b>📊 INDICADORES</b><br>
-                • Itens com baixa prod.: <b>{itens_baixa}</b><br>
-                • Checklists realizados: <b>{sum(1 for v in checklists.values() if v)}/3</b><br>
-                • Total registro faltas: <b>{len(faltas)}</b><br>
-                • ARs/RMs do dia: <b>{len(todos_documentos)}</b> ({ars_abertas} abertos)
-            </div>
-            """, unsafe_allow_html=True)
     
     st.markdown(f"""
     <div style="text-align:right;padding:16px 0 8px;
