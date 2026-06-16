@@ -5907,7 +5907,7 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
     # ======================
     # FUNÇÃO PARA GERAR HTML DO RELATÓRIO PARA DOWNLOAD (MODO RETRATO)
     # ======================
-    def gerar_html_relatorio(producoes, data_fechamento, turno_label, total_produzido, total_meta, 
+    def gerar_html_relatorio(producoes, ars, rms, data_fechamento, turno_label, total_produzido, total_meta, 
                              eficiencia, total_setup_min, total_manut_min, total_ars, total_rms, 
                              ars_abertos, rms_abertos, itens_baixa):
         """
@@ -5960,6 +5960,62 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
             <tr>
                 <td colspan="10" style="padding: 15px; text-align: center; color: #999; font-size: 12px;">
                     Nenhuma produção registrada para este turno/data.
+                </td>
+            </tr>
+            """
+        
+        # ======================
+        # GERAR TABELA DE ARs E RMs
+        # ======================
+        tabela_ars_rms = ""
+        todos_docs = ars + rms
+        if todos_docs:
+            for doc in todos_docs:
+                tipo = doc.get('tipo', '')
+                status = str(doc.get('status', '')).upper().strip()
+                
+                # Definir cor do status
+                if status in ['FINALIZADO', 'FINALIZADA']:
+                    status_display = "✅ FINALIZADO"
+                    cor_status = "#28a745"
+                elif status in ['ABERTO', 'EM ANDAMENTO']:
+                    status_display = "🟡 ABERTO"
+                    cor_status = "#ffc107"
+                else:
+                    status_display = "🔴 NÃO RESPONDIDO"
+                    cor_status = "#dc3545"
+                
+                if tipo == 'AR':
+                    referencia = doc.get('referencia', '-')
+                    if len(referencia) > 25:
+                        referencia = referencia[:23] + '...'
+                    tabela_ars_rms += f"""
+                    <tr style="font-size: 11px;">
+                        <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; font-weight: bold; color: #0078D4;">AR</td>
+                        <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: center;">{doc.get('numero', '-')}</td>
+                        <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; font-size: 10px;">{referencia}</td>
+                        <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: center;">-</td>
+                        <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; font-weight: bold; color: {cor_status};">{status_display}</td>
+                    </tr>
+                    """
+                else:  # RM
+                    equipamento = doc.get('equipamento', '-')
+                    if len(equipamento) > 25:
+                        equipamento = equipamento[:23] + '...'
+                    tabela_ars_rms += f"""
+                    <tr style="font-size: 11px;">
+                        <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; font-weight: bold; color: #E86C2C;">RM</td>
+                        <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: center;">{doc.get('numero', '-')}</td>
+                        <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: center;">-</td>
+                        <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; font-size: 10px;">{equipamento}</td>
+                        <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; font-weight: bold; color: {cor_status};">{status_display}</td>
+                    </tr>
+                    """
+        else:
+            tabela_ars_rms = """
+            <tr>
+                <td colspan="5" style="padding: 15px; text-align: center; color: #999; font-size: 12px;">
+                    Nenhum AR ou RM registrado para esta data.
                 </td>
             </tr>
             """
@@ -6101,21 +6157,50 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
                     font-size: 9px;
                     color: #999;
                 }}
-                .badge {{
-                    display: inline-block;
-                    padding: 2px 8px;
-                    border-radius: 10px;
-                    font-size: 10px;
-                    font-weight: 600;
-                }}
-                .badge-success {{ background-color: #d4edda; color: #155724; }}
-                .badge-warning {{ background-color: #fff3cd; color: #856404; }}
-                .badge-danger {{ background-color: #f8d7da; color: #721c24; }}
                 .ars-rms-cards {{
                     display: grid;
                     grid-template-columns: repeat(4, 1fr);
                     gap: 8px;
-                    margin-bottom: 10px;
+                    margin-bottom: 8px;
+                }}
+                .assinatura-section {{
+                    margin-top: 20px;
+                    padding-top: 15px;
+                    border-top: 2px solid #2c3e50;
+                    text-align: center;
+                }}
+                .assinatura-section .titulo {{
+                    font-size: 13px;
+                    font-weight: 700;
+                    color: #1a1a2e;
+                    margin-bottom: 15px;
+                }}
+                .assinatura-section .linha {{
+                    display: flex;
+                    justify-content: center;
+                    gap: 40px;
+                    flex-wrap: wrap;
+                    margin-top: 10px;
+                }}
+                .assinatura-section .campo {{
+                    text-align: center;
+                    min-width: 200px;
+                }}
+                .assinatura-section .campo .linha-ass {{
+                    border-bottom: 1px solid #333;
+                    padding: 5px 30px;
+                    margin: 5px 0;
+                    min-width: 180px;
+                }}
+                .assinatura-section .campo .label-ass {{
+                    font-size: 10px;
+                    color: #666;
+                    margin-top: 2px;
+                }}
+                .assinatura-section .data {{
+                    margin-top: 15px;
+                    font-size: 11px;
+                    color: #555;
                 }}
                 @media print {{
                     body {{ margin: 5mm; padding: 0; }}
@@ -6185,7 +6270,7 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
                     </div>
                 </div>
                 
-                <!-- RESUMO ARs e RMs -->
+                <!-- RESUMO ARs e RMs - CARDS -->
                 <div class="section-title">🔧 RESUMO DE ARs E RMs</div>
                 <div class="ars-rms-cards">
                     <div class="card card-purple">
@@ -6204,6 +6289,24 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
                         <div class="label">🟡 RMs em Aberto</div>
                         <div class="value">{rms_abertos}</div>
                     </div>
+                </div>
+                
+                <!-- TABELA DE ARs E RMs -->
+                <div style="margin-top: 5px;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th style="width: 10%;">Tipo</th>
+                                <th style="width: 12%;">Nº</th>
+                                <th style="width: 30%;">Ref. (AR) / Equip. (RM)</th>
+                                <th style="width: 30%;">Equip. (RM) / Ref. (AR)</th>
+                                <th style="width: 18%;">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {tabela_ars_rms}
+                        </tbody>
+                    </table>
                 </div>
                 
                 <!-- RESUMO EXECUTIVO -->
@@ -6229,9 +6332,31 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
                     </div>
                 </div>
                 
+                <!-- ASSINATURA ÚNICA CENTRALIZADA -->
+                <div class="assinatura-section">
+                    <div class="titulo">📝 ASSINATURA DE RESPONSABILIDADE</div>
+                    <div class="linha">
+                        <div class="campo">
+                            <div class="linha-ass">_________________________</div>
+                            <div class="label-ass">Assinatura do Emissor</div>
+                        </div>
+                        <div class="campo">
+                            <div class="linha-ass">_________________________</div>
+                            <div class="label-ass">Assinatura do Supervisor</div>
+                        </div>
+                        <div class="campo">
+                            <div class="linha-ass">_________________________</div>
+                            <div class="label-ass">Assinatura da Qualidade</div>
+                        </div>
+                    </div>
+                    <div class="data">
+                        {data_str} • Luvidarte TRS Dashboard
+                    </div>
+                </div>
+                
                 <!-- FOOTER -->
                 <div class="footer">
-                    Relatório gerado em {datetime.now().strftime('%d/%m/%Y %H:%M:%S')} • Luvidarte TRS Dashboard
+                    Relatório gerado em {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
                 </div>
             </div>
         </body>
@@ -6397,6 +6522,68 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
             st.metric("🟡 RMs em Aberto", rms_abertos)
         
         # ======================
+        # TABELA DE ARs E RMs
+        # ======================
+        st.markdown("---")
+        st.markdown(f"""
+        <div style="font-family: 'Rajdhani', sans-serif; font-size: 16px; font-weight: 600; 
+                    color: {THEME['text_primary']}; margin: 15px 0 10px 0; 
+                    border-bottom: 2px solid {THEME['border_bright']}; padding-bottom: 8px;">
+            📋 LISTA DE ARs E RMs DO DIA
+        </div>
+        """, unsafe_allow_html=True)
+        
+        todos_docs = ars + rms
+        if todos_docs:
+            dados_ars_rms = []
+            for doc in todos_docs:
+                tipo = doc.get('tipo', '')
+                status = str(doc.get('status', '')).upper().strip()
+                
+                if status in ['FINALIZADO', 'FINALIZADA']:
+                    status_display = "✅ FINALIZADO"
+                elif status in ['ABERTO', 'EM ANDAMENTO']:
+                    status_display = "🟡 ABERTO"
+                else:
+                    status_display = "🔴 NÃO RESPONDIDO"
+                
+                if tipo == 'AR':
+                    dados_ars_rms.append({
+                        'Tipo': 'AR',
+                        'Nº': doc.get('numero', '-'),
+                        'Ref. / Equip.': doc.get('referencia', '-'),
+                        'Equip. / Ref.': '-',
+                        'Status': status_display
+                    })
+                else:
+                    dados_ars_rms.append({
+                        'Tipo': 'RM',
+                        'Nº': doc.get('numero', '-'),
+                        'Ref. / Equip.': '-',
+                        'Equip. / Ref.': doc.get('equipamento', '-'),
+                        'Status': status_display
+                    })
+            
+            df_ars_rms = pd.DataFrame(dados_ars_rms)
+            
+            # Aplicar estilo à tabela
+            def style_ars_rms(row):
+                styles = [''] * len(row)
+                status = row['Status']
+                if 'FINALIZADO' in status:
+                    styles[4] = 'color: #28a745; font-weight: bold;'
+                elif 'ABERTO' in status:
+                    styles[4] = 'color: #ffc107; font-weight: bold;'
+                else:
+                    styles[4] = 'color: #dc3545; font-weight: bold;'
+                return styles
+            
+            styled_ars_rms = df_ars_rms.style.apply(style_ars_rms, axis=1)
+            st.dataframe(styled_ars_rms, use_container_width=True, hide_index=True, height=min(400, len(todos_docs) * 35 + 35))
+        else:
+            st.info("📭 Nenhum AR ou RM registrado para esta data.")
+        
+        # ======================
         # CARDS - RESUMO EXECUTIVO
         # ======================
         st.markdown("---")
@@ -6443,6 +6630,42 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
             """, unsafe_allow_html=True)
         
         # ======================
+        # ASSINATURA ÚNICA CENTRALIZADA
+        # ======================
+        st.markdown("---")
+        st.markdown(f"""
+        <div style="text-align: center; margin-top: 30px; padding-top: 15px; border-top: 2px solid #2c3e50;">
+            <div style="font-family: 'Rajdhani', sans-serif; font-size: 16px; font-weight: 700; 
+                        color: {THEME['text_primary']}; margin-bottom: 15px;">
+                📝 ASSINATURA DE RESPONSABILIDADE
+            </div>
+            <div style="display: flex; justify-content: center; gap: 40px; flex-wrap: wrap;">
+                <div style="text-align: center; min-width: 180px;">
+                    <div style="border-bottom: 1px solid #333; padding: 5px 20px; margin: 5px 0; min-width: 150px;">
+                        _________________________
+                    </div>
+                    <div style="font-size: 11px; color: #666;">Assinatura do Emissor</div>
+                </div>
+                <div style="text-align: center; min-width: 180px;">
+                    <div style="border-bottom: 1px solid #333; padding: 5px 20px; margin: 5px 0; min-width: 150px;">
+                        _________________________
+                    </div>
+                    <div style="font-size: 11px; color: #666;">Assinatura do Supervisor</div>
+                </div>
+                <div style="text-align: center; min-width: 180px;">
+                    <div style="border-bottom: 1px solid #333; padding: 5px 20px; margin: 5px 0; min-width: 150px;">
+                        _________________________
+                    </div>
+                    <div style="font-size: 11px; color: #666;">Assinatura da Qualidade</div>
+                </div>
+            </div>
+            <div style="margin-top: 10px; font-size: 12px; color: #555;">
+                {data_str} • Luvidarte TRS Dashboard
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # ======================
         # BOTÃO PARA BAIXAR RELATÓRIO EM HTML
         # ======================
         st.markdown("---")
@@ -6451,6 +6674,8 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
             # Gerar HTML do relatório para download
             html_content = gerar_html_relatorio(
                 producoes_filtradas, 
+                ars,
+                rms,
                 data_fechamento, 
                 turno_label,
                 total_produzido, 
