@@ -5905,13 +5905,13 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
         return ars, rms
     
     # ======================
-    # FUNÇÃO PARA GERAR HTML DO RELATÓRIO PARA DOWNLOAD
+    # FUNÇÃO PARA GERAR HTML DO RELATÓRIO PARA DOWNLOAD (MODO RETRATO)
     # ======================
     def gerar_html_relatorio(producoes, data_fechamento, turno_label, total_produzido, total_meta, 
                              eficiencia, total_setup_min, total_manut_min, total_ars, total_rms, 
                              ars_abertos, rms_abertos, itens_baixa):
         """
-        Gera o HTML do relatório para download
+        Gera o HTML do relatório para download em modo retrato com fontes maiores
         """
         data_str = data_fechamento.strftime("%d/%m/%Y")
         
@@ -5936,25 +5936,29 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
             meta_str = f"{p.get('meta', 0):,}".replace(",", ".")
             produzido_str = f"{p.get('produzido', 0):,}".replace(",", ".")
             data_prod = p.get('data', '').strftime('%d/%m/%Y') if p.get('data') else '-'
+            referencia = p.get('referencia', '-')
+            if len(referencia) > 20:
+                referencia = referencia[:18] + '...'
             
             tabela_linhas += f"""
-            <tr style="background-color: {cor_linha}; color: {cor_texto};">
-                <td style="padding: 8px; border: 1px solid #ddd; text-align: center;">{data_prod}</td>
-                <td style="padding: 8px; border: 1px solid #ddd; text-align: center;">{p.get('inicio', '-')}</td>
-                <td style="padding: 8px; border: 1px solid #ddd; text-align: center;">{p.get('fim', '-')}</td>
-                <td style="padding: 8px; border: 1px solid #ddd; text-align: right;">{meta_str}</td>
-                <td style="padding: 8px; border: 1px solid #ddd; text-align: right;">{produzido_str}</td>
-                <td style="padding: 8px; border: 1px solid #ddd; text-align: center;">{p.get('setup', '-')}</td>
-                <td style="padding: 8px; border: 1px solid #ddd; text-align: center;">{p.get('manut', '-')}</td>
-                <td style="padding: 8px; border: 1px solid #ddd; text-align: center; font-weight: bold;">{trs:.1f}%</td>
-                <td style="padding: 8px; border: 1px solid #ddd; text-align: center; font-size: 24px;">{carinha}</td>
+            <tr style="background-color: {cor_linha}; color: {cor_texto}; font-size: 11px;">
+                <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: center;">{data_prod}</td>
+                <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; font-size: 10px;">{referencia}</td>
+                <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: center;">{p.get('inicio', '-')}</td>
+                <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: center;">{p.get('fim', '-')}</td>
+                <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: right;">{meta_str}</td>
+                <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: right;">{produzido_str}</td>
+                <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: center;">{p.get('setup', '-')}</td>
+                <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: center;">{p.get('manut', '-')}</td>
+                <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; font-weight: bold; font-size: 11px;">{trs:.1f}%</td>
+                <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; font-size: 18px;">{carinha}</td>
             </tr>
             """
         
         if not tabela_linhas:
             tabela_linhas = """
             <tr>
-                <td colspan="9" style="padding: 20px; text-align: center; color: #999;">
+                <td colspan="10" style="padding: 15px; text-align: center; color: #999; font-size: 12px;">
                     Nenhuma produção registrada para este turno/data.
                 </td>
             </tr>
@@ -5974,88 +5978,93 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
             <meta charset="UTF-8">
             <title>Resumo Produção - {data_str}</title>
             <style>
+                @page {{
+                    size: portrait;
+                    margin: 10mm 10mm 10mm 10mm;
+                }}
                 body {{
                     font-family: Arial, sans-serif;
-                    margin: 40px;
-                    padding: 20px;
-                    background-color: #f5f7fa;
+                    margin: 0;
+                    padding: 10px;
+                    background-color: white;
+                    font-size: 11px;
                 }}
                 .container {{
-                    max-width: 1200px;
+                    max-width: 100%;
                     margin: 0 auto;
                     background-color: white;
-                    padding: 30px;
-                    border-radius: 12px;
-                    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
                 }}
                 .header {{
                     background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-                    padding: 25px 30px;
-                    border-radius: 10px;
-                    margin-bottom: 25px;
+                    padding: 12px 20px;
+                    border-radius: 8px;
+                    margin-bottom: 12px;
                     color: white;
                 }}
                 .header h1 {{
                     margin: 0;
-                    font-size: 28px;
+                    font-size: 24px;
                     font-weight: 700;
                     letter-spacing: 0.1em;
                     text-transform: uppercase;
                 }}
                 .header .subtitle {{
-                    font-size: 14px;
+                    font-size: 16px;
                     color: #a0aec0;
                     margin-top: 4px;
+                    font-weight: bold;
                 }}
                 .section-title {{
-                    font-size: 18px;
-                    font-weight: 600;
-                    margin: 25px 0 15px 0;
-                    padding-bottom: 8px;
+                    font-size: 15px;
+                    font-weight: 700;
+                    margin: 12px 0 8px 0;
+                    padding-bottom: 5px;
                     border-bottom: 2px solid #e0e0e0;
                 }}
                 table {{
                     width: 100%;
                     border-collapse: collapse;
-                    margin-bottom: 20px;
-                    font-size: 13px;
+                    margin-bottom: 10px;
+                    font-size: 10px;
                 }}
                 table th {{
                     background-color: #2c3e50;
                     color: white;
-                    padding: 10px;
+                    padding: 5px 4px;
                     border: 1px solid #2c3e50;
                     text-align: center;
+                    font-size: 10px;
+                    font-weight: 700;
                 }}
                 table td {{
-                    padding: 8px;
+                    padding: 4px 4px;
                     border: 1px solid #ddd;
                     text-align: center;
                 }}
                 .cards {{
                     display: grid;
                     grid-template-columns: repeat(5, 1fr);
-                    gap: 15px;
-                    margin-bottom: 20px;
+                    gap: 8px;
+                    margin-bottom: 10px;
                 }}
                 .card {{
                     background: #f8f9fc;
-                    padding: 15px;
-                    border-radius: 8px;
+                    padding: 8px 10px;
+                    border-radius: 6px;
                     border-left: 4px solid #0078D4;
                     text-align: center;
                 }}
                 .card .label {{
-                    font-size: 11px;
+                    font-size: 9px;
                     color: #666;
                     text-transform: uppercase;
                     font-weight: 600;
                     letter-spacing: 0.05em;
                 }}
                 .card .value {{
-                    font-size: 22px;
+                    font-size: 18px;
                     font-weight: 700;
-                    margin-top: 4px;
+                    margin-top: 2px;
                     color: #1a1a2e;
                 }}
                 .card-green {{ border-left-color: #28a745; }}
@@ -6065,48 +6074,59 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
                 .executive-cards {{
                     display: grid;
                     grid-template-columns: repeat(3, 1fr);
-                    gap: 15px;
-                    margin-top: 10px;
+                    gap: 8px;
+                    margin-top: 8px;
                 }}
                 .exec-card {{
                     background: #f8f9fc;
-                    padding: 15px 20px;
-                    border-radius: 8px;
+                    padding: 8px 12px;
+                    border-radius: 6px;
                     border-left: 4px solid #0078D4;
+                    font-size: 10px;
                 }}
                 .exec-card .title {{
-                    font-weight: 600;
-                    font-size: 14px;
-                    margin-bottom: 8px;
+                    font-weight: 700;
+                    font-size: 12px;
+                    margin-bottom: 4px;
                 }}
                 .exec-card .line {{
-                    font-size: 13px;
-                    padding: 2px 0;
+                    font-size: 10px;
+                    padding: 1px 0;
                 }}
                 .footer {{
-                    margin-top: 30px;
-                    padding-top: 15px;
+                    margin-top: 10px;
+                    padding-top: 8px;
                     border-top: 1px solid #e0e0e0;
                     text-align: center;
-                    font-size: 11px;
+                    font-size: 9px;
                     color: #999;
                 }}
                 .badge {{
                     display: inline-block;
-                    padding: 3px 10px;
-                    border-radius: 12px;
-                    font-size: 12px;
+                    padding: 2px 8px;
+                    border-radius: 10px;
+                    font-size: 10px;
                     font-weight: 600;
                 }}
                 .badge-success {{ background-color: #d4edda; color: #155724; }}
                 .badge-warning {{ background-color: #fff3cd; color: #856404; }}
                 .badge-danger {{ background-color: #f8d7da; color: #721c24; }}
+                .ars-rms-cards {{
+                    display: grid;
+                    grid-template-columns: repeat(4, 1fr);
+                    gap: 8px;
+                    margin-bottom: 10px;
+                }}
                 @media print {{
-                    body {{ background-color: white; margin: 20px; }}
+                    body {{ margin: 5mm; padding: 0; }}
                     .container {{ box-shadow: none; }}
                     .header {{ background: #1a1a2e !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
                     .card {{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
                     .exec-card {{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+                    table th {{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+                }}
+                @media screen {{
+                    body {{ padding: 20px; }}
                 }}
             </style>
         </head>
@@ -6123,15 +6143,16 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
                 <table>
                     <thead>
                         <tr>
-                            <th>Data</th>
-                            <th>Início</th>
-                            <th>Fim</th>
-                            <th>Meta</th>
-                            <th>Produzido</th>
-                            <th>Setup</th>
-                            <th>Manutenção</th>
-                            <th>TRS Bruto</th>
-                            <th>Status</th>
+                            <th style="width: 10%;">Data</th>
+                            <th style="width: 15%;">Referência</th>
+                            <th style="width: 8%;">Início</th>
+                            <th style="width: 8%;">Fim</th>
+                            <th style="width: 10%;">Meta</th>
+                            <th style="width: 10%;">Produzido</th>
+                            <th style="width: 8%;">Setup</th>
+                            <th style="width: 8%;">Manut.</th>
+                            <th style="width: 10%;">TRS Bruto</th>
+                            <th style="width: 6%;">Status</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -6143,7 +6164,7 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
                 <div class="section-title">📊 RESUMO DO DIA</div>
                 <div class="cards">
                     <div class="card">
-                        <div class="label">📦 Total Produzido</div>
+                        <div class="label">📦 Produzido</div>
                         <div class="value">{total_produzido_str}</div>
                     </div>
                     <div class="card card-green">
@@ -6155,18 +6176,18 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
                         <div class="value" style="color: {cor_eficiencia};">{eficiencia:.1f}%</div>
                     </div>
                     <div class="card card-red">
-                        <div class="label">🔧 Setup Total</div>
+                        <div class="label">🔧 Setup</div>
                         <div class="value">{minutos_para_horas_str(total_setup_min)}</div>
                     </div>
                     <div class="card card-red">
-                        <div class="label">⚙️ Manutenção Total</div>
+                        <div class="label">⚙️ Manutenção</div>
                         <div class="value">{minutos_para_horas_str(total_manut_min)}</div>
                     </div>
                 </div>
                 
                 <!-- RESUMO ARs e RMs -->
                 <div class="section-title">🔧 RESUMO DE ARs E RMs</div>
-                <div class="cards" style="grid-template-columns: repeat(4, 1fr);">
+                <div class="ars-rms-cards">
                     <div class="card card-purple">
                         <div class="label">📋 Total ARs</div>
                         <div class="value">{total_ars}</div>
@@ -6190,20 +6211,20 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
                 <div class="executive-cards">
                     <div class="exec-card" style="border-left-color: #0078D4;">
                         <div class="title" style="color: #0078D4;">🏭 PRODUÇÃO</div>
-                        <div class="line">• Total Produzido: <b>{total_produzido_str}</b> un</div>
-                        <div class="line">• Meta Total: <b>{total_meta_str}</b> un</div>
-                        <div class="line">• Eficiência Global: <b>{eficiencia:.1f}%</b></div>
+                        <div class="line">• Produzido: <b>{total_produzido_str}</b> un</div>
+                        <div class="line">• Meta: <b>{total_meta_str}</b> un</div>
+                        <div class="line">• Eficiência: <b>{eficiencia:.1f}%</b></div>
                     </div>
                     <div class="exec-card" style="border-left-color: #dc3545;">
                         <div class="title" style="color: #dc3545;">⚠️ PARADAS</div>
-                        <div class="line">• Setup Total: <b>{minutos_para_horas_str(total_setup_min)}</b></div>
-                        <div class="line">• Manutenção Total: <b>{minutos_para_horas_str(total_manut_min)}</b></div>
-                        <div class="line">• Total Paradas: <b>{minutos_para_horas_str(total_setup_min + total_manut_min)}</b></div>
+                        <div class="line">• Setup: <b>{minutos_para_horas_str(total_setup_min)}</b></div>
+                        <div class="line">• Manutenção: <b>{minutos_para_horas_str(total_manut_min)}</b></div>
+                        <div class="line">• Total: <b>{minutos_para_horas_str(total_setup_min + total_manut_min)}</b></div>
                     </div>
                     <div class="exec-card" style="border-left-color: #28a745;">
                         <div class="title" style="color: #28a745;">📊 INDICADORES</div>
-                        <div class="line">• Itens baixa prod.: <b>{itens_baixa}</b></div>
-                        <div class="line">• ARs/RMs do dia: <b>{total_ars + total_rms}</b> ({ars_abertos + rms_abertos} abertos)</div>
+                        <div class="line">• Baixa prod.: <b>{itens_baixa}</b></div>
+                        <div class="line">• ARs/RMs: <b>{total_ars + total_rms}</b> ({ars_abertos + rms_abertos} abertos)</div>
                         <div class="line">• Eficiência: <b>{eficiencia:.1f}%</b></div>
                     </div>
                 </div>
@@ -6290,6 +6311,7 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
                 
                 dados_tabela.append({
                     'Data': p.get('data', '').strftime('%d/%m/%Y') if p.get('data') else '-',
+                    'Referência': p.get('referencia', '-'),
                     'Início': p.get('inicio', '-'),
                     'Fim': p.get('fim', '-'),
                     'Meta': f"{p.get('meta', 0):,}".replace(",", "."),
@@ -6310,14 +6332,14 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
                     if trs_str:
                         trs_val = float(trs_str)
                         if trs_val >= 100:
-                            styles[7] = 'color: #107C10; font-weight: bold; background-color: #d4edda;'
-                            styles[8] = 'font-size: 20px;'
+                            styles[8] = 'color: #107C10; font-weight: bold; background-color: #d4edda;'
+                            styles[9] = 'font-size: 20px;'
                         elif trs_val >= 80:
-                            styles[7] = 'color: #FFB900; font-weight: bold; background-color: #fff3cd;'
-                            styles[8] = 'font-size: 20px;'
+                            styles[8] = 'color: #FFB900; font-weight: bold; background-color: #fff3cd;'
+                            styles[9] = 'font-size: 20px;'
                         else:
-                            styles[7] = 'color: #E81123; font-weight: bold; background-color: #f8d7da;'
-                            styles[8] = 'font-size: 20px;'
+                            styles[8] = 'color: #E81123; font-weight: bold; background-color: #f8d7da;'
+                            styles[9] = 'font-size: 20px;'
                 except:
                     pass
                 return styles
