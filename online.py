@@ -6342,7 +6342,7 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
                         </div>
                         <div class="campo">
                             <div class="linha-ass">_________________________</div>
-                            <div class="label-ass">Assinatura do Supervisor</div>
+                            <div class="label-ass">Assinatura do Líder SGQ</div>
                         </div>
                         <div class="campo">
                             <div class="linha-ass">_________________________</div>
