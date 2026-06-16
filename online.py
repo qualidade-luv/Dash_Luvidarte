@@ -5535,8 +5535,6 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
     """, unsafe_allow_html=True)
 
 # ==================================================================================================
-# FECHAMENTO TURNO - VERSÃO GOOGLE SHEETS (COM TRS BRUTO + ARs/RMs)
-# ==================================================================================================
 # FECHAMENTO TURNO - VERSÃO GOOGLE SHEETS (COM TRS BRUTO + ARs/RMs) - COM RELATÓRIO
 # ==================================================================================================
 elif aba_selecionada == 'FECHAMENTO TURNO':
@@ -5907,7 +5905,322 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
         return ars, rms
     
     # ======================
-    # FUNÇÃO PARA GERAR RELATÓRIO RESUMO
+    # FUNÇÃO PARA GERAR HTML DO RELATÓRIO PARA DOWNLOAD
+    # ======================
+    def gerar_html_relatorio(producoes, data_fechamento, turno_label, total_produzido, total_meta, 
+                             eficiencia, total_setup_min, total_manut_min, total_ars, total_rms, 
+                             ars_abertos, rms_abertos, itens_baixa):
+        """
+        Gera o HTML do relatório para download
+        """
+        data_str = data_fechamento.strftime("%d/%m/%Y")
+        
+        # Gerar linhas da tabela de produção
+        tabela_linhas = ""
+        for p in producoes:
+            trs = p.get('trs_bruto', 0)
+            carinha = get_carinha_trs(trs)
+            
+            # Definir cor da linha baseada no TRS
+            if trs >= 100:
+                cor_linha = "#d4edda"
+                cor_texto = "#155724"
+            elif trs >= 80:
+                cor_linha = "#fff3cd"
+                cor_texto = "#856404"
+            else:
+                cor_linha = "#f8d7da"
+                cor_texto = "#721c24"
+            
+            # Formatar valores
+            meta_str = f"{p.get('meta', 0):,}".replace(",", ".")
+            produzido_str = f"{p.get('produzido', 0):,}".replace(",", ".")
+            data_prod = p.get('data', '').strftime('%d/%m/%Y') if p.get('data') else '-'
+            
+            tabela_linhas += f"""
+            <tr style="background-color: {cor_linha}; color: {cor_texto};">
+                <td style="padding: 8px; border: 1px solid #ddd; text-align: center;">{data_prod}</td>
+                <td style="padding: 8px; border: 1px solid #ddd; text-align: center;">{p.get('inicio', '-')}</td>
+                <td style="padding: 8px; border: 1px solid #ddd; text-align: center;">{p.get('fim', '-')}</td>
+                <td style="padding: 8px; border: 1px solid #ddd; text-align: right;">{meta_str}</td>
+                <td style="padding: 8px; border: 1px solid #ddd; text-align: right;">{produzido_str}</td>
+                <td style="padding: 8px; border: 1px solid #ddd; text-align: center;">{p.get('setup', '-')}</td>
+                <td style="padding: 8px; border: 1px solid #ddd; text-align: center;">{p.get('manut', '-')}</td>
+                <td style="padding: 8px; border: 1px solid #ddd; text-align: center; font-weight: bold;">{trs:.1f}%</td>
+                <td style="padding: 8px; border: 1px solid #ddd; text-align: center; font-size: 24px;">{carinha}</td>
+            </tr>
+            """
+        
+        if not tabela_linhas:
+            tabela_linhas = """
+            <tr>
+                <td colspan="9" style="padding: 20px; text-align: center; color: #999;">
+                    Nenhuma produção registrada para este turno/data.
+                </td>
+            </tr>
+            """
+        
+        # Formatar valores para exibição
+        total_produzido_str = f"{total_produzido:,}".replace(",", ".")
+        total_meta_str = f"{total_meta:,}".replace(",", ".")
+        
+        # Cor da eficiência
+        cor_eficiencia = "#28a745" if eficiencia >= 85 else "#ffc107" if eficiencia >= 70 else "#dc3545"
+        
+        html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <title>Resumo Produção - {data_str}</title>
+            <style>
+                body {{
+                    font-family: Arial, sans-serif;
+                    margin: 40px;
+                    padding: 20px;
+                    background-color: #f5f7fa;
+                }}
+                .container {{
+                    max-width: 1200px;
+                    margin: 0 auto;
+                    background-color: white;
+                    padding: 30px;
+                    border-radius: 12px;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+                }}
+                .header {{
+                    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+                    padding: 25px 30px;
+                    border-radius: 10px;
+                    margin-bottom: 25px;
+                    color: white;
+                }}
+                .header h1 {{
+                    margin: 0;
+                    font-size: 28px;
+                    font-weight: 700;
+                    letter-spacing: 0.1em;
+                    text-transform: uppercase;
+                }}
+                .header .subtitle {{
+                    font-size: 14px;
+                    color: #a0aec0;
+                    margin-top: 4px;
+                }}
+                .section-title {{
+                    font-size: 18px;
+                    font-weight: 600;
+                    margin: 25px 0 15px 0;
+                    padding-bottom: 8px;
+                    border-bottom: 2px solid #e0e0e0;
+                }}
+                table {{
+                    width: 100%;
+                    border-collapse: collapse;
+                    margin-bottom: 20px;
+                    font-size: 13px;
+                }}
+                table th {{
+                    background-color: #2c3e50;
+                    color: white;
+                    padding: 10px;
+                    border: 1px solid #2c3e50;
+                    text-align: center;
+                }}
+                table td {{
+                    padding: 8px;
+                    border: 1px solid #ddd;
+                    text-align: center;
+                }}
+                .cards {{
+                    display: grid;
+                    grid-template-columns: repeat(5, 1fr);
+                    gap: 15px;
+                    margin-bottom: 20px;
+                }}
+                .card {{
+                    background: #f8f9fc;
+                    padding: 15px;
+                    border-radius: 8px;
+                    border-left: 4px solid #0078D4;
+                    text-align: center;
+                }}
+                .card .label {{
+                    font-size: 11px;
+                    color: #666;
+                    text-transform: uppercase;
+                    font-weight: 600;
+                    letter-spacing: 0.05em;
+                }}
+                .card .value {{
+                    font-size: 22px;
+                    font-weight: 700;
+                    margin-top: 4px;
+                    color: #1a1a2e;
+                }}
+                .card-green {{ border-left-color: #28a745; }}
+                .card-red {{ border-left-color: #dc3545; }}
+                .card-yellow {{ border-left-color: #ffc107; }}
+                .card-purple {{ border-left-color: #6f42c1; }}
+                .executive-cards {{
+                    display: grid;
+                    grid-template-columns: repeat(3, 1fr);
+                    gap: 15px;
+                    margin-top: 10px;
+                }}
+                .exec-card {{
+                    background: #f8f9fc;
+                    padding: 15px 20px;
+                    border-radius: 8px;
+                    border-left: 4px solid #0078D4;
+                }}
+                .exec-card .title {{
+                    font-weight: 600;
+                    font-size: 14px;
+                    margin-bottom: 8px;
+                }}
+                .exec-card .line {{
+                    font-size: 13px;
+                    padding: 2px 0;
+                }}
+                .footer {{
+                    margin-top: 30px;
+                    padding-top: 15px;
+                    border-top: 1px solid #e0e0e0;
+                    text-align: center;
+                    font-size: 11px;
+                    color: #999;
+                }}
+                .badge {{
+                    display: inline-block;
+                    padding: 3px 10px;
+                    border-radius: 12px;
+                    font-size: 12px;
+                    font-weight: 600;
+                }}
+                .badge-success {{ background-color: #d4edda; color: #155724; }}
+                .badge-warning {{ background-color: #fff3cd; color: #856404; }}
+                .badge-danger {{ background-color: #f8d7da; color: #721c24; }}
+                @media print {{
+                    body {{ background-color: white; margin: 20px; }}
+                    .container {{ box-shadow: none; }}
+                    .header {{ background: #1a1a2e !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+                    .card {{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+                    .exec-card {{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <!-- HEADER -->
+                <div class="header">
+                    <h1>📊 RESUMO DO DIA</h1>
+                    <div class="subtitle">{data_str} • TURNO: {turno_label}</div>
+                </div>
+                
+                <!-- TABELA DE PRODUÇÃO -->
+                <div class="section-title">📋 REGISTRO DE PRODUÇÃO</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Data</th>
+                            <th>Início</th>
+                            <th>Fim</th>
+                            <th>Meta</th>
+                            <th>Produzido</th>
+                            <th>Setup</th>
+                            <th>Manutenção</th>
+                            <th>TRS Bruto</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {tabela_linhas}
+                    </tbody>
+                </table>
+                
+                <!-- RESUMO DO DIA -->
+                <div class="section-title">📊 RESUMO DO DIA</div>
+                <div class="cards">
+                    <div class="card">
+                        <div class="label">📦 Total Produzido</div>
+                        <div class="value">{total_produzido_str}</div>
+                    </div>
+                    <div class="card card-green">
+                        <div class="label">🎯 Meta</div>
+                        <div class="value">{total_meta_str}</div>
+                    </div>
+                    <div class="card card-yellow">
+                        <div class="label">📈 Eficiência</div>
+                        <div class="value" style="color: {cor_eficiencia};">{eficiencia:.1f}%</div>
+                    </div>
+                    <div class="card card-red">
+                        <div class="label">🔧 Setup Total</div>
+                        <div class="value">{minutos_para_horas_str(total_setup_min)}</div>
+                    </div>
+                    <div class="card card-red">
+                        <div class="label">⚙️ Manutenção Total</div>
+                        <div class="value">{minutos_para_horas_str(total_manut_min)}</div>
+                    </div>
+                </div>
+                
+                <!-- RESUMO ARs e RMs -->
+                <div class="section-title">🔧 RESUMO DE ARs E RMs</div>
+                <div class="cards" style="grid-template-columns: repeat(4, 1fr);">
+                    <div class="card card-purple">
+                        <div class="label">📋 Total ARs</div>
+                        <div class="value">{total_ars}</div>
+                    </div>
+                    <div class="card card-purple">
+                        <div class="label">🔩 Total RMs</div>
+                        <div class="value">{total_rms}</div>
+                    </div>
+                    <div class="card card-yellow">
+                        <div class="label">🟡 ARs em Aberto</div>
+                        <div class="value">{ars_abertos}</div>
+                    </div>
+                    <div class="card card-yellow">
+                        <div class="label">🟡 RMs em Aberto</div>
+                        <div class="value">{rms_abertos}</div>
+                    </div>
+                </div>
+                
+                <!-- RESUMO EXECUTIVO -->
+                <div class="section-title">📋 RESUMO EXECUTIVO</div>
+                <div class="executive-cards">
+                    <div class="exec-card" style="border-left-color: #0078D4;">
+                        <div class="title" style="color: #0078D4;">🏭 PRODUÇÃO</div>
+                        <div class="line">• Total Produzido: <b>{total_produzido_str}</b> un</div>
+                        <div class="line">• Meta Total: <b>{total_meta_str}</b> un</div>
+                        <div class="line">• Eficiência Global: <b>{eficiencia:.1f}%</b></div>
+                    </div>
+                    <div class="exec-card" style="border-left-color: #dc3545;">
+                        <div class="title" style="color: #dc3545;">⚠️ PARADAS</div>
+                        <div class="line">• Setup Total: <b>{minutos_para_horas_str(total_setup_min)}</b></div>
+                        <div class="line">• Manutenção Total: <b>{minutos_para_horas_str(total_manut_min)}</b></div>
+                        <div class="line">• Total Paradas: <b>{minutos_para_horas_str(total_setup_min + total_manut_min)}</b></div>
+                    </div>
+                    <div class="exec-card" style="border-left-color: #28a745;">
+                        <div class="title" style="color: #28a745;">📊 INDICADORES</div>
+                        <div class="line">• Itens baixa prod.: <b>{itens_baixa}</b></div>
+                        <div class="line">• ARs/RMs do dia: <b>{total_ars + total_rms}</b> ({ars_abertos + rms_abertos} abertos)</div>
+                        <div class="line">• Eficiência: <b>{eficiencia:.1f}%</b></div>
+                    </div>
+                </div>
+                
+                <!-- FOOTER -->
+                <div class="footer">
+                    Relatório gerado em {datetime.now().strftime('%d/%m/%Y %H:%M:%S')} • Luvidarte TRS Dashboard
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        
+        return html
+    
+    # ======================
+    # FUNÇÃO PARA GERAR RELATÓRIO RESUMO NA TELA
     # ======================
     def gerar_relatorio_resumo(producoes, ars, rms, turno_selecionado, data_fechamento):
         """
@@ -5941,6 +6254,21 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
             producoes_filtradas = [p for p in producoes if p.get('turno') == turno_selecionado]
         else:
             producoes_filtradas = producoes.copy()
+        
+        # ======================
+        # CALCULAR TOTAIS PARA O RELATÓRIO
+        # ======================
+        total_produzido = sum(p.get('produzido', 0) for p in producoes_filtradas)
+        total_meta = sum(p.get('meta', 0) for p in producoes_filtradas)
+        eficiencia = (total_produzido / total_meta * 100) if total_meta > 0 else 0
+        total_setup_min = sum(str_time_to_minutes_ft(p.get('setup', '')) for p in producoes_filtradas)
+        total_manut_min = sum(str_time_to_minutes_ft(p.get('manut', '')) for p in producoes_filtradas)
+        
+        total_ars = len(ars)
+        total_rms = len(rms)
+        ars_abertos = sum(1 for a in ars if str(a.get('status', '')).upper().strip() in ['ABERTO', 'EM ANDAMENTO'])
+        rms_abertos = sum(1 for r in rms if str(r.get('status', '')).upper().strip() in ['ABERTO', 'EM ANDAMENTO'])
+        itens_baixa = sum(1 for p in producoes_filtradas if (p.get('produzido', 0) or 0) / max(p.get('meta', 1), 1) * 100 < 80)
         
         # ======================
         # TABELA DE PRODUÇÃO
@@ -6011,12 +6339,6 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
         </div>
         """, unsafe_allow_html=True)
         
-        total_produzido = sum(p.get('produzido', 0) for p in producoes_filtradas)
-        total_meta = sum(p.get('meta', 0) for p in producoes_filtradas)
-        eficiencia = (total_produzido / total_meta * 100) if total_meta > 0 else 0
-        total_setup_min = sum(str_time_to_minutes_ft(p.get('setup', '')) for p in producoes_filtradas)
-        total_manut_min = sum(str_time_to_minutes_ft(p.get('manut', '')) for p in producoes_filtradas)
-        
         col_c1, col_c2, col_c3, col_c4, col_c5 = st.columns(5)
         with col_c1:
             st.metric("📦 Total Produzido", f"{total_produzido:,}".replace(",", "."))
@@ -6042,16 +6364,6 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
         </div>
         """, unsafe_allow_html=True)
         
-        # Filtrar ARs e RMs (usando os já carregados)
-        ars_turno = ars.copy()
-        rms_turno = rms.copy()
-        
-        total_ars = len(ars_turno)
-        total_rms = len(rms_turno)
-        
-        ars_abertos = sum(1 for a in ars_turno if str(a.get('status', '')).upper().strip() in ['ABERTO', 'EM ANDAMENTO'])
-        rms_abertos = sum(1 for r in rms_turno if str(r.get('status', '')).upper().strip() in ['ABERTO', 'EM ANDAMENTO'])
-        
         col_a1, col_a2, col_a3, col_a4 = st.columns(4)
         with col_a1:
             st.metric("📋 Total ARs", total_ars)
@@ -6073,9 +6385,6 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
             📋 RESUMO EXECUTIVO
         </div>
         """, unsafe_allow_html=True)
-        
-        # Calcular itens com baixa produtividade
-        itens_baixa = sum(1 for p in producoes_filtradas if (p.get('produzido', 0) or 0) / max(p.get('meta', 1), 1) * 100 < 80)
         
         col_e1, col_e2, col_e3 = st.columns(3)
         with col_e1:
@@ -6112,14 +6421,36 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
             """, unsafe_allow_html=True)
         
         # ======================
-        # BOTÃO PARA IMPRIMIR/BAIXAR RELATÓRIO
+        # BOTÃO PARA BAIXAR RELATÓRIO EM HTML
         # ======================
         st.markdown("---")
         col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
         with col_btn2:
-            if st.button("🖨️ Imprimir Relatório", use_container_width=True, type="primary"):
-                st.info("Para imprimir o relatório, utilize Ctrl+P (ou Cmd+P) no seu navegador.")
-                st.balloons()
+            # Gerar HTML do relatório para download
+            html_content = gerar_html_relatorio(
+                producoes_filtradas, 
+                data_fechamento, 
+                turno_label,
+                total_produzido, 
+                total_meta, 
+                eficiencia, 
+                total_setup_min, 
+                total_manut_min,
+                total_ars, 
+                total_rms, 
+                ars_abertos, 
+                rms_abertos,
+                itens_baixa
+            )
+            
+            st.download_button(
+                label="📥 Baixar Relatório (HTML)",
+                data=html_content,
+                file_name=f"resumo_producao_{data_fechamento.strftime('%Y%m%d')}_{turno_label}.html",
+                mime="text/html",
+                use_container_width=True,
+                type="primary"
+            )
     
     # ======================
     # INTERFACE DO FECHAMENTO TURNO
@@ -6144,18 +6475,14 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
         is_sabado = data_fechamento.weekday() == 5
         if is_sabado:
             opcoes_turno = ["Todos", "Manhã", "Tarde"]
-            turno_selecionado_rel = st.selectbox(
-                "Turno",
-                options=opcoes_turno,
-                key="turno_selecionado_rel"
-            )
         else:
             opcoes_turno = ["Todos", "Manhã", "Tarde", "Noite"]
-            turno_selecionado_rel = st.selectbox(
-                "Turno",
-                options=opcoes_turno,
-                key="turno_selecionado_rel"
-            )
+        
+        turno_selecionado_rel = st.selectbox(
+            "Turno",
+            options=opcoes_turno,
+            key="turno_selecionado_rel"
+        )
     
     with col_data3:
         st.markdown("#### ⚙️ Ações")
@@ -6163,7 +6490,9 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
         with col_btn1:
             gerar_resumo = st.button("📊 Gerar Resumo", use_container_width=True, type="primary")
         with col_btn2:
-            st.button("🔄 Atualizar Dados", use_container_width=True)
+            if st.button("🔄 Atualizar", use_container_width=True):
+                st.cache_data.clear()
+                st.rerun()
     
     st.markdown("<hr>", unsafe_allow_html=True)
     
@@ -6181,6 +6510,7 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
     # ======================
     if gerar_resumo:
         gerar_relatorio_resumo(producoes, ars, rms, turno_selecionado_rel, data_fechamento)
+        st.markdown("<hr>", unsafe_allow_html=True)
     
     # ======================
     # DASHBOARD RESUMIDO (MANTIDO PARA VISUALIZAÇÃO RÁPIDA)
