@@ -2944,7 +2944,7 @@ elif aba_selecionada == 'SOPRO':
 
 
 # ==================================================================================================
-# TÊMPERA (COM CACHE EM ARQUIVO E FALLBACK)
+# TÊMPERA (COM VALIDAÇÃO E CARREGAMENTO CONFIÁVEL)
 # ==================================================================================================
 elif aba_selecionada == 'TÊMPERA':
     ABA = 'TRS_TEMPERA'
@@ -2962,7 +2962,7 @@ elif aba_selecionada == 'TÊMPERA':
     CODIGOS_DEFEITO_REAIS = [2, 3, 4, 5, 6]
 
     # ======================
-    # ARQUIVO DE CACHE LOCAL
+    # ARQUIVO DE CACHE LOCAL (APENAS PARA REDUZIR CHAMADAS)
     # ======================
     CACHE_FILE_TEMPERA = "cache_tempera.pkl"
     
@@ -3142,63 +3142,81 @@ elif aba_selecionada == 'TÊMPERA':
         return df
 
     # ======================
-    # FUNÇÃO PRINCIPAL DE CARREGAMENTO - OTIMIZADA
+    # FUNÇÃO DE CARREGAMENTO COM VALIDAÇÃO
     # ======================
-    def carregar_dados_tempera_otimizado():
+    @retry_on_quota(max_retries=2, delay=3)
+    def carregar_dados_tempera():
         """
-        Carrega dados da têmpera com cache em arquivo e fallback
-        Prioriza o cache local para evitar chamadas à API
+        Carrega dados da têmpera com validação e fallback para cache
         """
-        # 1. TENTAR CARREGAR DO CACHE EM ARQUIVO (mais rápido)
-        df_cache = carregar_cache_tempera()
-        if df_cache is not None and not df_cache.empty:
-            return df_cache
-        
-        # 2. TENTAR CARREGAR DA API (apenas se não houver cache)
+        # 1. TENTAR CARREGAR DA API
         try:
             client = get_gspread_client()
             if client is None:
-                st.warning("⚠️ Não foi possível conectar ao Google Sheets. Usando dados em cache.")
-                return carregar_cache_tempera() or pd.DataFrame()
+                st.error("❌ Não foi possível conectar ao Google Sheets")
+                return pd.DataFrame()
             
-            # Pequeno delay para evitar quota
-            time.sleep(1)
+            # Tentar carregar a planilha
+            try:
+                sheet = client.open_by_key(ID_PLANILHA_TEMPERA).worksheet(ABA)
+            except Exception as e:
+                st.error(f"❌ Erro ao acessar a planilha: {e}")
+                return pd.DataFrame()
             
-            sheet = client.open_by_key(ID_PLANILHA_TEMPERA).worksheet(ABA)
+            # Ler os dados
             todos_dados = sheet.get_all_values()
             
+            # Validar se há dados
             if len(todos_dados) < 2:
-                st.warning("⚠️ Planilha vazia. Usando dados em cache.")
-                return carregar_cache_tempera() or pd.DataFrame()
+                st.warning("⚠️ A planilha está vazia ou não tem dados suficientes.")
+                return pd.DataFrame()
+            
+            # Validar se o cabeçalho existe
+            if not todos_dados[0]:
+                st.warning("⚠️ A planilha não tem cabeçalho.")
+                return pd.DataFrame()
             
             # Processar os dados
             df = processar_dados_tempera(todos_dados)
             
+            # Validar se o processamento gerou dados
             if df.empty:
-                st.warning("⚠️ Nenhum dado processado. Usando dados em cache.")
-                return carregar_cache_tempera() or pd.DataFrame()
+                st.warning("⚠️ Nenhum dado válido encontrado na planilha.")
+                return pd.DataFrame()
             
-            # Salvar em cache para próxima execução
+            # Verificar se há dados para exibir
+            if len(df) == 0:
+                st.warning("⚠️ A planilha não contém registros válidos.")
+                return pd.DataFrame()
+            
+            # Salvar em cache para uso futuro
             salvar_cache_tempera(df)
+            
+            # Mostrar mensagem de sucesso com quantidade de registros
+            st.success(f"✅ Dados carregados com sucesso! {len(df)} registros encontrados.")
+            
             return df
             
         except Exception as e:
-            # Em caso de erro, tentar usar o cache
+            # Tratamento para erro de quota
             if "429" in str(e) or "Quota exceeded" in str(e):
                 st.warning("⚠️ Limite de requisições ao Google Sheets atingido.")
-                df_cache_antigo = carregar_cache_tempera()
-                if df_cache_antigo is not None and not df_cache_antigo.empty:
-                    st.info("📂 Usando dados em cache. Tente novamente em alguns minutos para atualizar.")
-                    return df_cache_antigo
+                # Tentar carregar do cache
+                df_cache = carregar_cache_tempera()
+                if df_cache is not None and not df_cache.empty:
+                    st.info(f"📂 Usando dados em cache ({len(df_cache)} registros).")
+                    return df_cache
                 else:
                     st.error("❌ Sem dados em cache disponíveis. Aguarde alguns minutos e tente novamente.")
                     return pd.DataFrame()
             else:
+                # Outros erros
                 st.error(f"❌ Erro ao carregar dados: {str(e)}")
-                df_cache_antigo = carregar_cache_tempera()
-                if df_cache_antigo is not None and not df_cache_antigo.empty:
-                    st.info("📂 Usando dados em cache devido ao erro.")
-                    return df_cache_antigo
+                # Tentar carregar do cache
+                df_cache = carregar_cache_tempera()
+                if df_cache is not None and not df_cache.empty:
+                    st.info(f"📂 Usando dados em cache devido ao erro ({len(df_cache)} registros).")
+                    return df_cache
                 return pd.DataFrame()
 
     # ======================
@@ -3227,28 +3245,7 @@ elif aba_selecionada == 'TÊMPERA':
         except:
             pass
 
-    with st.spinner("Carregando dados da Têmpera..."):
-        df_base = carregar_dados_tempera_otimizado()
-
-    if df_base.empty:
-        st.warning("""
-        ⚠️ **Não foi possível carregar os dados da Têmpera.**
-        
-        **Possíveis soluções:**
-        1. Aguarde alguns minutos e tente novamente
-        2. Verifique sua conexão com a internet
-        3. Recarregue a página
-        """)
-        
-        # Botão para tentar novamente
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            if st.button("🔄 Tentar Novamente", use_container_width=True):
-                forcar_recarregamento_tempera()
-                st.rerun()
-        st.stop()
-
-    # ── Sidebar filtros ──
+    # Adicionar botão de recarregar no sidebar
     with st.sidebar:
         st.markdown(f"<div style='font-family:JetBrains Mono,monospace;font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:{THEME['accent_purple']};margin:20px 0 10px;border-top:1px solid {THEME['border_bright']};padding-top:16px'>▸ Filtros · Têmpera</div>", unsafe_allow_html=True)
         
@@ -3273,9 +3270,9 @@ elif aba_selecionada == 'TÊMPERA':
         st.markdown("---")
         
         # Botão para forçar recarregamento
-        if st.button("🔄 Recarregar Dados", key="btn_recarregar_tempera", use_container_width=True):
+        if st.button("🔄 Recarregar Dados da Planilha", key="btn_recarregar_tempera", use_container_width=True):
             if forcar_recarregamento_tempera():
-                st.success("✅ Cache limpo! Recarregando dados...")
+                st.success("✅ Cache limpo! Recarregando dados da planilha...")
                 time.sleep(1)
                 st.rerun()
             else:
@@ -3287,6 +3284,28 @@ elif aba_selecionada == 'TÊMPERA':
                 st.caption(f"💾 Cache: {tamanho:.1f} KB")
             except:
                 pass
+
+    # ======================
+    # CARREGAR DADOS
+    # ======================
+    with st.spinner("Carregando dados da Têmpera..."):
+        df_base = carregar_dados_tempera()
+
+    if df_base.empty:
+        st.error("""
+        ❌ **Não foi possível carregar os dados da Têmpera.**
+        
+        **Possíveis causas:**
+        1. A planilha está vazia ou sem dados
+        2. Limite de requisições ao Google Sheets atingido
+        3. Problemas de conexão com a internet
+        
+        **Soluções:**
+        1. Aguarde alguns minutos e clique em "Recarregar Dados da Planilha"
+        2. Verifique se a planilha está acessível
+        3. Verifique sua conexão com a internet
+        """)
+        st.stop()
 
     # ── Aplicar filtros ──
     df = df_base.copy()
