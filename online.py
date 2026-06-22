@@ -2962,7 +2962,7 @@ elif aba_selecionada == 'TÊMPERA':
     CODIGOS_DEFEITO_REAIS = [2, 3, 4, 5, 6]
 
     # ======================
-    # ARQUIVO DE CACHE LOCAL
+    # ARQUIVO DE CACHE LOCAL (APENAS PARA REDUZIR CHAMADAS)
     # ======================
     CACHE_FILE_TEMPERA = "cache_tempera.pkl"
     
@@ -3192,6 +3192,9 @@ elif aba_selecionada == 'TÊMPERA':
             # Salvar em cache para uso futuro
             salvar_cache_tempera(df)
             
+            # Mostrar mensagem de sucesso com quantidade de registros
+            st.success(f"✅ Dados carregados com sucesso! {len(df)} registros encontrados.")
+            
             return df
             
         except Exception as e:
@@ -3230,40 +3233,19 @@ elif aba_selecionada == 'TÊMPERA':
             return False
 
     # ======================
-    # CARREGAR DADOS PRIMEIRO
+    # CARREGAMENTO PRINCIPAL
     # ======================
-    with st.spinner("Carregando dados da Têmpera..."):
-        df_base = carregar_dados_tempera()
+    # Verificar se existe cache e mostrar info
+    cache_existe = os.path.exists(CACHE_FILE_TEMPERA)
+    if cache_existe:
+        try:
+            tempo_modificacao = os.path.getmtime(CACHE_FILE_TEMPERA)
+            tempo_cache = datetime.fromtimestamp(tempo_modificacao)
+            st.sidebar.caption(f"📂 Cache: {tempo_cache.strftime('%d/%m/%Y %H:%M')}")
+        except:
+            pass
 
-    if df_base.empty:
-        st.error("""
-        ❌ **Não foi possível carregar os dados da Têmpera.**
-        
-        **Possíveis causas:**
-        1. A planilha está vazia ou sem dados
-        2. Limite de requisições ao Google Sheets atingido
-        3. Problemas de conexão com a internet
-        
-        **Soluções:**
-        1. Aguarde alguns minutos e clique em "Recarregar Dados da Planilha" no sidebar
-        2. Verifique se a planilha está acessível
-        3. Verifique sua conexão com a internet
-        """)
-        
-        # Botão para tentar novamente
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            if st.button("🔄 Tentar Novamente", use_container_width=True):
-                forcar_recarregamento_tempera()
-                st.rerun()
-        st.stop()
-
-    # Mostrar mensagem de sucesso
-    st.success(f"✅ Dados carregados com sucesso! {len(df_base)} registros encontrados.")
-
-    # ======================
-    # SIDEBAR FILTROS (AGORA DEPOIS DO CARREGAMENTO)
-    # ======================
+    # Adicionar botão de recarregar no sidebar
     with st.sidebar:
         st.markdown(f"<div style='font-family:JetBrains Mono,monospace;font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:{THEME['accent_purple']};margin:20px 0 10px;border-top:1px solid {THEME['border_bright']};padding-top:16px'>▸ Filtros · Têmpera</div>", unsafe_allow_html=True)
         
@@ -3296,13 +3278,34 @@ elif aba_selecionada == 'TÊMPERA':
             else:
                 st.error("❌ Erro ao limpar cache")
         
-        # Informações do cache
         if os.path.exists(CACHE_FILE_TEMPERA):
             try:
                 tamanho = os.path.getsize(CACHE_FILE_TEMPERA) / 1024
                 st.caption(f"💾 Cache: {tamanho:.1f} KB")
             except:
                 pass
+
+    # ======================
+    # CARREGAR DADOS
+    # ======================
+    with st.spinner("Carregando dados da Têmpera..."):
+        df_base = carregar_dados_tempera()
+
+    if df_base.empty:
+        st.error("""
+        ❌ **Não foi possível carregar os dados da Têmpera.**
+        
+        **Possíveis causas:**
+        1. A planilha está vazia ou sem dados
+        2. Limite de requisições ao Google Sheets atingido
+        3. Problemas de conexão com a internet
+        
+        **Soluções:**
+        1. Aguarde alguns minutos e clique em "Recarregar Dados da Planilha"
+        2. Verifique se a planilha está acessível
+        3. Verifique sua conexão com a internet
+        """)
+        st.stop()
 
     # ── Aplicar filtros ──
     df = df_base.copy()
