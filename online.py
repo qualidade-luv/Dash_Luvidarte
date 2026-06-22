@@ -8194,6 +8194,38 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
     ABA_HABILIDADES = 'HABILIDADES'
     
     # ======================
+    # COLUNAS ESPECÍFICAS DA PLANILHA
+    # ======================
+    # Hard Skills (lado esquerdo)
+    HARD_SKILLS = [
+        'LER_PLANTAS_TECNICAS',
+        'INSPECAO_VISUAL',
+        'CHOQUE_TERMICO',
+        'MENTORIA',
+        'NORMAS_QUALIDADE',
+        'SITEMA_ERP',
+        'EXPEDICAO',
+        'TRS',
+        'OPERACAO_MAQUINA',
+        'PLANTAS_TECNICAS'
+    ]
+    
+    # Soft Skills (lado direito)
+    SOFT_SKILLS = [
+        'COMUNICACAO',
+        'LIDERANCA',
+        'TRABALHO_EQUIPE',
+        'CRIATIVIDADE',
+        'RESOLUCAO_PROBLEMAS',
+        'ADAPTABILIDADE',
+        'AGILIDADE',
+        'INTELIGENCIA_EMOCIONAL',
+        'ASSIDUIDADE',
+        'PONTUALIDADE',
+        'PROATIVIDADE'
+    ]
+    
+    # ======================
     # FUNÇÃO PARA CARREGAR DADOS DA PLANILHA
     # ======================
     @retry_on_quota()
@@ -8206,7 +8238,7 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
             client = get_gspread_client()
             if client is None:
                 st.error("❌ Erro ao conectar ao Google Sheets")
-                return pd.DataFrame()
+                return pd.DataFrame(), [], []
             
             # Abrir planilha de Habilidades
             spreadsheet = client.open_by_key(ID_PLANILHA_HABILIDADES)
@@ -8216,14 +8248,14 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
                 sheet = spreadsheet.worksheet(ABA_HABILIDADES)
             except Exception as e:
                 st.error(f"❌ Aba '{ABA_HABILIDADES}' não encontrada na planilha. Erro: {e}")
-                return pd.DataFrame()
+                return pd.DataFrame(), [], []
             
             # Ler todos os dados
             todos_dados = sheet.get_all_values()
             
             if len(todos_dados) < 2:
                 st.info("📭 Nenhum dado encontrado na planilha.")
-                return pd.DataFrame()
+                return pd.DataFrame(), [], []
             
             # Cabeçalho na primeira linha
             cabecalho = todos_dados[0]
@@ -8232,57 +8264,61 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
             # Criar DataFrame
             df = pd.DataFrame(valores, columns=cabecalho)
             
-            # Limpar nomes das colunas
+            # Limpar nomes das colunas (remover espaços e acentos)
             df.columns = df.columns.str.strip().str.upper()
+            df.columns = df.columns.str.replace(' ', '_')
+            df.columns = df.columns.str.replace('Ç', 'C')
+            df.columns = df.columns.str.replace('Ã', 'A')
+            df.columns = df.columns.str.replace('Á', 'A')
+            df.columns = df.columns.str.replace('É', 'E')
+            df.columns = df.columns.str.replace('Í', 'I')
+            df.columns = df.columns.str.replace('Ó', 'O')
+            df.columns = df.columns.str.replace('Ú', 'U')
             
-            # Mapeamento de colunas esperadas (ajuste conforme sua planilha)
-            # Hard Skills (lado esquerdo)
-            colunas_hard = [
-                'PRODUÇÃO', 'MANUTENÇÃO', 'QUALIDADE', 'FERRAMENTARIA', 
-                'ELÉTRICA', 'MECÂNICA', 'PNEUMÁTICA', 'HIDRÁULICA',
-                'SOLDAGEM', 'USINAGEM', 'PROGRAMAÇÃO', 'AUTOMAÇÃO',
-                'INSTRUMENTAÇÃO', 'CALIBRAÇÃO', 'METROLOGIA', 'PROJETOS',
-                'CAD', 'CAM', 'CNC', 'ROBÓTICA'
-            ]
+            # Mapeamento de colunas esperadas
+            colunas_esperadas = ['COLABORADOR', 'FUNCAO', 'TURNO', 'SETOR'] + HARD_SKILLS + SOFT_SKILLS
             
-            # Soft Skills (lado direito)
-            colunas_soft = [
-                'COMUNICAÇÃO', 'LIDERANÇA', 'TRABALHO EM EQUIPE', 'RESOLUÇÃO DE PROBLEMAS',
-                'PENSAMENTO CRÍTICO', 'CRIATIVIDADE', 'INTELIGÊNCIA EMOCIONAL',
-                'EMPATIA', 'RESILIÊNCIA', 'GESTÃO DE TEMPO', 'ORGANIZAÇÃO',
-                'ADAPTABILIDADE', 'TOMADA DE DECISÃO', 'NEGOCIAÇÃO', 'FEEDBACK',
-                'MENTORIA', 'INOVAÇÃO', 'VISÃO SISTÊMICA', 'PROATIVIDADE', 'ÉTICA'
-            ]
+            # Verificar quais colunas existem
+            colunas_existentes = [col for col in colunas_esperadas if col in df.columns]
             
-            # Identificar quais colunas existem
-            hard_existentes = [col for col in colunas_hard if col in df.columns]
-            soft_existentes = [col for col in colunas_soft if col in df.columns]
+            if not colunas_existentes:
+                st.error("❌ Nenhuma coluna esperada encontrada na planilha.")
+                st.write("Colunas encontradas:", list(df.columns)[:10])
+                return pd.DataFrame(), [], []
             
-            # Se não encontrar as colunas, usar todas as colunas numéricas como habilidades
-            if not hard_existentes and not soft_existentes:
-                # Tentar identificar colunas numéricas comuns
-                colunas_numericas = ['PRODUÇÃO', 'MANUTENÇÃO', 'QUALIDADE', 'COMUNICAÇÃO', 'LIDERANÇA']
-                hard_existentes = [col for col in colunas_numericas if col in df.columns]
-                soft_existentes = [col for col in colunas_numericas if col in df.columns]
+            # Manter apenas colunas existentes
+            df = df[colunas_existentes]
             
-            # Converter colunas numéricas
-            for col in hard_existentes + soft_existentes:
+            # Converter colunas numéricas (Hard e Soft Skills)
+            for col in HARD_SKILLS + SOFT_SKILLS:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-            
-            # Garantir que as colunas básicas existem
-            colunas_basicas = ['COLABORADOR', 'FUNÇÃO', 'TURNO', 'SETOR']
-            for col in colunas_basicas:
-                if col not in df.columns:
-                    df[col] = ''
+                    # Limitar entre 0 e 10
+                    df[col] = df[col].clip(0, 10)
             
             # Remover linhas sem colaborador
-            df = df[df['COLABORADOR'].astype(str).str.strip() != '']
+            if 'COLABORADOR' in df.columns:
+                df = df[df['COLABORADOR'].astype(str).str.strip() != '']
+                df = df[df['COLABORADOR'].astype(str).str.strip() != 'nan']
+            else:
+                st.warning("⚠️ Coluna 'COLABORADOR' não encontrada na planilha.")
+                return pd.DataFrame(), [], []
             
             # Padronizar turno
             if 'TURNO' in df.columns:
                 df['TURNO'] = df['TURNO'].astype(str).str.strip().str.upper()
                 df['TURNO'] = df['TURNO'].apply(lambda x: 'M' if x in ['M', 'MANHÃ', 'MANHA'] else 'T' if x in ['T', 'TARDE'] else 'N' if x in ['N', 'NOITE'] else x)
+            
+            # Padronizar função e setor
+            if 'FUNCAO' in df.columns:
+                df['FUNCAO'] = df['FUNCAO'].astype(str).str.strip()
+            
+            if 'SETOR' in df.columns:
+                df['SETOR'] = df['SETOR'].astype(str).str.strip()
+            
+            # Identificar quais Hard Skills existem
+            hard_existentes = [col for col in HARD_SKILLS if col in df.columns]
+            soft_existentes = [col for col in SOFT_SKILLS if col in df.columns]
             
             return df, hard_existentes, soft_existentes
             
@@ -8291,7 +8327,7 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
             return pd.DataFrame(), [], []
     
     # ======================
-    # FUNÇÃO PARA CRIAR GRÁFICO DE TEIA
+    # FUNÇÃO PARA CRIAR GRÁFICO DE TEIA (RADAR) COM FORMATO ESTILIZADO
     # ======================
     def criar_grafico_teia(colaborador_data, nome, funcao, turno, setor, hard_cols, soft_cols):
         """
@@ -8307,14 +8343,16 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
             return None
         
         # Criar figura com dois subplots lado a lado
-        fig, (ax_left, ax_right) = plt.subplots(1, 2, figsize=(14, 7), 
-                                                 subplot_kw=dict(projection='polar'),
-                                                 facecolor=THEME['bg_card'])
-        
+        fig = plt.figure(figsize=(16, 8), facecolor=THEME['bg_card'])
         fig.patch.set_facecolor(THEME['bg_card'])
         
+        # Criar gridspec para melhor controle
+        gs = fig.add_gridspec(1, 2, width_ratios=[1, 1], wspace=0.3)
+        
         # ===== GRÁFICO ESQUERDO - HARD SKILLS =====
-        # Hard Skills - lado esquerdo
+        ax_left = fig.add_subplot(gs[0, 0], projection='polar')
+        ax_left.set_facecolor(THEME['bg_card'])
+        
         if hard_cols and sum(hard_values) > 0:
             # Número de variáveis
             N_left = len(hard_cols)
@@ -8326,41 +8364,54 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
             # Valores
             values_left = hard_values + hard_values[:1]
             
-            # Plotar
-            ax_left.plot(angles_left, values_left, 'o-', linewidth=2, 
-                        color=THEME['accent_cyan'], alpha=0.9)
+            # Plotar com estilo
+            ax_left.plot(angles_left, values_left, 'o-', linewidth=2.5, 
+                        color=THEME['accent_cyan'], alpha=0.9, label='Hard Skills')
             ax_left.fill(angles_left, values_left, alpha=0.25, color=THEME['accent_cyan'])
             
             # Configurar labels
+            # Formatar nomes das colunas para exibição (remover underline e capitalizar)
+            labels_left = []
+            for col in hard_cols:
+                label = col.replace('_', ' ').title()
+                labels_left.append(label)
+            
             ax_left.set_xticks(angles_left[:-1])
-            ax_left.set_xticklabels(hard_cols, fontsize=9, fontweight='bold')
+            ax_left.set_xticklabels(labels_left, fontsize=8, fontweight='bold')
             
             # Limites
             ax_left.set_ylim(0, 10)
             ax_left.set_yticks([2, 4, 6, 8, 10])
-            ax_left.set_yticklabels(['2', '4', '6', '8', '10'], fontsize=8)
+            ax_left.set_yticklabels(['2', '4', '6', '8', '10'], fontsize=7)
             ax_left.grid(True, alpha=0.3)
-            
-            # Título
-            ax_left.set_title('🛠️ HARD SKILLS', fontsize=14, fontweight='bold', 
-                             color=THEME['accent_cyan'], pad=20)
             
             # Adicionar valores nas pontas
             for i, (angle, value) in enumerate(zip(angles_left[:-1], hard_values)):
                 if value > 0:
                     ax_left.annotate(f'{value:.0f}', 
                                     xy=(angle, value),
-                                    xytext=(0, 10),
+                                    xytext=(0, 8),
                                     textcoords='offset points',
                                     ha='center', va='center',
                                     fontsize=8, fontweight='bold',
                                     color=THEME['text_primary'],
-                                    bbox=dict(boxstyle='round,pad=0.3', 
-                                             facecolor='white', alpha=0.8,
-                                             edgecolor=THEME['border_bright']))
+                                    bbox=dict(boxstyle='round,pad=0.2', 
+                                             facecolor='white', alpha=0.85,
+                                             edgecolor=THEME['accent_cyan'],
+                                             linewidth=1))
+        else:
+            ax_left.text(0.5, 0.5, 'Sem Hard Skills', 
+                        transform=ax_left.transAxes, ha='center', va='center',
+                        fontsize=12, color='gray')
+        
+        # Título do gráfico esquerdo
+        ax_left.set_title('🛠️ HARD SKILLS', fontsize=14, fontweight='bold', 
+                         color=THEME['accent_cyan'], pad=25)
         
         # ===== GRÁFICO DIREITO - SOFT SKILLS =====
-        # Soft Skills - lado direito
+        ax_right = fig.add_subplot(gs[0, 1], projection='polar')
+        ax_right.set_facecolor(THEME['bg_card'])
+        
         if soft_cols and sum(soft_values) > 0:
             # Número de variáveis
             N_right = len(soft_cols)
@@ -8372,50 +8423,70 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
             # Valores
             values_right = soft_values + soft_values[:1]
             
-            # Plotar
-            ax_right.plot(angles_right, values_right, 'o-', linewidth=2, 
-                         color=THEME['accent_purple'], alpha=0.9)
+            # Plotar com estilo
+            ax_right.plot(angles_right, values_right, 'o-', linewidth=2.5, 
+                         color=THEME['accent_purple'], alpha=0.9, label='Soft Skills')
             ax_right.fill(angles_right, values_right, alpha=0.25, color=THEME['accent_purple'])
             
             # Configurar labels
+            # Formatar nomes das colunas para exibição (remover underline e capitalizar)
+            labels_right = []
+            for col in soft_cols:
+                label = col.replace('_', ' ').title()
+                labels_right.append(label)
+            
             ax_right.set_xticks(angles_right[:-1])
-            ax_right.set_xticklabels(soft_cols, fontsize=9, fontweight='bold')
+            ax_right.set_xticklabels(labels_right, fontsize=8, fontweight='bold')
             
             # Limites
             ax_right.set_ylim(0, 10)
             ax_right.set_yticks([2, 4, 6, 8, 10])
-            ax_right.set_yticklabels(['2', '4', '6', '8', '10'], fontsize=8)
+            ax_right.set_yticklabels(['2', '4', '6', '8', '10'], fontsize=7)
             ax_right.grid(True, alpha=0.3)
-            
-            # Título
-            ax_right.set_title('💡 SOFT SKILLS', fontsize=14, fontweight='bold', 
-                              color=THEME['accent_purple'], pad=20)
             
             # Adicionar valores nas pontas
             for i, (angle, value) in enumerate(zip(angles_right[:-1], soft_values)):
                 if value > 0:
                     ax_right.annotate(f'{value:.0f}', 
                                     xy=(angle, value),
-                                    xytext=(0, 10),
+                                    xytext=(0, 8),
                                     textcoords='offset points',
                                     ha='center', va='center',
                                     fontsize=8, fontweight='bold',
                                     color=THEME['text_primary'],
-                                    bbox=dict(boxstyle='round,pad=0.3', 
-                                             facecolor='white', alpha=0.8,
-                                             edgecolor=THEME['border_bright']))
+                                    bbox=dict(boxstyle='round,pad=0.2', 
+                                             facecolor='white', alpha=0.85,
+                                             edgecolor=THEME['accent_purple'],
+                                             linewidth=1))
+        else:
+            ax_right.text(0.5, 0.5, 'Sem Soft Skills', 
+                        transform=ax_right.transAxes, ha='center', va='center',
+                        fontsize=12, color='gray')
         
-        # Título principal da figura
+        # Título do gráfico direito
+        ax_right.set_title('💡 SOFT SKILLS', fontsize=14, fontweight='bold', 
+                          color=THEME['accent_purple'], pad=25)
+        
+        # ===== TÍTULO PRINCIPAL DA FIGURA =====
         titulo_principal = f"👤 {nome}"
-        if funcao:
-            titulo_principal += f" | {funcao}"
-        if turno:
-            titulo_principal += f" | Turno: {turno}"
-        if setor:
-            titulo_principal += f" | Setor: {setor}"
+        if funcao and str(funcao).strip() and str(funcao).strip().lower() != 'nan':
+            titulo_principal += f" | 📋 {funcao}"
+        if turno and str(turno).strip() and str(turno).strip().lower() != 'nan':
+            titulo_principal += f" | 🕐 Turno: {turno}"
+        if setor and str(setor).strip() and str(setor).strip().lower() != 'nan':
+            titulo_principal += f" | 🏢 {setor}"
         
-        fig.suptitle(titulo_principal, fontsize=16, fontweight='bold', 
+        fig.suptitle(titulo_principal, fontsize=18, fontweight='bold', 
                     color=THEME['text_primary'], y=1.02)
+        
+        # Adicionar legenda com médias
+        media_hard = sum(hard_values) / len(hard_values) if hard_values else 0
+        media_soft = sum(soft_values) / len(soft_values) if soft_values else 0
+        
+        fig.text(0.25, 0.02, f'📊 Média Hard Skills: {media_hard:.1f}/10', 
+                fontsize=11, ha='center', color=THEME['accent_cyan'], fontweight='bold')
+        fig.text(0.75, 0.02, f'📊 Média Soft Skills: {media_soft:.1f}/10', 
+                fontsize=11, ha='center', color=THEME['accent_purple'], fontweight='bold')
         
         plt.tight_layout()
         return fig
@@ -8444,36 +8515,49 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
         """, unsafe_allow_html=True)
         
         # Filtro de Colaborador
-        colaboradores = sorted(df['COLABORADOR'].dropna().unique())
-        colaborador_selecionado = st.selectbox(
-            "👤 Colaborador", 
-            options=["(Todos)"] + colaboradores,
-            key="habilidade_colaborador"
-        )
+        if 'COLABORADOR' in df.columns:
+            colaboradores = sorted([str(c) for c in df['COLABORADOR'].dropna().unique() if str(c).strip() and str(c).strip().lower() != 'nan'])
+            colaborador_selecionado = st.selectbox(
+                "👤 Colaborador", 
+                options=["(Todos)"] + colaboradores,
+                key="habilidade_colaborador"
+            )
+        else:
+            colaborador_selecionado = "(Todos)"
+            st.warning("⚠️ Coluna 'COLABORADOR' não encontrada")
         
         # Filtro de Turno
-        turnos = sorted(df['TURNO'].dropna().unique())
-        turno_selecionado = st.selectbox(
-            "🕐 Turno", 
-            options=["(Todos)"] + [str(t) for t in turnos],
-            key="habilidade_turno"
-        )
+        if 'TURNO' in df.columns:
+            turnos = sorted([str(t) for t in df['TURNO'].dropna().unique() if str(t).strip() and str(t).strip().lower() != 'nan'])
+            turno_selecionado = st.selectbox(
+                "🕐 Turno", 
+                options=["(Todos)"] + turnos,
+                key="habilidade_turno"
+            )
+        else:
+            turno_selecionado = "(Todos)"
         
         # Filtro de Função
-        funcoes = sorted(df['FUNÇÃO'].dropna().unique())
-        funcao_selecionada = st.selectbox(
-            "📋 Função", 
-            options=["(Todos)"] + [str(f) for f in funcoes],
-            key="habilidade_funcao"
-        )
+        if 'FUNCAO' in df.columns:
+            funcoes = sorted([str(f) for f in df['FUNCAO'].dropna().unique() if str(f).strip() and str(f).strip().lower() != 'nan'])
+            funcao_selecionada = st.selectbox(
+                "📋 Função", 
+                options=["(Todos)"] + funcoes,
+                key="habilidade_funcao"
+            )
+        else:
+            funcao_selecionada = "(Todos)"
         
         # Filtro de Setor
-        setores = sorted(df['SETOR'].dropna().unique())
-        setor_selecionado = st.selectbox(
-            "🏢 Setor", 
-            options=["(Todos)"] + [str(s) for s in setores],
-            key="habilidade_setor"
-        )
+        if 'SETOR' in df.columns:
+            setores = sorted([str(s) for s in df['SETOR'].dropna().unique() if str(s).strip() and str(s).strip().lower() != 'nan'])
+            setor_selecionado = st.selectbox(
+                "🏢 Setor", 
+                options=["(Todos)"] + setores,
+                key="habilidade_setor"
+            )
+        else:
+            setor_selecionado = "(Todos)"
         
         st.markdown("---")
         st.caption("📌 Selecione um colaborador ou use filtros para refinar")
@@ -8491,16 +8575,16 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
     df_filtrado = df.copy()
     
     if colaborador_selecionado != "(Todos)":
-        df_filtrado = df_filtrado[df_filtrado['COLABORADOR'] == colaborador_selecionado]
+        df_filtrado = df_filtrado[df_filtrado['COLABORADOR'].astype(str).str.strip() == colaborador_selecionado]
     
     if turno_selecionado != "(Todos)":
-        df_filtrado = df_filtrado[df_filtrado['TURNO'].astype(str) == turno_selecionado]
+        df_filtrado = df_filtrado[df_filtrado['TURNO'].astype(str).str.strip() == turno_selecionado]
     
     if funcao_selecionada != "(Todos)":
-        df_filtrado = df_filtrado[df_filtrado['FUNÇÃO'].astype(str) == funcao_selecionada]
+        df_filtrado = df_filtrado[df_filtrado['FUNCAO'].astype(str).str.strip() == funcao_selecionada]
     
     if setor_selecionado != "(Todos)":
-        df_filtrado = df_filtrado[df_filtrado['SETOR'].astype(str) == setor_selecionado]
+        df_filtrado = df_filtrado[df_filtrado['SETOR'].astype(str).str.strip() == setor_selecionado]
     
     # ======================
     # KPIS
@@ -8536,7 +8620,7 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
         # Mostrar gráfico de teia do colaborador específico
         row = df_filtrado.iloc[0]
         nome = row.get('COLABORADOR', 'Não definido')
-        funcao = row.get('FUNÇÃO', '')
+        funcao = row.get('FUNCAO', '')
         turno = row.get('TURNO', '')
         setor = row.get('SETOR', '')
         
@@ -8559,10 +8643,13 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
             for col in hard_cols + soft_cols:
                 valor = row.get(col, 0)
                 if valor > 0:
+                    # Formatar nome da habilidade para exibição
+                    nome_habilidade = col.replace('_', ' ').title()
+                    tipo = '🛠️ Hard Skill' if col in hard_cols else '💡 Soft Skill'
                     dados_habilidades.append({
-                        'Habilidade': col,
+                        'Habilidade': nome_habilidade,
                         'Nível': f"{valor:.0f}/10",
-                        'Tipo': 'Hard Skill' if col in hard_cols else 'Soft Skill'
+                        'Tipo': tipo
                     })
             
             if dados_habilidades:
@@ -8578,13 +8665,13 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
         st.markdown(f"### 📊 Gráficos de Habilidades por Colaborador")
         st.caption(f"Exibindo {len(df_filtrado)} colaboradores")
         
-        # Número de colunas por linha (2 gráficos por linha)
-        cols_per_row = 2
+        # Número de colunas por linha (1 gráfico por linha para melhor visualização)
+        cols_per_row = 1
         
         # Criar uma lista de índices para iterar
         indices = list(range(len(df_filtrado)))
         
-        # Agrupar de 2 em 2
+        # Agrupar de 1 em 1
         for i in range(0, len(indices), cols_per_row):
             # Criar colunas
             cols = st.columns(cols_per_row)
@@ -8595,7 +8682,7 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
                 if idx < len(df_filtrado):
                     row = df_filtrado.iloc[idx]
                     nome = row.get('COLABORADOR', 'Não definido')
-                    funcao = row.get('FUNÇÃO', '')
+                    funcao = row.get('FUNCAO', '')
                     turno = row.get('TURNO', '')
                     setor = row.get('SETOR', '')
                     
@@ -8615,7 +8702,7 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
             dados_resumo = []
             for _, row in df_filtrado.iterrows():
                 nome = row.get('COLABORADOR', 'Não definido')
-                funcao = row.get('FUNÇÃO', '')
+                funcao = row.get('FUNCAO', '')
                 turno = row.get('TURNO', '')
                 setor = row.get('SETOR', '')
                 
@@ -8659,6 +8746,9 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
                 df_medias_hard = pd.DataFrame(list(medias_hard.items()), columns=['Habilidade', 'Média'])
                 df_medias_hard = df_medias_hard.sort_values('Média', ascending=False)
                 
+                # Formatar nomes para exibição
+                df_medias_hard['Habilidade'] = df_medias_hard['Habilidade'].str.replace('_', ' ').str.title()
+                
                 fig, ax = plt.subplots(figsize=(8, 5), facecolor=THEME['bg_card'])
                 ax.set_facecolor(THEME['bg_card'])
                 
@@ -8698,6 +8788,9 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
                 df_medias_soft = pd.DataFrame(list(medias_soft.items()), columns=['Habilidade', 'Média'])
                 df_medias_soft = df_medias_soft.sort_values('Média', ascending=False)
                 
+                # Formatar nomes para exibição
+                df_medias_soft['Habilidade'] = df_medias_soft['Habilidade'].str.replace('_', ' ').str.title()
+                
                 fig, ax = plt.subplots(figsize=(8, 5), facecolor=THEME['bg_card'])
                 ax.set_facecolor(THEME['bg_card'])
                 
@@ -8731,19 +8824,29 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
     with st.expander("📋 Matriz de Habilidades - Todos os Colaboradores", expanded=False):
         if not df_filtrado.empty:
             # Selecionar colunas para exibir
-            colunas_base = ['COLABORADOR', 'FUNÇÃO', 'TURNO', 'SETOR']
+            colunas_base = ['COLABORADOR', 'FUNCAO', 'TURNO', 'SETOR']
             colunas_base_existentes = [c for c in colunas_base if c in df_filtrado.columns]
             
-            # Calcular médias
             df_exibicao = df_filtrado[colunas_base_existentes].copy()
             
+            # Renomear colunas para exibição
+            rename_map = {
+                'COLABORADOR': 'Colaborador',
+                'FUNCAO': 'Função',
+                'TURNO': 'Turno',
+                'SETOR': 'Setor'
+            }
+            df_exibicao = df_exibicao.rename(columns={k: v for k, v in rename_map.items() if k in df_exibicao.columns})
+            
+            # Calcular médias
             if hard_cols:
                 df_exibicao['Média Hard Skills'] = df_filtrado[hard_cols].mean(axis=1).round(1)
             if soft_cols:
                 df_exibicao['Média Soft Skills'] = df_filtrado[soft_cols].mean(axis=1).round(1)
             
             # Ordenar por nome
-            df_exibicao = df_exibicao.sort_values('COLABORADOR')
+            if 'Colaborador' in df_exibicao.columns:
+                df_exibicao = df_exibicao.sort_values('Colaborador')
             
             st.dataframe(df_exibicao, use_container_width=True, hide_index=True, height=400)
             
