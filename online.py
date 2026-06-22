@@ -8417,10 +8417,10 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
             else:
                 label.set_color(THEME['accent_purple'])
         
-        # Limites
-        ax.set_ylim(0, 10)
-        ax.set_yticks([2, 4, 6, 8, 10])
-        ax.set_yticklabels(['2', '4', '6', '8', '10'], fontsize=8)
+        # Limites - escala máxima 5
+        ax.set_ylim(0, 5)
+        ax.set_yticks([1, 2, 3, 4, 5])
+        ax.set_yticklabels(['1', '2', '3', '4', '5'], fontsize=8)
         ax.grid(True, alpha=0.3)
         
         # Adicionar valores nas pontas
@@ -8743,7 +8743,7 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
                 ax.set_yticklabels(df_medias_hard['Habilidade'], fontsize=9)
                 ax.set_xlabel('Média', fontsize=10)
                 ax.set_title('Média das Hard Skills', fontweight='bold', fontsize=12)
-                ax.set_xlim(0, 10)
+                ax.set_xlim(0, 5)
                 
                 for bar, val in zip(bars, df_medias_hard['Média']):
                     ax.text(bar.get_width() + 0.1, bar.get_y() + bar.get_height()/2,
