@@ -437,13 +437,15 @@ MARQUEE_CSS = """
     backdrop-filter: blur(5px);
 }
 
-/* Efeito de rolagem - mais lento (45s) e começa já visível */
+/* Efeito de rolagem - da DIREITA para ESQUERDA */
 .marquee-content {
     display: inline-block;
     animation: scrollMarquee 45s linear infinite;
     font-size: 14px;
     font-weight: 600;
     letter-spacing: 1px;
+    /* Começa fora da tela pela DIREITA */
+    transform: translateX(100%);
 }
 
 .marquee-content span {
@@ -451,13 +453,13 @@ MARQUEE_CSS = """
     margin-right: 100px;
 }
 
-/* Animação de rolagem - COMEÇA COM O TEXTO JÁ VISÍVEL */
+/* Animação de rolagem - DA DIREITA PARA ESQUERDA */
 @keyframes scrollMarquee {
     0% {
-        transform: translateX(30%);  /* Começa com 30% visível (aparece imediatamente) */
+        transform: translateX(100%);  /* Começa completamente fora da tela pela DIREITA */
     }
     100% {
-        transform: translateX(-100%);  /* Sai completamente pela esquerda */
+        transform: translateX(-100%);  /* Sai completamente pela ESQUERDA */
     }
 }
 
@@ -525,11 +527,18 @@ ABAS = {
     'TÊMPERA': 'TRS_TEMPERA',
     'AVISO DE REJEIÇÃO': 'AR',
     'REQUISIÇÃO MANUTENÇÃO': 'RM',
-    'FECHAMENTO TURNO': 'FT'
+    'FECHAMENTO TURNO': 'FT',
+    'MANUTENÇÃO PREVENTIVA': 'MP',
+    'RASTREAMENTO DE PRODUÇÃO': 'RP'
 }
 
 CAMINHO_PDF_AR = r"\\srv-luvidarte\dados\DOC\Engenharia_Luvidarte\SGQ - LUVIDARTE - ALTERADAS\0-AVISO DE REJEIÇÃO\1-PDF"
 CAMINHO_PDF_RELATORIO_AR = r"\\srv-luvidarte\dados\DOC\Engenharia_Luvidarte\SGQ - LUVIDARTE - ALTERADAS\0-AVISO DE REJEIÇÃO\2-PDF"
+
+# ID da planilha PREVENTIVA
+ID_PLANILHA_PREVENTIVA = '1FOh8OT5NaqPV3OWZziQLlclwJdSnIdd7qkS1KbbUS40'
+ABA_PREVENTIVA = 'PREVENTIVA'
+ABA_CADASTRO_PREVENTIVA = 'CADASTRO'
 
 EMAIL_CONFIG_AR = {
     "usuario": "erp@luvidarte.com.br",
@@ -618,7 +627,6 @@ def carregar_mensagens_rodape():
         try:
             sheet = spreadsheet.worksheet(ABA_RECADOS)
         except Exception as e:
-            # Se não existir a aba, retorna mensagem padrão
             print(f"Aba '{ABA_RECADOS}' não encontrada na planilha Recados. Erro: {e}")
             return ["📢 Sistema TRS Dashboard - Acompanhamento de Produção"]
         
@@ -645,8 +653,10 @@ def carregar_mensagens_rodape():
             print(f"Colunas 'DATA' ou 'MENSAGEM' não encontradas. Cabeçalho: {cabecalho}")
             return ["📢 Sistema TRS Dashboard - Acompanhamento de Produção"]
         
-        # Data atual para comparação
+        # Data atual para comparação - USANDO APENAS DATA LOCAL
         hoje = datetime.now().date()
+        print(f"Data atual para filtro: {hoje}")  # Debug
+        
         mensagens_validas = []
         
         # Processa as linhas (a partir da linha 1, índice 1)
@@ -661,25 +671,50 @@ def carregar_mensagens_rodape():
             if not mensagem:
                 continue
             
+            print(f"Processando linha: data='{data_str}', mensagem='{mensagem[:50]}'")  # Debug
+            
             # Converte a data da planilha para objeto date
             data_mensagem = None
-            # Tenta vários formatos de data
-            formatos = ["%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%m/%d/%Y"]
-            for fmt in formatos:
-                try:
-                    data_mensagem = datetime.strptime(data_str, fmt).date()
-                    break
-                except:
-                    continue
+            
+            # Formato DD/MM/YYYY (prioritário para datas brasileiras)
+            try:
+                if '/' in data_str:
+                    partes = data_str.split('/')
+                    if len(partes) == 3:
+                        dia = int(partes[0])
+                        mes = int(partes[1])
+                        ano = int(partes[2])
+                        data_mensagem = date(ano, mes, dia)
+                        print(f"  Convertido via DD/MM/YYYY: {data_mensagem}")
+            except Exception as e:
+                print(f"  Erro conversão DD/MM/YYYY: {e}")
+            
+            # Fallback para outros formatos
+            if data_mensagem is None:
+                formatos = ["%Y-%m-%d", "%d-%m-%Y", "%m/%d/%Y"]
+                for fmt in formatos:
+                    try:
+                        data_mensagem = datetime.strptime(data_str, fmt).date()
+                        print(f"  Convertido via {fmt}: {data_mensagem}")
+                        break
+                    except:
+                        continue
             
             # Se conseguiu converter a data e é igual a hoje, adiciona
-            if data_mensagem and data_mensagem == hoje:
-                mensagens_validas.append(mensagem)
+            if data_mensagem:
+                print(f"  Comparando: data_mensagem={data_mensagem} vs hoje={hoje} -> {data_mensagem == hoje}")
+                if data_mensagem == hoje:
+                    mensagens_validas.append(mensagem)
+                    print(f"  ✅ MENSAGEM ADICIONADA: {mensagem[:50]}")
+            else:
+                print(f"  ❌ Falha ao converter data: '{data_str}'")
         
         # Se não encontrou nenhuma mensagem para hoje, retorna mensagem padrão
         if not mensagens_validas:
+            print("Nenhuma mensagem válida encontrada para hoje")
             return ["📢 Sistema TRS Dashboard - Acompanhamento de Produção"]
         
+        print(f"Total de mensagens encontradas: {len(mensagens_validas)}")
         return mensagens_validas
         
     except Exception as e:
@@ -2062,41 +2097,97 @@ if aba_selecionada == 'PRENSADOS':
 
     st.markdown("<hr>", unsafe_allow_html=True)
 
-    # Análise de Paradas
+    # ==================================================================
+    # ANÁLISE DE PARADAS - COM HORAS TRABALHADAS PRODUTIVAS NO PIZZA
+    # ==================================================================
     render_section_header("Análise de Paradas", "▸")
 
-    horas_trabalhadas = 0
-    total_acertos = 0
-    total_manut = 0
-
+    # 1. HORAS TRABALHADAS PRODUTIVAS = soma direta da coluna HORAS TOTAIS
+    horas_trabalhadas_produtivas = 0
     if 'HORAS_TOTAIS_MIN' in df.columns:
-        horas_trabalhadas = df['HORAS_TOTAIS_MIN'].sum()
+        horas_trabalhadas_produtivas = df['HORAS_TOTAIS_MIN'].sum()
     else:
-        dias_uteis = df[~df['IS_SABADO']]['DATA'].nunique() if 'IS_SABADO' in df.columns else 0
-        dias_sabado = df[df['IS_SABADO']]['DATA'].nunique() if 'IS_SABADO' in df.columns else 0
-        horas_trabalhadas = (dias_uteis * 8 * 60) + (dias_sabado * 6 * 60)
+        # Fallback: procurar coluna que contenha 'HORAS TOTAIS' no nome
+        for col in df.columns:
+            col_upper = str(col).upper()
+            if 'HORAS TOTAIS' in col_upper or 'HORA TOTAL' in col_upper:
+                df['HORAS_TOTAIS_MIN'] = df[col].apply(converter_tempo_para_minutos)
+                horas_trabalhadas_produtivas = df['HORAS_TOTAIS_MIN'].sum()
+                break
 
-    total_acertos = df['ACERTOS_MIN_AJUSTADO'].sum() if 'ACERTOS_MIN_AJUSTADO' in df.columns else 0
-    total_manut = df['MANUT_MIN'].sum() if 'MANUT_MIN' in df.columns else 0
-    total_paradas = total_acertos + total_manut
-    horas_produtivas = max(0, horas_trabalhadas - total_paradas)
+    # 2. ERROS DE PROCESSO = soma da coluna ACERTOS (ignorando valores 2:45)
+    total_acertos = 0
+    if 'ACERTOS_MIN' in df.columns:
+        # Aplica a regra: ignorar quando valor for 2:45 (165 minutos)
+        def filtrar_acertos(val):
+            # Se for 165 minutos (2:45), retorna 0
+            if val == 165:
+                return 0
+            return val
+        
+        total_acertos = df['ACERTOS_MIN'].apply(filtrar_acertos).sum()
+    else:
+        # Fallback: procurar coluna que contenha 'ACERTO' no nome
+        for col in df.columns:
+            col_upper = str(col).upper()
+            if 'ACERTO' in col_upper and 'MIN' not in col_upper:
+                df['ACERTOS_MIN'] = df[col].apply(converter_tempo_para_minutos)
+                total_acertos = df['ACERTOS_MIN'].apply(filtrar_acertos).sum()
+                break
 
-    p1, p2, p3, p4 = st.columns(4)
-    with p1: render_kpi_card("Horas Trabalhadas", minutos_para_horas_str(horas_trabalhadas), THEME['accent_cyan'])
-    with p2: render_kpi_card("Acertos", minutos_para_horas_str(total_acertos), THEME['accent_yellow'])
-    with p3: render_kpi_card("Manutenção", minutos_para_horas_str(total_manut), THEME['accent_red'])
-    with p4: render_kpi_card("Horas Produtivas", minutos_para_horas_str(horas_produtivas), THEME['accent_lime'])
+    # 3. MANUTENÇÃO = soma da coluna MANUT.
+    total_manut = 0
+    if 'MANUT_MIN' in df.columns:
+        total_manut = df['MANUT_MIN'].sum()
+    else:
+        # Fallback: procurar coluna que contenha 'MANUT' no nome
+        for col in df.columns:
+            col_upper = str(col).upper()
+            if 'MANUT' in col_upper and 'MIN' not in col_upper:
+                df['MANUT_MIN'] = df[col].apply(converter_tempo_para_minutos)
+                total_manut = df['MANUT_MIN'].sum()
+                break
 
+    # Calcular Horas Produtivas para o gráfico de pizza
+    horas_produtivas = max(0, horas_trabalhadas_produtivas - (total_acertos + total_manut))
+
+    # Exibir APENAS 3 cards (Horas Trabalhadas Produtivas, Erros, Manutenção)
+    p1, p2, p3 = st.columns(3)
+    with p1: 
+        render_kpi_card(
+            "Horas Trabalhadas Produtivas", 
+            minutos_para_horas_str(horas_trabalhadas_produtivas), 
+            THEME['accent_lime']  # COR VERDE
+        )
+    with p2: 
+        render_kpi_card(
+            "Erros Processo", 
+            minutos_para_horas_str(total_acertos), 
+            THEME['accent_yellow']
+        )
+    with p3: 
+        render_kpi_card(
+            "Manutenção", 
+            minutos_para_horas_str(total_manut), 
+            THEME['accent_red']
+        )
+
+    # Gráfico de barras empilhadas: Manual vs Automática
     col1, col2 = st.columns(2)
 
     with col1:
         if 'BOQUETA' in df.columns:
             df_manual_p = df[df['BOQUETA'] == 1]
             df_auto_p = df[df['BOQUETA'] == 2]
-            acertos_m = df_manual_p['ACERTOS_MIN_AJUSTADO'].sum() if 'ACERTOS_MIN_AJUSTADO' in df.columns else 0
-            manut_m = df_manual_p['MANUT_MIN'].sum() if 'MANUT_MIN' in df.columns else 0
-            acertos_a = df_auto_p['ACERTOS_MIN_AJUSTADO'].sum() if 'ACERTOS_MIN_AJUSTADO' in df.columns else 0
-            manut_a = df_auto_p['MANUT_MIN'].sum() if 'MANUT_MIN' in df.columns else 0
+            
+            # Aplicar filtro de 2:45 também para Manual e Automática
+            def filtrar_acertos_maquina(series):
+                return series.apply(lambda x: 0 if x == 165 else x).sum() if len(series) > 0 else 0
+            
+            acertos_m = filtrar_acertos_maquina(df_manual_p['ACERTOS_MIN']) if 'ACERTOS_MIN' in df_manual_p.columns else 0
+            manut_m = df_manual_p['MANUT_MIN'].sum() if 'MANUT_MIN' in df_manual_p.columns else 0
+            acertos_a = filtrar_acertos_maquina(df_auto_p['ACERTOS_MIN']) if 'ACERTOS_MIN' in df_auto_p.columns else 0
+            manut_a = df_auto_p['MANUT_MIN'].sum() if 'MANUT_MIN' in df_auto_p.columns else 0
 
             categorias = ['Manual', 'Automática']
             acertos_v = [acertos_m, acertos_a]
@@ -2107,13 +2198,15 @@ if aba_selecionada == 'PRENSADOS':
 
             x = np.arange(len(categorias))
             w = 0.55
-            ax.bar(x, acertos_v, w, label='Acertos', color=THEME['accent_yellow'], alpha=0.88, edgecolor=THEME['bg_card'], linewidth=1.5)
+            ax.bar(x, acertos_v, w, label='Erros Processo', color=THEME['accent_yellow'], alpha=0.88, edgecolor=THEME['bg_card'], linewidth=1.5)
             ax.bar(x, manut_v, w, bottom=acertos_v, label='Manutenção', color=THEME['accent_red'], alpha=0.88, edgecolor=THEME['bg_card'], linewidth=1.5)
 
             for i, (a, m) in enumerate(zip(acertos_v, manut_v)):
                 total = a + m
-                if a > 0: ax.text(i, a/2, minutos_para_horas_str(a), ha='center', va='center', color='black', fontweight='bold', fontsize=10)
-                if m > 0: ax.text(i, a + m/2, minutos_para_horas_str(m), ha='center', va='center', color='black', fontweight='bold', fontsize=10)
+                if a > 0: 
+                    ax.text(i, a/2, minutos_para_horas_str(a), ha='center', va='center', color='black', fontweight='bold', fontsize=10)
+                if m > 0: 
+                    ax.text(i, a + m/2, minutos_para_horas_str(m), ha='center', va='center', color='black', fontweight='bold', fontsize=10)
                 if total > 0:
                     ax.text(i, total * 1.05, minutos_para_horas_str(total),
                             ha='center', va='bottom', color=THEME['text_primary'], fontweight='bold', fontsize=11)
@@ -2127,38 +2220,253 @@ if aba_selecionada == 'PRENSADOS':
             plt.close(fig)
 
     with col2:
-        if horas_trabalhadas > 0:
-            labels_p = ['Produtivas', 'Acertos', 'Manutenção']
-            vals_p = [horas_produtivas, total_acertos, total_manut]
+        # GRÁFICO DE PIZZA - Usando a SOMA DOS 3 CARDS como 100%
+        # Total = Horas Trabalhadas Produtivas + Erros Processo + Manutenção
+        total_geral = horas_trabalhadas_produtivas + total_acertos + total_manut
+        
+        if total_geral > 0:
+            # Calcular percentuais baseados no total geral (soma dos 3 cards)
+            perc_produtivo = (horas_trabalhadas_produtivas / total_geral * 100)
+            perc_erros = (total_acertos / total_geral * 100)
+            perc_manut = (total_manut / total_geral * 100)
+            
+            labels_p = ['Horas Trabalhadas Produtivas', 'Erros Processo', 'Manutenção']
+            vals_p = [perc_produtivo, perc_erros, perc_manut]
             cores_p = [THEME['accent_lime'], THEME['accent_yellow'], THEME['accent_red']]
-            lf, vf, cf = zip(*[(l, v, c) for l, v, c in zip(labels_p, vals_p, cores_p) if v > 0]) if any(v > 0 for v in vals_p) else ([], [], [])
-
-            if vf:
+            
+            # Filtrar apenas valores > 0 para mostrar no gráfico
+            dados_pizza = [(l, v, c) for l, v, c in zip(labels_p, vals_p, cores_p) if v > 0]
+            
+            if dados_pizza:
+                lf, vf, cf = zip(*dados_pizza)
+                
                 fig, ax = plt.subplots(figsize=(7, 5), facecolor=THEME['bg_card'])
                 fig.patch.set_facecolor(THEME['bg_card'])
                 ax.set_facecolor(THEME['bg_card'])
 
                 wedges, texts, autotexts = ax.pie(
-                    vf, labels=lf, colors=cf,
-                    autopct='%1.1f%%', startangle=90,
+                    vf, 
+                    labels=lf, 
+                    colors=cf,
+                    autopct=lambda pct: f'{pct:.1f}%' if pct > 0.5 else '',
+                    startangle=90,
                     textprops={'color': THEME['text_primary'], 'fontsize': 10},
                     wedgeprops={'edgecolor': THEME['bg_card'], 'linewidth': 2}
                 )
-                for at in autotexts:
-                    at.set_color('black')
-                    at.set_fontweight('bold')
-                    at.set_fontsize(10)
+                
+                for autotext in autotexts:
+                    if autotext.get_text():
+                        autotext.set_color('white')
+                        autotext.set_fontweight('bold')
+                        autotext.set_fontsize(10)
 
+                # Título do gráfico com o total correto
                 ax.set_title(
-                    f"Distribuição do Tempo\n{minutos_para_horas_str(horas_trabalhadas)} trabalhadas",
+                    f"Distribuição do Tempo\nTotal: {minutos_para_horas_str(total_geral)}",
                     fontsize=13, fontweight='bold', color=THEME['text_primary'], pad=14
                 )
-                fig.tight_layout(pad=1.5)
+                
+                fig.tight_layout()
                 st.pyplot(fig)
                 plt.close(fig)
+            else:
+                st.info("Sem dados para exibir no gráfico")
         else:
             st.info("Sem dados de tempo para exibir")
 
+       # ==================================================================
+    # GRÁFICO DE COLUNAS POR TURNO (Horas Trabalhadas, Erros, Manutenção) + TRS (linha)
+    # ==================================================================
+    if not df.empty and 'TURNO' in df.columns:
+        render_section_header("Tempo de Parada x Produtividade (TRS)", "▸")
+        
+        # Mapeamento de turnos
+        mapeamento_turnos = {
+            'M': {'nome': 'Manhã', 'lider': 'Felipe'},
+            'T': {'nome': 'Tarde', 'lider': 'Ubaldo'},
+            'N': {'nome': 'Noite', 'lider': 'Carlos'}
+        }
+        
+        # Ordem dos turnos: M, T, N
+        ordem_turnos = ['M', 'T', 'N']
+        
+        # Calcular dados por turno
+        turno_data = []
+        
+        for turno in ordem_turnos:
+            df_turno = df[df['TURNO'] == turno]
+            
+            if df_turno.empty:
+                turno_data.append({
+                    'Turno': turno,
+                    'TurnoNome': mapeamento_turnos.get(turno, {}).get('nome', turno),
+                    'Lider': mapeamento_turnos.get(turno, {}).get('lider', ''),
+                    'Horas Trabalhadas': 0,
+                    'Erros Processo': 0,
+                    'Manutenção': 0,
+                    'TRS': 0
+                })
+                continue
+            
+            # Calcular horas trabalhadas no turno
+            horas_turno = 0
+            if 'HORAS_TOTAIS_MIN' in df_turno.columns:
+                horas_turno = df_turno['HORAS_TOTAIS_MIN'].sum()
+            else:
+                for col in df_turno.columns:
+                    col_upper = str(col).upper()
+                    if 'HORAS TOTAIS' in col_upper or 'HORA TOTAL' in col_upper:
+                        horas_turno = df_turno[col].apply(converter_tempo_para_minutos).sum()
+                        break
+            
+            # Calcular erros no turno (ignorando 2:45)
+            erros_turno = 0
+            if 'ACERTOS_MIN' in df_turno.columns:
+                def filtrar_acertos_turno(val):
+                    if val == 165:
+                        return 0
+                    return val
+                erros_turno = df_turno['ACERTOS_MIN'].apply(filtrar_acertos_turno).sum()
+            
+            # Calcular manutenção no turno
+            manut_turno = 0
+            if 'MANUT_MIN' in df_turno.columns:
+                manut_turno = df_turno['MANUT_MIN'].sum()
+            
+            # ===== CALCULAR TRS CORRETO (usando a mesma fórmula da seção TRS por Turno) =====
+            # TRS 1ª Escolha = (APROVADO / TRS 100% * 100)
+            total_aprovado = df_turno['APROVADO'].sum() if 'APROVADO' in df_turno.columns else 0
+            total_meta = df_turno['TRS 100%'].sum() if 'TRS 100%' in df_turno.columns else 1
+            trs_correto = (total_aprovado / total_meta * 100) if total_meta > 0 else 0
+            
+            turno_data.append({
+                'Turno': turno,
+                'TurnoNome': mapeamento_turnos.get(turno, {}).get('nome', turno),
+                'Lider': mapeamento_turnos.get(turno, {}).get('lider', ''),
+                'Horas Trabalhadas': horas_turno,
+                'Erros Processo': erros_turno,
+                'Manutenção': manut_turno,
+                'TRS': trs_correto
+            })
+        
+        if turno_data:
+            df_turno_graf = pd.DataFrame(turno_data)
+            
+            # Criar figura com dois eixos Y (barras no esquerdo, linha TRS no direito)
+            fig, ax1 = plt.subplots(figsize=(14, 7), facecolor=THEME['bg_card'])
+            fig.patch.set_facecolor(THEME['bg_card'])
+            
+            # ====================== EIXO ESQUERDO (BARRAS) ======================
+            ax1.set_xlabel("Turno", fontsize=12, fontweight='bold')
+            ax1.set_ylabel("Minutos", fontsize=12, fontweight='bold', color=THEME['text_primary'])
+            ax1.tick_params(axis='y', labelcolor=THEME['text_primary'])
+            ax1.set_facecolor(THEME['bg_card'])
+            ax1.grid(True, alpha=0.3, color=THEME['grid'], linewidth=0.8, linestyle='--')
+            ax1.set_axisbelow(True)
+            
+            # Barras agrupadas
+            x = np.arange(len(df_turno_graf))
+            width = 0.25
+            
+            bars1 = ax1.bar(x - width, df_turno_graf['Horas Trabalhadas'], width, 
+                           label='Horas Trabalhadas', color=THEME['accent_lime'], alpha=0.85, 
+                           edgecolor='white', linewidth=1.5)
+            bars2 = ax1.bar(x, df_turno_graf['Erros Processo'], width, 
+                           label='Erros Processo', color=THEME['accent_yellow'], alpha=0.85, 
+                           edgecolor='white', linewidth=1.5)
+            bars3 = ax1.bar(x + width, df_turno_graf['Manutenção'], width, 
+                           label='Manutenção', color=THEME['accent_red'], alpha=0.85, 
+                           edgecolor='white', linewidth=1.5)
+            
+            # Adicionar valores nas barras
+            for bars in [bars1, bars2, bars3]:
+                for bar in bars:
+                    height = bar.get_height()
+                    if height > 0:
+                        ax1.text(bar.get_x() + bar.get_width()/2., height + 5,
+                                f'{minutos_para_horas_str(int(height))}',
+                                ha='center', va='bottom', fontsize=8, rotation=0, 
+                                color=THEME['text_primary'], fontweight='bold')
+            
+            # Ajustar limite do eixo Y esquerdo
+            max_valor = max(df_turno_graf[['Horas Trabalhadas', 'Erros Processo', 'Manutenção']].max())
+            ax1.set_ylim(0, max_valor * 1.2 if max_valor > 0 else 100)
+            
+            # ====================== EIXO DIREITO (LINHA TRS) ======================
+            ax2 = ax1.twinx()
+            ax2.set_ylabel("TRS 1ª Escolha (%)", fontsize=12, fontweight='bold', color=THEME['accent_purple'])
+            
+            # Plotar linha do TRS (usando o TRS correto)
+            trs_values = df_turno_graf['TRS'].values
+            line = ax2.plot(x, trs_values, marker='o', markersize=10, linewidth=2.5, 
+                           color=THEME['accent_purple'], label='TRS 1ª Escolha (%)',
+                           markerfacecolor=THEME['bg_card'], 
+                           markeredgecolor=THEME['accent_purple'], 
+                           markeredgewidth=2)
+            
+            # Adicionar valores do TRS acima dos pontos
+            for i, (x_pos, trs_val) in enumerate(zip(x, trs_values)):
+                if trs_val > 0:
+                    ax2.annotate(f'{trs_val:.1f}%', 
+                                (x_pos, trs_val),
+                                textcoords="offset points", 
+                                xytext=(0, 12),
+                                ha='center', 
+                                fontsize=10, 
+                                fontweight='bold',
+                                color=THEME['accent_purple'],
+                                bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.8, edgecolor=THEME['accent_purple']))
+            
+            # Configurar eixo Y direito
+            ax2.tick_params(axis='y', labelcolor=THEME['accent_purple'])
+            ax2.set_ylim(0, 105)
+            
+            # ====================== CONFIGURAÇÃO DO EIXO X ======================
+            rotulos_x = [f"{row['Turno']} ({row['TurnoNome']})\n{row['Lider']}" for _, row in df_turno_graf.iterrows()]
+            ax1.set_xticks(x)
+            ax1.set_xticklabels(rotulos_x, fontsize=11, fontweight='bold')
+            
+            # ====================== LEGENDAS ======================
+            lines1, labels1 = ax1.get_legend_handles_labels()
+            lines2, labels2 = ax2.get_legend_handles_labels()
+            ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left', fontsize=10, 
+                      framealpha=0.15, facecolor=THEME['bg_card'], edgecolor=THEME['border_bright'])
+            
+            # ====================== TÍTULO ======================
+            ax1.set_title("Tempo de Parada x Produtividade (TRS)", 
+                         fontsize=16, fontweight='bold', color=THEME['text_primary'], pad=20)
+            
+            # Remover bordas superiores e direita do ax1
+            ax1.spines['top'].set_visible(False)
+            ax2.spines['top'].set_visible(False)
+            ax1.spines['right'].set_visible(False)
+            
+            fig.tight_layout()
+            st.pyplot(fig)
+            plt.close(fig)
+            
+            # Tabela resumo por turno
+            with st.expander("📊 Ver tabela detalhada por Turno"):
+                df_tabela_turno = df_turno_graf.copy()
+                for col in ['Horas Trabalhadas', 'Erros Processo', 'Manutenção']:
+                    df_tabela_turno[col] = df_tabela_turno[col].apply(
+                        lambda x: minutos_para_horas_str(int(x)) if x > 0 else "00:00"
+                    )
+                df_tabela_turno = df_tabela_turno[['Turno', 'TurnoNome', 'Lider', 'Horas Trabalhadas', 'Erros Processo', 'Manutenção', 'TRS']]
+                df_tabela_turno = df_tabela_turno.rename(columns={
+                    'Turno': 'Turno',
+                    'TurnoNome': 'Turno Nome',
+                    'Lider': 'Líder Industrial',
+                    'Horas Trabalhadas': 'Horas Trabalhadas',
+                    'Erros Processo': 'Erros Processo',
+                    'Manutenção': 'Manutenção',
+                    'TRS': 'TRS 1ª Escolha (%)'
+                })
+                df_tabela_turno['TRS 1ª Escolha (%)'] = df_tabela_turno['TRS 1ª Escolha (%)'].apply(lambda x: f"{x:.1f}%")
+                st.dataframe(df_tabela_turno, use_container_width=True, hide_index=True)
+        else:
+            st.info("Sem dados de turno para exibir")    
+            
     st.markdown("<hr>", unsafe_allow_html=True)
 
     # TRS por Turno
@@ -3466,7 +3774,6 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
         </div>
         """, unsafe_allow_html=True)
         
-        # MODIFICAÇÃO: Adicionar a opção "📈 Dashboard AR" ao menu
         menu_ar = st.radio("Opções do AR:", ["📝 Novo Registro", "📊 Visualizar Registros", "🔍 Buscar/Editar/Excluir", "📈 Dashboard AR"], horizontal=True, key="menu_ar_principal")
         
         if 'ar_pdf_bytes' not in st.session_state:
@@ -3505,7 +3812,6 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                 
                 sheet = client.open_by_key(ID_PLANILHA_AR).worksheet(ABA_AR)
                 
-                # Buscar o número na coluna A (primeira coluna)
                 celula = sheet.find(str(numero), in_column=1)
                 if celula:
                     sheet.delete_rows(celula.row)
@@ -3529,12 +3835,10 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                 
                 sheet = client.open_by_key(ID_PLANILHA_AR).worksheet(ABA_AR)
                 
-                # Buscar o número na coluna A
                 celula = sheet.find(str(registro.numero), in_column=1)
                 if celula:
                     linha = celula.row
                     
-                    # Preparar os dados
                     dados = [
                         str(registro.numero),
                         registro.data.strftime("%d/%m/%Y") if registro.data else "",
@@ -3550,7 +3854,6 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                         registro.turno
                     ]
                     
-                    # Atualizar cada célula
                     for col, valor in enumerate(dados, start=1):
                         sheet.update_cell(linha, col, valor)
                     
@@ -3574,10 +3877,8 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                 if not nome_arquivo.lower().endswith('.pdf'):
                     nome_arquivo = nome_arquivo + '.pdf'
                 
-                # Converter PDF para base64 para abrir no navegador
                 pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
                 
-                # Criar HTML com o PDF embutido e botão de impressão
                 html_content = f"""
                 <!DOCTYPE html>
                 <html>
@@ -3658,7 +3959,6 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                     </div>
                     <embed src="data:application/pdf;base64,{pdf_base64}" type="application/pdf">
                     <script>
-                        // Tentar abrir a impressão automaticamente após 1 segundo
                         setTimeout(function() {{
                             window.print();
                         }}, 1000);
@@ -3667,15 +3967,12 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                 </html>
                 """
                 
-                # Salvar HTML temporário
                 temp_html = os.path.join(CAMINHO_PDF_AR, f"temp_print_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html")
                 with open(temp_html, 'w', encoding='utf-8') as f:
                     f.write(html_content)
                 
-                # Abrir no navegador padrão
                 webbrowser.open(f'file://{temp_html}')
                 
-                # Limpar arquivo temporário após alguns segundos
                 import threading
                 def limpar_arquivo():
                     import time
@@ -3708,7 +4005,7 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
             finalizados = len([r for r in registros if r.status == "FINALIZADO"])
             nao_respondidos = len([r for r in registros if r.status == "NÃO RESPONDIDA"])
             
-            # Distribuição por decisão (incluindo NÃO RESPONDIDO)
+            # Distribuição por decisão
             decisao_counts = {}
             for d in OPCOES_DECISAO_AR_MOD:
                 decisao_counts[d] = len([r for r in registros if r.decisao == d])
@@ -3717,6 +4014,16 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
             turno_counts = {}
             for t in OPCOES_TURNO_AR:
                 turno_counts[t] = len([r for r in registros if r.turno == t])
+            
+            # NOVO: Estatísticas por Turno com status (ABERTO, FINALIZADO, NÃO RESPONDIDA)
+            turno_status = {}
+            for t in OPCOES_TURNO_AR:
+                registros_turno = [r for r in registros if r.turno == t]
+                turno_status[t] = {
+                    'ABERTO': len([r for r in registros_turno if r.status == "ABERTO"]),
+                    'FINALIZADO': len([r for r in registros_turno if r.status == "FINALIZADO"]),
+                    'NÃO RESPONDIDA': len([r for r in registros_turno if r.status == "NÃO RESPONDIDA"])
+                }
             
             # Top emissores
             emissor_counts = {}
@@ -3745,6 +4052,45 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
             with col_k5:
                 perc_finalizado = (finalizados / total_registros * 100) if total_registros > 0 else 0
                 st.metric("✅ Taxa Finalização", f"{perc_finalizado:.1f}%")
+            
+            st.markdown("<hr>", unsafe_allow_html=True)
+            
+            # NOVO GRÁFICO: Status por Turno (Barras agrupadas)
+            st.subheader("📊 Status dos ARs por Turno")
+            
+            # Preparar dados para o gráfico de barras agrupadas
+            turnos_lista = list(turno_status.keys())
+            abertos_lista = [turno_status[t]['ABERTO'] for t in turnos_lista]
+            finalizados_lista = [turno_status[t]['FINALIZADO'] for t in turnos_lista]
+            nao_respondidos_lista = [turno_status[t]['NÃO RESPONDIDA'] for t in turnos_lista]
+            
+            fig, ax = plt.subplots(figsize=(10, 6), facecolor=THEME['bg_card'])
+            apply_chart_style(ax, fig, "ARs por Turno e Status", ylabel="Quantidade")
+            
+            x = np.arange(len(turnos_lista))
+            width = 0.25
+            
+            bars1 = ax.bar(x - width, abertos_lista, width, label='🟡 Em Aberto', color='#ffc107', alpha=0.85, edgecolor='white', linewidth=1)
+            bars2 = ax.bar(x, finalizados_lista, width, label='🟢 Finalizados', color='#28a745', alpha=0.85, edgecolor='white', linewidth=1)
+            bars3 = ax.bar(x + width, nao_respondidos_lista, width, label='🔴 Não Respondidos', color='#dc3545', alpha=0.85, edgecolor='white', linewidth=1)
+            
+            # Adicionar valores nas barras
+            for bars in [bars1, bars2, bars3]:
+                for bar in bars:
+                    height = bar.get_height()
+                    if height > 0:
+                        ax.text(bar.get_x() + bar.get_width()/2., height + 0.5,
+                                f'{int(height)}', ha='center', va='bottom', fontsize=9, fontweight='bold')
+            
+            ax.set_xticks(x)
+            ax.set_xticklabels(turnos_lista, fontsize=11, fontweight='bold')
+            ax.set_ylabel("Quantidade", fontsize=11)
+            ax.legend(loc='upper right', fontsize=10)
+            ax.set_ylim(0, max(max(abertos_lista), max(finalizados_lista), max(nao_respondidos_lista)) * 1.15)
+            
+            fig.tight_layout()
+            st.pyplot(fig)
+            plt.close(fig)
             
             st.markdown("<hr>", unsafe_allow_html=True)
             
@@ -3863,7 +4209,6 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
             # Evolução diária
             st.subheader("📅 Evolução Diária de ARs")
             
-            # Agrupar por data
             datas_dict = {}
             for r in registros:
                 if r.data:
@@ -3919,7 +4264,7 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                 st.dataframe(df_tabela, use_container_width=True, height=300)
         
         # ======================
-        # NOVO REGISTRO (com decisão modificada)
+        # NOVO REGISTRO
         # ======================
         if menu_ar == "📝 Novo Registro":
             st.subheader("Novo Aviso de Rejeição")
@@ -4026,7 +4371,6 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                         codigo = st.text_input("Código*")
                         emissor = st.text_input("Emissor*")
                         referencia = st.text_area("Referência*", height=100)
-                        # MODIFICAÇÃO: Usar OPCOES_DECISAO_AR_MOD
                         decisao = st.selectbox("Decisão*", OPCOES_DECISAO_AR_MOD)
                     with col3:
                         status = st.selectbox("Status*", OPCOES_STATUS_AR)
@@ -4067,28 +4411,33 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                                     st.rerun()
         
         # ======================
-        # VISUALIZAR REGISTROS (com opção NÃO RESPONDIDO)
+        # VISUALIZAR REGISTROS (com filtros de Status, Decisão, Turno e Número)
         # ======================
         elif menu_ar == "📊 Visualizar Registros":
             st.subheader("Registros de Aviso de Rejeição")
             with st.spinner("Carregando registros..."):
                 registros = carregar_registros_ar()
             if registros:
-                col_f1, col_f2, col_f3 = st.columns(3)
+                col_f1, col_f2, col_f3, col_f4 = st.columns(4)
                 with col_f1:
                     filtro_status = st.selectbox("Filtrar por Status", ["Todos"] + OPCOES_STATUS_AR)
                 with col_f2:
-                    # MODIFICAÇÃO: Usar OPCOES_DECISAO_AR_MOD
                     filtro_decisao = st.selectbox("Filtrar por Decisão", ["Todos"] + OPCOES_DECISAO_AR_MOD)
                 with col_f3:
+                    filtro_turno = st.selectbox("Filtrar por Turno", ["Todos"] + OPCOES_TURNO_AR)
+                with col_f4:
                     filtro_numero = st.number_input("Filtrar por Nº", min_value=0, step=1, value=0)
+                
                 registros_filtrados = registros
                 if filtro_status != "Todos":
                     registros_filtrados = [r for r in registros_filtrados if r.status == filtro_status]
                 if filtro_decisao != "Todos":
                     registros_filtrados = [r for r in registros_filtrados if r.decisao == filtro_decisao]
+                if filtro_turno != "Todos":
+                    registros_filtrados = [r for r in registros_filtrados if r.turno == filtro_turno]
                 if filtro_numero > 0:
                     registros_filtrados = [r for r in registros_filtrados if r.numero == filtro_numero]
+                
                 col_e1, col_e2, col_e3, col_e4 = st.columns(4)
                 with col_e1:
                     st.metric("Total Registros", len(registros))
@@ -4098,9 +4447,69 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                     st.metric("Finalizados", len([r for r in registros if r.status == "FINALIZADO"]))
                 with col_e4:
                     st.metric("Não Respondidos", len([r for r in registros if r.status == "NÃO RESPONDIDA"]))
+                
+                # NOVO GRÁFICO DE BARRAS POR TURNO (Visualização de Registros)
+                if len(registros_filtrados) > 0:
+                    st.markdown("---")
+                    st.subheader("📊 Distribuição por Turno e Status")
+                    
+                    # Preparar dados para o gráfico
+                    turno_status_reg = {}
+                    for t in OPCOES_TURNO_AR:
+                        regs_turno = [r for r in registros_filtrados if r.turno == t]
+                        turno_status_reg[t] = {
+                            'ABERTO': len([r for r in regs_turno if r.status == "ABERTO"]),
+                            'FINALIZADO': len([r for r in regs_turno if r.status == "FINALIZADO"]),
+                            'NÃO RESPONDIDA': len([r for r in regs_turno if r.status == "NÃO RESPONDIDA"])
+                        }
+                    
+                    turnos = list(turno_status_reg.keys())
+                    abertos_val = [turno_status_reg[t]['ABERTO'] for t in turnos]
+                    finalizados_val = [turno_status_reg[t]['FINALIZADO'] for t in turnos]
+                    nao_respondidos_val = [turno_status_reg[t]['NÃO RESPONDIDA'] for t in turnos]
+                    
+                    fig, ax = plt.subplots(figsize=(10, 5), facecolor=THEME['bg_card'])
+                    apply_chart_style(ax, fig, "ARs por Turno e Status", ylabel="Quantidade")
+                    
+                    x = np.arange(len(turnos))
+                    width = 0.25
+                    
+                    bars1 = ax.bar(x - width, abertos_val, width, label='🟡 Em Aberto', color='#ffc107', alpha=0.85, edgecolor='white', linewidth=1)
+                    bars2 = ax.bar(x, finalizados_val, width, label='🟢 Finalizados', color='#28a745', alpha=0.85, edgecolor='white', linewidth=1)
+                    bars3 = ax.bar(x + width, nao_respondidos_val, width, label='🔴 Não Respondidos', color='#dc3545', alpha=0.85, edgecolor='white', linewidth=1)
+                    
+                    for bars in [bars1, bars2, bars3]:
+                        for bar in bars:
+                            height = bar.get_height()
+                            if height > 0:
+                                ax.text(bar.get_x() + bar.get_width()/2., height + 0.5,
+                                        f'{int(height)}', ha='center', va='bottom', fontsize=9, fontweight='bold')
+                    
+                    ax.set_xticks(x)
+                    ax.set_xticklabels(turnos, fontsize=11, fontweight='bold')
+                    ax.set_ylabel("Quantidade", fontsize=11)
+                    ax.legend(loc='upper right', fontsize=10)
+                    ax.set_ylim(0, max(max(abertos_val), max(finalizados_val), max(nao_respondidos_val)) * 1.15 if any(v > 0 for v in abertos_val + finalizados_val + nao_respondidos_val) else 10)
+                    
+                    fig.tight_layout()
+                    st.pyplot(fig)
+                    plt.close(fig)
+                
+                st.markdown("---")
+                
                 dados = []
                 for reg in registros_filtrados[:100]:
-                    dados.append({"Nº": reg.numero, "Data": reg.data.strftime("%d/%m/%Y") if reg.data else "-", "Hora": reg.hora, "Código": reg.codigo, "Emissor": reg.emissor, "Referência": reg.referencia[:40] + "..." if len(reg.referencia) > 40 else reg.referencia, "Decisão": reg.decisao, "Status": reg.status, "Turno": reg.turno})
+                    dados.append({
+                        "Nº": reg.numero, 
+                        "Data": reg.data.strftime("%d/%m/%Y") if reg.data else "-", 
+                        "Hora": reg.hora, 
+                        "Código": reg.codigo, 
+                        "Emissor": reg.emissor, 
+                        "Referência": reg.referencia[:40] + "..." if len(reg.referencia) > 40 else reg.referencia, 
+                        "Decisão": reg.decisao, 
+                        "Status": reg.status, 
+                        "Turno": reg.turno
+                    })
                 df = pd.DataFrame(dados)
                 st.dataframe(df, use_container_width=True, height=400)
             else:
@@ -4164,7 +4573,6 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                             codigo_edt = st.text_input("Código", reg.codigo)
                             emissor_edt = st.text_input("Emissor", reg.emissor)
                             referencia_edt = st.text_area("Referência", reg.referencia, height=80)
-                            # MODIFICAÇÃO: Usar OPCOES_DECISAO_AR_MOD
                             decisao_edt = st.selectbox("Decisão", OPCOES_DECISAO_AR_MOD, index=OPCOES_DECISAO_AR_MOD.index(reg.decisao) if reg.decisao in OPCOES_DECISAO_AR_MOD else 0)
                         with col_e3:
                             status_edt = st.selectbox("Status", OPCOES_STATUS_AR, index=OPCOES_STATUS_AR.index(reg.status) if reg.status in OPCOES_STATUS_AR else 0)
@@ -4265,13 +4673,12 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                         st.markdown("#### 📥 Salvar PDF")
                         st.download_button(label="Baixar PDF", data=st.session_state.ar_pdf_bytes, file_name=st.session_state.ar_pdf_nome, mime="application/pdf", use_container_width=True)
                 
-                # Botão para limpar e voltar
                 if st.button("🔍 Nova Busca", use_container_width=True):
                     st.session_state.ar_registro_editando = None
                     st.rerun()
         
         # ======================
-        # NOVO: DASHBOARD AR (similar ao RM)
+        # DASHBOARD AR
         # ======================
         elif menu_ar == "📈 Dashboard AR":
             st.subheader("📊 Dashboard - Avisos de Rejeição")
@@ -4281,7 +4688,6 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                 registros = carregar_registros_ar()
             
             if registros:
-                # Adicionar filtros de data ao dashboard
                 st.markdown("### 🔍 Filtros do Dashboard")
                 col_f1, col_f2 = st.columns(2)
                 with col_f1:
@@ -4289,7 +4695,6 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                 with col_f2:
                     data_fim_dash = st.date_input("Data Final", value=None, key="ar_dash_data_fim")
                 
-                # Aplicar filtros de data
                 registros_filtrados = registros.copy()
                 if data_ini_dash:
                     registros_filtrados = [r for r in registros_filtrados if r.data and r.data >= pd.to_datetime(data_ini_dash)]
@@ -4334,10 +4739,10 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
     OPCOES_STATUS_RM = ["ABERTO", "EM ANDAMENTO", "FINALIZADO", "CANCELADO"]
     
     # Criar diretórios RM
-    CAMINHO_PDF_RM = r"\\srv-luvidarte\dados\DOC\Engenharia_Luvidarte\SGQ - LUVIDARTE - ALTERADAS\1-REQUISIÇÃO DE MANUTENÇÃO\1-PDF"
-    CAMINHO_PDF_RELATORIO_RM = r"\\srv-luvidarte\dados\DOC\Engenharia_Luvidarte\SGQ - LUVIDARTE - ALTERADAS\1-REQUISIÇÃO DE MANUTENÇÃO\2-PDF"
-    os.makedirs(CAMINHO_PDF_RM, exist_ok=True)
-    os.makedirs(CAMINHO_PDF_RELATORIO_RM, exist_ok=True)
+    #CAMINHO_PDF_RM = r"\\srv-luvidarte\dados\DOC\Engenharia_Luvidarte\SGQ - LUVIDARTE - ALTERADAS\1-REQUISIÇÃO DE MANUTENÇÃO\1-PDF"
+    #CAMINHO_PDF_RELATORIO_RM = r"\\srv-luvidarte\dados\DOC\Engenharia_Luvidarte\SGQ - LUVIDARTE - ALTERADAS\1-REQUISIÇÃO DE MANUTENÇÃO\2-PDF"
+    #os.makedirs(CAMINHO_PDF_RM, exist_ok=True)
+    #os.makedirs(CAMINHO_PDF_RELATORIO_RM, exist_ok=True)
     
     # ====================== CONFIGURAÇÕES DE E-MAIL - LENDO DO SECRETS ======================
     try:
@@ -5130,7 +5535,7 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
     """, unsafe_allow_html=True)
 
 # ==================================================================================================
-# FECHAMENTO TURNO - VERSÃO GOOGLE SHEETS (COM TRS BRUTO + ARs/RMs)
+# FECHAMENTO TURNO - VERSÃO GOOGLE SHEETS (COM TRS BRUTO + ARs/RMs) - COM RELATÓRIO
 # ==================================================================================================
 elif aba_selecionada == 'FECHAMENTO TURNO':
     render_page_header("FECHAMENTO DE TURNO", f"Controle de Produção · Atualizado {get_horario_brasilia()}", THEME['accent_purple'])
@@ -5190,6 +5595,76 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
         except:
             return 0
     
+    def minutos_para_horas_str(minutos):
+        if pd.isna(minutos) or minutos is None or minutos == 0:
+            return "00:00"
+        horas = int(minutos) // 60
+        mins = int(minutos) % 60
+        return f"{horas:02d}:{mins:02d}"
+    
+    def get_turno_por_horario(inicio_str, fim_str, is_sabado=False):
+        """
+        Determina o turno com base nos horários de início e fim
+        Manhã: 06:00 até 14:00
+        Tarde: 14:00 até 22:00
+        Noite: 22:00 até 06:00 (próximo dia)
+        
+        Para sábado:
+        Manhã: 06:00 até 11:00
+        Tarde: 11:00 até 16:00
+        Sem turno Noite
+        """
+        try:
+            if not inicio_str or not fim_str:
+                return "Não definido"
+            
+            # Extrair horas
+            if ':' in inicio_str:
+                h_inicio = int(inicio_str.split(':')[0])
+                m_inicio = int(inicio_str.split(':')[1]) if len(inicio_str.split(':')) > 1 else 0
+            else:
+                return "Não definido"
+            
+            if ':' in fim_str:
+                h_fim = int(fim_str.split(':')[0])
+                m_fim = int(fim_str.split(':')[1]) if len(fim_str.split(':')) > 1 else 0
+            else:
+                return "Não definido"
+            
+            minutos_inicio = h_inicio * 60 + m_inicio
+            minutos_fim = h_fim * 60 + m_fim
+            
+            if is_sabado:
+                # Sábado: Manhã 06:00-11:00, Tarde 11:00-16:00
+                if 360 <= minutos_inicio < 660:  # 06:00 até 11:00
+                    return "Manhã"
+                elif 660 <= minutos_inicio < 960:  # 11:00 até 16:00
+                    return "Tarde"
+                else:
+                    return "Fora do horário"
+            else:
+                # Dias normais
+                if 360 <= minutos_inicio < 840:  # 06:00 até 14:00
+                    return "Manhã"
+                elif 840 <= minutos_inicio < 1320:  # 14:00 até 22:00
+                    return "Tarde"
+                elif minutos_inicio >= 1320 or minutos_inicio < 360:  # 22:00 até 06:00
+                    return "Noite"
+                else:
+                    return "Fora do horário"
+                    
+        except Exception as e:
+            return "Não definido"
+    
+    def get_carinha_trs(trs_value):
+        """Retorna a carinha baseada no TRS Bruto"""
+        if trs_value >= 100:
+            return "😊"
+        elif trs_value >= 80:
+            return "🙂"
+        else:
+            return "😢"
+    
     # ======================
     # FUNÇÕES DE CARREGAMENTO
     # ======================
@@ -5231,12 +5706,23 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
                     # TRS BRUTO = (Produzido / Meta) * 100
                     trs_bruto = round((produzido_val / meta_val * 100), 1) if meta_val > 0 else 0
                     
+                    # Verificar se é sábado (data_registro é um date)
+                    is_sabado = False
+                    if data_registro and hasattr(data_registro, 'weekday'):
+                        is_sabado = data_registro.weekday() == 5  # Sábado = 5
+                    
+                    inicio = row[3] if len(row) > 3 else ""
+                    fim = row[4] if len(row) > 4 else ""
+                    
+                    # Determinar turno baseado nos horários
+                    turno_calculado = get_turno_por_horario(inicio, fim, is_sabado)
+                    
                     producoes.append({
                         'id': row[0] if len(row) > 0 else "",
                         'data': data_registro,
                         'referencia': row[2] if len(row) > 2 else "",
-                        'inicio': row[3] if len(row) > 3 else "",
-                        'fim': row[4] if len(row) > 4 else "",
+                        'inicio': inicio,
+                        'fim': fim,
                         'produzido': produzido_val,
                         'observacoes': row[6] if len(row) > 6 else "",
                         'meta': meta_val,
@@ -5244,7 +5730,8 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
                         'justificativa': row[9] if len(row) > 9 else "",
                         'setup': row[10] if len(row) > 10 else "",
                         'manut': row[11] if len(row) > 11 else "",
-                        'trs_bruto': trs_bruto
+                        'trs_bruto': trs_bruto,
+                        'turno': turno_calculado
                     })
             
         except Exception as e:
@@ -5348,14 +5835,10 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
                 todos_dados_ar = sheet_ar.get_all_values()
                 
                 if len(todos_dados_ar) >= 2:
-                    # Mapear cabeçalho da AR
-                    cabecalho_ar = [str(c).strip().upper() for c in todos_dados_ar[0]]
-                    
                     for row in todos_dados_ar[1:]:
                         if len(row) < 5:
                             continue
                         
-                        # A AR tem estrutura: Número, Data, Hora, Código, Emissor, Referência, Decisão, Descrição, Status, Disposição, Data Finalização, Turno
                         data_ar_str = row[1] if len(row) > 1 else ""
                         data_ar = converter_data_sheets(data_ar_str)
                         
@@ -5375,10 +5858,10 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
                                 'data_fechamento': converter_data_sheets(row[10]) if len(row) > 10 and row[10] else None,
                                 'turno': row[11] if len(row) > 11 else "",
                                 'setor_destino': 'Qualidade',
-                                'responsavel': row[4] if len(row) > 4 else ""  # Emissor como responsável
+                                'responsavel': row[4] if len(row) > 4 else ""
                             })
             except Exception as e:
-                st.warning(f"Aviso: Não foi possível carregar ARs: {e}")
+                pass
             
             # ======================
             # CARREGAR RMs (Requisição de Manutenção)
@@ -5392,7 +5875,6 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
                         if len(row) < 10:
                             continue
                         
-                        # A RM tem estrutura: ID, Data, Hora, Emissor, Equipamento, Setor, Caráter, Setor2, Problema, Trabalho, Análise, Status, Data Finalização, Emissor2
                         data_rm_str = row[1] if len(row) > 1 else ""
                         data_rm = converter_data_sheets(data_rm_str)
                         
@@ -5412,22 +5894,820 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
                                 'analise': row[10] if len(row) > 10 else "",
                                 'status': row[11] if len(row) > 11 else "ABERTO",
                                 'data_fechamento': converter_data_sheets(row[12]) if len(row) > 12 and row[12] else None,
-                                'responsavel': row[13] if len(row) > 13 else ""  # Emissor2
+                                'responsavel': row[13] if len(row) > 13 else ""
                             })
             except Exception as e:
-                st.warning(f"Aviso: Não foi possível carregar RMs: {e}")
+                pass
             
         except Exception as e:
-            st.error(f"Erro ao carregar ARs/RMs: {e}")
+            pass
         
         return ars, rms
+    
+    # ======================
+    # FUNÇÃO PARA GERAR HTML DO RELATÓRIO PARA DOWNLOAD (MODO RETRATO)
+    # ======================
+    def gerar_html_relatorio(producoes, ars, rms, data_fechamento, turno_label, total_produzido, total_meta, 
+                             eficiencia, total_setup_min, total_manut_min, total_ars, total_rms, 
+                             ars_abertos, rms_abertos, itens_baixa):
+        """
+        Gera o HTML do relatório para download em modo retrato com fontes maiores
+        """
+        data_str = data_fechamento.strftime("%d/%m/%Y")
+        
+        # Gerar linhas da tabela de produção
+        tabela_linhas = ""
+        for p in producoes:
+            trs = p.get('trs_bruto', 0)
+            carinha = get_carinha_trs(trs)
+            
+            # Definir cor da linha baseada no TRS
+            if trs >= 100:
+                cor_linha = "#d4edda"
+                cor_texto = "#155724"
+            elif trs >= 80:
+                cor_linha = "#fff3cd"
+                cor_texto = "#856404"
+            else:
+                cor_linha = "#f8d7da"
+                cor_texto = "#721c24"
+            
+            # Formatar valores
+            meta_str = f"{p.get('meta', 0):,}".replace(",", ".")
+            produzido_str = f"{p.get('produzido', 0):,}".replace(",", ".")
+            data_prod = p.get('data', '').strftime('%d/%m/%Y') if p.get('data') else '-'
+            referencia = p.get('referencia', '-')
+            if len(referencia) > 20:
+                referencia = referencia[:18] + '...'
+            
+            tabela_linhas += f"""
+            <tr style="background-color: {cor_linha}; color: {cor_texto}; font-size: 11px;">
+                <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: center;">{data_prod}</td>
+                <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; font-size: 10px;">{referencia}</td>
+                <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: center;">{p.get('inicio', '-')}</td>
+                <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: center;">{p.get('fim', '-')}</td>
+                <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: right;">{meta_str}</td>
+                <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: right;">{produzido_str}</td>
+                <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: center;">{p.get('setup', '-')}</td>
+                <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: center;">{p.get('manut', '-')}</td>
+                <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; font-weight: bold; font-size: 11px;">{trs:.1f}%</td>
+                <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; font-size: 18px;">{carinha}</td>
+            </tr>
+            """
+        
+        if not tabela_linhas:
+            tabela_linhas = """
+            <tr>
+                <td colspan="10" style="padding: 15px; text-align: center; color: #999; font-size: 12px;">
+                    Nenhuma produção registrada para este turno/data.
+                </td>
+            </tr>
+            """
+        
+        # ======================
+        # GERAR TABELA DE ARs E RMs
+        # ======================
+        tabela_ars_rms = ""
+        todos_docs = ars + rms
+        if todos_docs:
+            for doc in todos_docs:
+                tipo = doc.get('tipo', '')
+                status = str(doc.get('status', '')).upper().strip()
+                
+                # Definir cor do status
+                if status in ['FINALIZADO', 'FINALIZADA']:
+                    status_display = "✅ FINALIZADO"
+                    cor_status = "#28a745"
+                elif status in ['ABERTO', 'EM ANDAMENTO']:
+                    status_display = "🟡 ABERTO"
+                    cor_status = "#ffc107"
+                else:
+                    status_display = "🔴 NÃO RESPONDIDO"
+                    cor_status = "#dc3545"
+                
+                if tipo == 'AR':
+                    referencia = doc.get('referencia', '-')
+                    if len(referencia) > 25:
+                        referencia = referencia[:23] + '...'
+                    tabela_ars_rms += f"""
+                    <tr style="font-size: 11px;">
+                        <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; font-weight: bold; color: #0078D4;">AR</td>
+                        <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: center;">{doc.get('numero', '-')}</td>
+                        <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; font-size: 10px;">{referencia}</td>
+                        <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: center;">-</td>
+                        <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; font-weight: bold; color: {cor_status};">{status_display}</td>
+                    </tr>
+                    """
+                else:  # RM
+                    equipamento = doc.get('equipamento', '-')
+                    if len(equipamento) > 25:
+                        equipamento = equipamento[:23] + '...'
+                    tabela_ars_rms += f"""
+                    <tr style="font-size: 11px;">
+                        <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; font-weight: bold; color: #E86C2C;">RM</td>
+                        <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: center;">{doc.get('numero', '-')}</td>
+                        <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: center;">-</td>
+                        <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; font-size: 10px;">{equipamento}</td>
+                        <td style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; font-weight: bold; color: {cor_status};">{status_display}</td>
+                    </tr>
+                    """
+        else:
+            tabela_ars_rms = """
+            <tr>
+                <td colspan="5" style="padding: 15px; text-align: center; color: #999; font-size: 12px;">
+                    Nenhum AR ou RM registrado para esta data.
+                </td>
+            </tr>
+            """
+        
+        # Formatar valores para exibição
+        total_produzido_str = f"{total_produzido:,}".replace(",", ".")
+        total_meta_str = f"{total_meta:,}".replace(",", ".")
+        
+        # Cor da eficiência
+        cor_eficiencia = "#28a745" if eficiencia >= 85 else "#ffc107" if eficiencia >= 70 else "#dc3545"
+        
+        html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <title>Resumo Produção - {data_str}</title>
+            <style>
+                @page {{
+                    size: portrait;
+                    margin: 10mm 10mm 10mm 10mm;
+                }}
+                body {{
+                    font-family: Arial, sans-serif;
+                    margin: 0;
+                    padding: 10px;
+                    background-color: white;
+                    font-size: 11px;
+                }}
+                .container {{
+                    max-width: 100%;
+                    margin: 0 auto;
+                    background-color: white;
+                }}
+                .header {{
+                    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+                    padding: 12px 20px;
+                    border-radius: 8px;
+                    margin-bottom: 12px;
+                    color: white;
+                }}
+                .header h1 {{
+                    margin: 0;
+                    font-size: 24px;
+                    font-weight: 700;
+                    letter-spacing: 0.1em;
+                    text-transform: uppercase;
+                }}
+                .header .subtitle {{
+                    font-size: 16px;
+                    color: #a0aec0;
+                    margin-top: 4px;
+                    font-weight: bold;
+                }}
+                .section-title {{
+                    font-size: 15px;
+                    font-weight: 700;
+                    margin: 12px 0 8px 0;
+                    padding-bottom: 5px;
+                    border-bottom: 2px solid #e0e0e0;
+                }}
+                table {{
+                    width: 100%;
+                    border-collapse: collapse;
+                    margin-bottom: 10px;
+                    font-size: 10px;
+                }}
+                table th {{
+                    background-color: #2c3e50;
+                    color: white;
+                    padding: 5px 4px;
+                    border: 1px solid #2c3e50;
+                    text-align: center;
+                    font-size: 10px;
+                    font-weight: 700;
+                }}
+                table td {{
+                    padding: 4px 4px;
+                    border: 1px solid #ddd;
+                    text-align: center;
+                }}
+                .cards {{
+                    display: grid;
+                    grid-template-columns: repeat(5, 1fr);
+                    gap: 8px;
+                    margin-bottom: 10px;
+                }}
+                .card {{
+                    background: #f8f9fc;
+                    padding: 8px 10px;
+                    border-radius: 6px;
+                    border-left: 4px solid #0078D4;
+                    text-align: center;
+                }}
+                .card .label {{
+                    font-size: 9px;
+                    color: #666;
+                    text-transform: uppercase;
+                    font-weight: 600;
+                    letter-spacing: 0.05em;
+                }}
+                .card .value {{
+                    font-size: 18px;
+                    font-weight: 700;
+                    margin-top: 2px;
+                    color: #1a1a2e;
+                }}
+                .card-green {{ border-left-color: #28a745; }}
+                .card-red {{ border-left-color: #dc3545; }}
+                .card-yellow {{ border-left-color: #ffc107; }}
+                .card-purple {{ border-left-color: #6f42c1; }}
+                .executive-cards {{
+                    display: grid;
+                    grid-template-columns: repeat(3, 1fr);
+                    gap: 8px;
+                    margin-top: 8px;
+                }}
+                .exec-card {{
+                    background: #f8f9fc;
+                    padding: 8px 12px;
+                    border-radius: 6px;
+                    border-left: 4px solid #0078D4;
+                    font-size: 10px;
+                }}
+                .exec-card .title {{
+                    font-weight: 700;
+                    font-size: 12px;
+                    margin-bottom: 4px;
+                }}
+                .exec-card .line {{
+                    font-size: 10px;
+                    padding: 1px 0;
+                }}
+                .footer {{
+                    margin-top: 10px;
+                    padding-top: 8px;
+                    border-top: 1px solid #e0e0e0;
+                    text-align: center;
+                    font-size: 9px;
+                    color: #999;
+                }}
+                .ars-rms-cards {{
+                    display: grid;
+                    grid-template-columns: repeat(4, 1fr);
+                    gap: 8px;
+                    margin-bottom: 8px;
+                }}
+                .assinatura-section {{
+                    margin-top: 20px;
+                    padding-top: 15px;
+                    border-top: 2px solid #2c3e50;
+                    text-align: center;
+                }}
+                .assinatura-section .titulo {{
+                    font-size: 13px;
+                    font-weight: 700;
+                    color: #1a1a2e;
+                    margin-bottom: 15px;
+                }}
+                .assinatura-section .linha {{
+                    display: flex;
+                    justify-content: center;
+                    gap: 40px;
+                    flex-wrap: wrap;
+                    margin-top: 10px;
+                }}
+                .assinatura-section .campo {{
+                    text-align: center;
+                    min-width: 200px;
+                }}
+                .assinatura-section .campo .linha-ass {{
+                    border-bottom: 1px solid #333;
+                    padding: 5px 30px;
+                    margin: 5px 0;
+                    min-width: 180px;
+                }}
+                .assinatura-section .campo .label-ass {{
+                    font-size: 10px;
+                    color: #666;
+                    margin-top: 2px;
+                }}
+                .assinatura-section .data {{
+                    margin-top: 15px;
+                    font-size: 11px;
+                    color: #555;
+                }}
+                @media print {{
+                    body {{ margin: 5mm; padding: 0; }}
+                    .container {{ box-shadow: none; }}
+                    .header {{ background: #1a1a2e !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+                    .card {{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+                    .exec-card {{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+                    table th {{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+                }}
+                @media screen {{
+                    body {{ padding: 20px; }}
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <!-- HEADER -->
+                <div class="header">
+                    <h1>📊 RESUMO DO DIA</h1>
+                    <div class="subtitle">{data_str} • TURNO: {turno_label}</div>
+                </div>
+                
+                <!-- TABELA DE PRODUÇÃO -->
+                <div class="section-title">📋 REGISTRO DE PRODUÇÃO</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th style="width: 10%;">Data</th>
+                            <th style="width: 15%;">Referência</th>
+                            <th style="width: 8%;">Início</th>
+                            <th style="width: 8%;">Fim</th>
+                            <th style="width: 10%;">Meta</th>
+                            <th style="width: 10%;">Produzido</th>
+                            <th style="width: 8%;">Setup</th>
+                            <th style="width: 8%;">Manut.</th>
+                            <th style="width: 10%;">TRS Bruto</th>
+                            <th style="width: 6%;">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {tabela_linhas}
+                    </tbody>
+                </table>
+                
+                <!-- RESUMO DO DIA -->
+                <div class="section-title">📊 RESUMO DO DIA</div>
+                <div class="cards">
+                    <div class="card">
+                        <div class="label">📦 Produzido</div>
+                        <div class="value">{total_produzido_str}</div>
+                    </div>
+                    <div class="card card-green">
+                        <div class="label">🎯 Meta</div>
+                        <div class="value">{total_meta_str}</div>
+                    </div>
+                    <div class="card card-yellow">
+                        <div class="label">📈 Eficiência</div>
+                        <div class="value" style="color: {cor_eficiencia};">{eficiencia:.1f}%</div>
+                    </div>
+                    <div class="card card-red">
+                        <div class="label">🔧 Setup</div>
+                        <div class="value">{minutos_para_horas_str(total_setup_min)}</div>
+                    </div>
+                    <div class="card card-red">
+                        <div class="label">⚙️ Manutenção</div>
+                        <div class="value">{minutos_para_horas_str(total_manut_min)}</div>
+                    </div>
+                </div>
+                
+                <!-- RESUMO ARs e RMs - CARDS -->
+                <div class="section-title">🔧 RESUMO DE ARs E RMs</div>
+                <div class="ars-rms-cards">
+                    <div class="card card-purple">
+                        <div class="label">📋 Total ARs</div>
+                        <div class="value">{total_ars}</div>
+                    </div>
+                    <div class="card card-purple">
+                        <div class="label">🔩 Total RMs</div>
+                        <div class="value">{total_rms}</div>
+                    </div>
+                    <div class="card card-yellow">
+                        <div class="label">🟡 ARs em Aberto</div>
+                        <div class="value">{ars_abertos}</div>
+                    </div>
+                    <div class="card card-yellow">
+                        <div class="label">🟡 RMs em Aberto</div>
+                        <div class="value">{rms_abertos}</div>
+                    </div>
+                </div>
+                
+                <!-- TABELA DE ARs E RMs -->
+                <div style="margin-top: 5px;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th style="width: 10%;">Tipo</th>
+                                <th style="width: 12%;">Nº</th>
+                                <th style="width: 30%;">Ref. (AR) / Equip. (RM)</th>
+                                <th style="width: 30%;">Equip. (RM) / Ref. (AR)</th>
+                                <th style="width: 18%;">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {tabela_ars_rms}
+                        </tbody>
+                    </table>
+                </div>
+                
+                <!-- RESUMO EXECUTIVO -->
+                <div class="section-title">📋 RESUMO EXECUTIVO</div>
+                <div class="executive-cards">
+                    <div class="exec-card" style="border-left-color: #0078D4;">
+                        <div class="title" style="color: #0078D4;">🏭 PRODUÇÃO</div>
+                        <div class="line">• Produzido: <b>{total_produzido_str}</b> un</div>
+                        <div class="line">• Meta: <b>{total_meta_str}</b> un</div>
+                        <div class="line">• Eficiência: <b>{eficiencia:.1f}%</b></div>
+                    </div>
+                    <div class="exec-card" style="border-left-color: #dc3545;">
+                        <div class="title" style="color: #dc3545;">⚠️ PARADAS</div>
+                        <div class="line">• Setup: <b>{minutos_para_horas_str(total_setup_min)}</b></div>
+                        <div class="line">• Manutenção: <b>{minutos_para_horas_str(total_manut_min)}</b></div>
+                        <div class="line">• Total: <b>{minutos_para_horas_str(total_setup_min + total_manut_min)}</b></div>
+                    </div>
+                    <div class="exec-card" style="border-left-color: #28a745;">
+                        <div class="title" style="color: #28a745;">📊 INDICADORES</div>
+                        <div class="line">• Baixa prod.: <b>{itens_baixa}</b></div>
+                        <div class="line">• ARs/RMs: <b>{total_ars + total_rms}</b> ({ars_abertos + rms_abertos} abertos)</div>
+                        <div class="line">• Eficiência: <b>{eficiencia:.1f}%</b></div>
+                    </div>
+                </div>
+                
+                <!-- ASSINATURA ÚNICA CENTRALIZADA -->
+                <div class="assinatura-section">
+                    <div class="titulo">📝 ASSINATURA DE RESPONSABILIDADE</div>
+                    <div class="linha">
+                        <div class="campo">
+                            <div class="linha-ass">_________________________</div>
+                            <div class="label-ass">Assinatura do Emissor</div>
+                        </div>
+                        <div class="campo">
+                            <div class="linha-ass">_________________________</div>
+                            <div class="label-ass">Assinatura do Líder SGQ</div>
+                        </div>
+                        <div class="campo">
+                            <div class="linha-ass">_________________________</div>
+                            <div class="label-ass">Assinatura da Qualidade</div>
+                        </div>
+                    </div>
+                    <div class="data">
+                        {data_str} • Luvidarte TRS Dashboard
+                    </div>
+                </div>
+                
+                <!-- FOOTER -->
+                <div class="footer">
+                    Relatório gerado em {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        
+        return html
+    
+    # ======================
+    # FUNÇÃO PARA GERAR RELATÓRIO RESUMO NA TELA
+    # ======================
+    def gerar_relatorio_resumo(producoes, ars, rms, turno_selecionado, data_fechamento):
+        """
+        Gera o relatório resumo com base nos dados fornecidos
+        """
+        st.markdown("---")
+        
+        # TÍTULO DO RELATÓRIO
+        data_str = data_fechamento.strftime("%d/%m/%Y")
+        turno_label = "GERAL" if turno_selecionado == "Todos" else turno_selecionado.upper()
+        
+        st.markdown(f"""
+        <div style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); 
+                    padding: 20px 25px; border-radius: 12px; margin: 10px 0 25px 0;
+                    border-left: 6px solid {THEME['accent_purple']};">
+            <div style="font-family: 'Rajdhani', sans-serif; font-size: 28px; font-weight: 700; 
+                        color: white; letter-spacing: 0.1em; text-transform: uppercase;">
+                📊 RESUMO DO DIA
+            </div>
+            <div style="font-family: 'JetBrains Mono', monospace; font-size: 14px; 
+                        color: #a0aec0; margin-top: 4px;">
+                {data_str} • TURNO: {turno_label}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # ======================
+        # FILTRAR PRODUÇÕES POR TURNO
+        # ======================
+        if turno_selecionado != "Todos":
+            producoes_filtradas = [p for p in producoes if p.get('turno') == turno_selecionado]
+        else:
+            producoes_filtradas = producoes.copy()
+        
+        # ======================
+        # CALCULAR TOTAIS PARA O RELATÓRIO
+        # ======================
+        total_produzido = sum(p.get('produzido', 0) for p in producoes_filtradas)
+        total_meta = sum(p.get('meta', 0) for p in producoes_filtradas)
+        eficiencia = (total_produzido / total_meta * 100) if total_meta > 0 else 0
+        total_setup_min = sum(str_time_to_minutes_ft(p.get('setup', '')) for p in producoes_filtradas)
+        total_manut_min = sum(str_time_to_minutes_ft(p.get('manut', '')) for p in producoes_filtradas)
+        
+        total_ars = len(ars)
+        total_rms = len(rms)
+        ars_abertos = sum(1 for a in ars if str(a.get('status', '')).upper().strip() in ['ABERTO', 'EM ANDAMENTO'])
+        rms_abertos = sum(1 for r in rms if str(r.get('status', '')).upper().strip() in ['ABERTO', 'EM ANDAMENTO'])
+        itens_baixa = sum(1 for p in producoes_filtradas if (p.get('produzido', 0) or 0) / max(p.get('meta', 1), 1) * 100 < 80)
+        
+        # ======================
+        # TABELA DE PRODUÇÃO
+        # ======================
+        st.markdown(f"""
+        <div style="font-family: 'Rajdhani', sans-serif; font-size: 18px; font-weight: 600; 
+                    color: {THEME['text_primary']}; margin: 20px 0 10px 0; 
+                    border-bottom: 2px solid {THEME['border_bright']}; padding-bottom: 8px;">
+            📋 REGISTRO DE PRODUÇÃO
+        </div>
+        """, unsafe_allow_html=True)
+        
+        if producoes_filtradas:
+            # Preparar dados da tabela
+            dados_tabela = []
+            for p in producoes_filtradas:
+                trs = p.get('trs_bruto', 0)
+                carinha = get_carinha_trs(trs)
+                
+                dados_tabela.append({
+                    'Data': p.get('data', '').strftime('%d/%m/%Y') if p.get('data') else '-',
+                    'Referência': p.get('referencia', '-'),
+                    'Início': p.get('inicio', '-'),
+                    'Fim': p.get('fim', '-'),
+                    'Meta': f"{p.get('meta', 0):,}".replace(",", "."),
+                    'Produzido': f"{p.get('produzido', 0):,}".replace(",", "."),
+                    'Setup': p.get('setup', '-'),
+                    'Manutenção': p.get('manut', '-'),
+                    'TRS Bruto (%)': f"{trs:.1f}%" if trs > 0 else "0%",
+                    'Status': carinha
+                })
+            
+            df_tabela = pd.DataFrame(dados_tabela)
+            
+            # Aplicar estilo à tabela
+            def style_tabela(row):
+                styles = [''] * len(row)
+                try:
+                    trs_str = row['TRS Bruto (%)'].replace('%', '').strip()
+                    if trs_str:
+                        trs_val = float(trs_str)
+                        if trs_val >= 100:
+                            styles[8] = 'color: #107C10; font-weight: bold; background-color: #d4edda;'
+                            styles[9] = 'font-size: 20px;'
+                        elif trs_val >= 80:
+                            styles[8] = 'color: #FFB900; font-weight: bold; background-color: #fff3cd;'
+                            styles[9] = 'font-size: 20px;'
+                        else:
+                            styles[8] = 'color: #E81123; font-weight: bold; background-color: #f8d7da;'
+                            styles[9] = 'font-size: 20px;'
+                except:
+                    pass
+                return styles
+            
+            styled_df = df_tabela.style.apply(style_tabela, axis=1)
+            st.dataframe(styled_df, use_container_width=True, height=400, hide_index=True)
+        else:
+            st.info("📭 Nenhuma produção registrada para este turno/data.")
+        
+        # ======================
+        # CARDS - RESUMO DO DIA
+        # ======================
+        st.markdown("---")
+        st.markdown(f"""
+        <div style="font-family: 'Rajdhani', sans-serif; font-size: 18px; font-weight: 600; 
+                    color: {THEME['text_primary']}; margin: 20px 0 10px 0; 
+                    border-bottom: 2px solid {THEME['border_bright']}; padding-bottom: 8px;">
+            📊 RESUMO DO DIA
+        </div>
+        """, unsafe_allow_html=True)
+        
+        col_c1, col_c2, col_c3, col_c4, col_c5 = st.columns(5)
+        with col_c1:
+            st.metric("📦 Total Produzido", f"{total_produzido:,}".replace(",", "."))
+        with col_c2:
+            st.metric("🎯 Meta", f"{total_meta:,}".replace(",", "."))
+        with col_c3:
+            cor_ef = "🟢" if eficiencia >= 85 else "🟡" if eficiencia >= 70 else "🔴"
+            st.metric(f"{cor_ef} Eficiência", f"{eficiencia:.1f}%")
+        with col_c4:
+            st.metric("🔧 Setup Total", minutos_para_horas_str(total_setup_min))
+        with col_c5:
+            st.metric("⚙️ Manutenção Total", minutos_para_horas_str(total_manut_min))
+        
+        # ======================
+        # CARDS - RESUMO ARs e RMs
+        # ======================
+        st.markdown("---")
+        st.markdown(f"""
+        <div style="font-family: 'Rajdhani', sans-serif; font-size: 18px; font-weight: 600; 
+                    color: {THEME['text_primary']}; margin: 20px 0 10px 0; 
+                    border-bottom: 2px solid {THEME['border_bright']}; padding-bottom: 8px;">
+            🔧 RESUMO DE ARs E RMs
+        </div>
+        """, unsafe_allow_html=True)
+        
+        col_a1, col_a2, col_a3, col_a4 = st.columns(4)
+        with col_a1:
+            st.metric("📋 Total ARs", total_ars)
+        with col_a2:
+            st.metric("🔩 Total RMs", total_rms)
+        with col_a3:
+            st.metric("🟡 ARs em Aberto", ars_abertos)
+        with col_a4:
+            st.metric("🟡 RMs em Aberto", rms_abertos)
+        
+        # ======================
+        # TABELA DE ARs E RMs
+        # ======================
+        st.markdown("---")
+        st.markdown(f"""
+        <div style="font-family: 'Rajdhani', sans-serif; font-size: 16px; font-weight: 600; 
+                    color: {THEME['text_primary']}; margin: 15px 0 10px 0; 
+                    border-bottom: 2px solid {THEME['border_bright']}; padding-bottom: 8px;">
+            📋 LISTA DE ARs E RMs DO DIA
+        </div>
+        """, unsafe_allow_html=True)
+        
+        todos_docs = ars + rms
+        if todos_docs:
+            dados_ars_rms = []
+            for doc in todos_docs:
+                tipo = doc.get('tipo', '')
+                status = str(doc.get('status', '')).upper().strip()
+                
+                if status in ['FINALIZADO', 'FINALIZADA']:
+                    status_display = "✅ FINALIZADO"
+                elif status in ['ABERTO', 'EM ANDAMENTO']:
+                    status_display = "🟡 ABERTO"
+                else:
+                    status_display = "🔴 NÃO RESPONDIDO"
+                
+                if tipo == 'AR':
+                    dados_ars_rms.append({
+                        'Tipo': 'AR',
+                        'Nº': doc.get('numero', '-'),
+                        'Ref. / Equip.': doc.get('referencia', '-'),
+                        'Equip. / Ref.': '-',
+                        'Status': status_display
+                    })
+                else:
+                    dados_ars_rms.append({
+                        'Tipo': 'RM',
+                        'Nº': doc.get('numero', '-'),
+                        'Ref. / Equip.': '-',
+                        'Equip. / Ref.': doc.get('equipamento', '-'),
+                        'Status': status_display
+                    })
+            
+            df_ars_rms = pd.DataFrame(dados_ars_rms)
+            
+            # Aplicar estilo à tabela
+            def style_ars_rms(row):
+                styles = [''] * len(row)
+                status = row['Status']
+                if 'FINALIZADO' in status:
+                    styles[4] = 'color: #28a745; font-weight: bold;'
+                elif 'ABERTO' in status:
+                    styles[4] = 'color: #ffc107; font-weight: bold;'
+                else:
+                    styles[4] = 'color: #dc3545; font-weight: bold;'
+                return styles
+            
+            styled_ars_rms = df_ars_rms.style.apply(style_ars_rms, axis=1)
+            st.dataframe(styled_ars_rms, use_container_width=True, hide_index=True, height=min(400, len(todos_docs) * 35 + 35))
+        else:
+            st.info("📭 Nenhum AR ou RM registrado para esta data.")
+        
+        # ======================
+        # CARDS - RESUMO EXECUTIVO
+        # ======================
+        st.markdown("---")
+        st.markdown(f"""
+        <div style="font-family: 'Rajdhani', sans-serif; font-size: 18px; font-weight: 600; 
+                    color: {THEME['text_primary']}; margin: 20px 0 10px 0; 
+                    border-bottom: 2px solid {THEME['border_bright']}; padding-bottom: 8px;">
+            📋 RESUMO EXECUTIVO
+        </div>
+        """, unsafe_allow_html=True)
+        
+        col_e1, col_e2, col_e3 = st.columns(3)
+        with col_e1:
+            st.markdown(f"""
+            <div style="background: {THEME['bg_card']}; padding: 15px; border-radius: 10px; 
+                        border-left: 4px solid {THEME['accent_cyan']}; height: 100%;">
+                <b style="color: {THEME['accent_cyan']};">🏭 PRODUÇÃO</b><br>
+                • Total Produzido: <b>{total_produzido:,}</b> un<br>
+                • Meta Total: <b>{total_meta:,}</b> un<br>
+                • Eficiência Global: <b>{eficiencia:.1f}%</b>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col_e2:
+            st.markdown(f"""
+            <div style="background: {THEME['bg_card']}; padding: 15px; border-radius: 10px; 
+                        border-left: 4px solid {THEME['accent_red']}; height: 100%;">
+                <b style="color: {THEME['accent_red']};">⚠️ PARADAS</b><br>
+                • Setup Total: <b>{minutos_para_horas_str(total_setup_min)}</b><br>
+                • Manutenção Total: <b>{minutos_para_horas_str(total_manut_min)}</b><br>
+                • Total Paradas: <b>{minutos_para_horas_str(total_setup_min + total_manut_min)}</b>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col_e3:
+            st.markdown(f"""
+            <div style="background: {THEME['bg_card']}; padding: 15px; border-radius: 10px; 
+                        border-left: 4px solid {THEME['accent_lime']}; height: 100%;">
+                <b style="color: {THEME['accent_lime']};">📊 INDICADORES</b><br>
+                • Itens baixa prod.: <b>{itens_baixa}</b><br>
+                • ARs/RMs do dia: <b>{total_ars + total_rms}</b> ({ars_abertos + rms_abertos} abertos)<br>
+                • Eficiência: <b>{eficiencia:.1f}%</b>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # ======================
+        # ASSINATURA ÚNICA CENTRALIZADA
+        # ======================
+        st.markdown("---")
+        st.markdown(f"""
+        <div style="text-align: center; margin-top: 30px; padding-top: 15px; border-top: 2px solid #2c3e50;">
+            <div style="font-family: 'Rajdhani', sans-serif; font-size: 16px; font-weight: 700; 
+                        color: {THEME['text_primary']}; margin-bottom: 15px;">
+                📝 ASSINATURA DE RESPONSABILIDADE
+            </div>
+            <div style="display: flex; justify-content: center; gap: 40px; flex-wrap: wrap;">
+                <div style="text-align: center; min-width: 180px;">
+                    <div style="border-bottom: 1px solid #333; padding: 5px 20px; margin: 5px 0; min-width: 150px;">
+                        _________________________
+                    </div>
+                    <div style="font-size: 11px; color: #666;">Assinatura do Emissor</div>
+                </div>
+                <div style="text-align: center; min-width: 180px;">
+                    <div style="border-bottom: 1px solid #333; padding: 5px 20px; margin: 5px 0; min-width: 150px;">
+                        _________________________
+                    </div>
+                    <div style="font-size: 11px; color: #666;">Assinatura do Supervisor</div>
+                </div>
+                <div style="text-align: center; min-width: 180px;">
+                    <div style="border-bottom: 1px solid #333; padding: 5px 20px; margin: 5px 0; min-width: 150px;">
+                        _________________________
+                    </div>
+                    <div style="font-size: 11px; color: #666;">Assinatura da Qualidade</div>
+                </div>
+            </div>
+            <div style="margin-top: 10px; font-size: 12px; color: #555;">
+                {data_str} • Luvidarte TRS Dashboard
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # ======================
+        # BOTÃO PARA BAIXAR RELATÓRIO EM HTML
+        # ======================
+        st.markdown("---")
+        col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
+        with col_btn2:
+            # Gerar HTML do relatório para download
+            html_content = gerar_html_relatorio(
+                producoes_filtradas, 
+                ars,
+                rms,
+                data_fechamento, 
+                turno_label,
+                total_produzido, 
+                total_meta, 
+                eficiencia, 
+                total_setup_min, 
+                total_manut_min,
+                total_ars, 
+                total_rms, 
+                ars_abertos, 
+                rms_abertos,
+                itens_baixa
+            )
+            
+            st.download_button(
+                label="📥 Baixar Relatório (HTML)",
+                data=html_content,
+                file_name=f"resumo_producao_{data_fechamento.strftime('%Y%m%d')}_{turno_label}.html",
+                mime="text/html",
+                use_container_width=True,
+                type="primary"
+            )
     
     # ======================
     # INTERFACE DO FECHAMENTO TURNO
     # ======================
     
-    # Seleção de data
-    col_data1, col_data2 = st.columns([1, 3])
+    # ======================
+    # HEADER COM DATA E BOTÃO GERAR RESUMO
+    # ======================
+    col_data1, col_data2, col_data3 = st.columns([1, 1, 2])
+    
     with col_data1:
         st.markdown("#### 📅 Selecione a Data")
         data_fechamento = st.date_input(
@@ -5436,20 +6716,55 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
             key="fechamento_data"
         )
     
+    with col_data2:
+        st.markdown("#### 🕐 Selecione o Turno")
+        # Verificar se é sábado para mostrar opções corretas
+        is_sabado = data_fechamento.weekday() == 5
+        if is_sabado:
+            opcoes_turno = ["Todos", "Manhã", "Tarde"]
+        else:
+            opcoes_turno = ["Todos", "Manhã", "Tarde", "Noite"]
+        
+        turno_selecionado_rel = st.selectbox(
+            "Turno",
+            options=opcoes_turno,
+            key="turno_selecionado_rel"
+        )
+    
+    with col_data3:
+        st.markdown("#### ⚙️ Ações")
+        col_btn1, col_btn2 = st.columns(2)
+        with col_btn1:
+            gerar_resumo = st.button("📊 Gerar Resumo", use_container_width=True, type="primary")
+        with col_btn2:
+            if st.button("🔄 Atualizar", use_container_width=True):
+                st.cache_data.clear()
+                st.rerun()
+    
     st.markdown("<hr>", unsafe_allow_html=True)
     
-    # Carregar dados
+    # ======================
+    # CARREGAR DADOS
+    # ======================
     with st.spinner("Carregando dados do Google Sheets..."):
         producoes = carregar_producoes_fechamento(data_fechamento)
         checklists, checklists_detalhes = carregar_checklists_fechamento(data_fechamento)
         faltas = carregar_faltas_fechamento(data_fechamento)
         ars, rms = carregar_ars_rms_fechamento(data_fechamento)
     
-    # Consolidar ARs e RMs
-    todos_documentos = ars + rms
+    # ======================
+    # GERAR RELATÓRIO SE BOTÃO FOR CLICADO
+    # ======================
+    if gerar_resumo:
+        gerar_relatorio_resumo(producoes, ars, rms, turno_selecionado_rel, data_fechamento)
+        st.markdown("<hr>", unsafe_allow_html=True)
+    
+    # ======================
+    # DASHBOARD RESUMIDO (MANTIDO PARA VISUALIZAÇÃO RÁPIDA)
+    # ======================
+    st.markdown("### 📊 Resumo Rápido do Dia")
     
     # KPIs do dia
-    st.markdown("### 📊 Resumo do Dia")
     col_k1, col_k2, col_k3, col_k4, col_k5 = st.columns(5)
     
     total_produzido = sum(p.get('produzido', 0) or 0 for p in producoes)
@@ -5473,7 +6788,7 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
     
     st.markdown("<hr>", unsafe_allow_html=True)
     
-    # Tabs
+    # Tabs para visualização detalhada
     tab1, tab2, tab3, tab4 = st.tabs(["📋 Produções do Dia", "✅ Checklists Turno", "🟥 Faltas", "🔧 ARs & RMs"])
     
     with tab1:
@@ -5481,12 +6796,12 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
         if producoes:
             df_display = pd.DataFrame(producoes)
             
-            colunas_exibir = ['referencia', 'inicio', 'fim', 'produzido', 'meta', 'setup', 'manut', 'observacoes', 'justificativa', 'trs_bruto']
+            colunas_exibir = ['referencia', 'inicio', 'fim', 'produzido', 'meta', 'setup', 'manut', 'observacoes', 'justificativa', 'trs_bruto', 'turno']
             colunas_existentes = [c for c in colunas_exibir if c in df_display.columns]
             
             if colunas_existentes:
                 df_display = df_display[colunas_existentes]
-                df_display.columns = ['Referência', 'Início', 'Fim', 'Produzido', 'Meta', 'Setup', 'Manut.', 'Observações', 'Justificativa', 'TRS Bruto (%)'][:len(colunas_existentes)]
+                df_display.columns = ['Referência', 'Início', 'Fim', 'Produzido', 'Meta', 'Setup', 'Manut.', 'Observações', 'Justificativa', 'TRS Bruto (%)', 'Turno'][:len(colunas_existentes)]
                 
                 def color_trs(val):
                     if isinstance(val, (int, float)):
@@ -5564,6 +6879,8 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
     with tab4:
         st.subheader("🔧 ARs & RMs - Documentos do Dia")
         st.caption(f"Documentos abertos em {data_fechamento.strftime('%d/%m/%Y')}")
+        
+        todos_documentos = ars + rms
         
         if todos_documentos:
             total_ars = len(ars)
@@ -5685,158 +7002,8 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
                                 st.markdown(f"**📊 Análise:** {doc.get('analise', '-')}")
             else:
                 st.info("📭 Nenhum documento encontrado com os filtros selecionados.")
-            
-            if todos_documentos:
-                st.markdown("---")
-                st.subheader("📊 Distribuição dos Documentos")
-                
-                col_graf1, col_graf2 = st.columns(2)
-                
-                with col_graf1:
-                    fig, ax = plt.subplots(figsize=(6, 5), facecolor=THEME['bg_card'])
-                    status_labels = ['Finalizado', 'Aberto', 'Não Respondido']
-                    status_values = [finalizadas, abertas, nao_respondidas]
-                    status_cores = ['#28a745', '#ffc107', '#dc3545']
-                    
-                    labels_filtrados = []
-                    valores_filtrados = []
-                    cores_filtradas = []
-                    for l, v, c in zip(status_labels, status_values, status_cores):
-                        if v > 0:
-                            labels_filtrados.append(l)
-                            valores_filtrados.append(v)
-                            cores_filtradas.append(c)
-                    
-                    if valores_filtrados:
-                        wedges, texts, autotexts = ax.pie(
-                            valores_filtrados, 
-                            labels=labels_filtrados, 
-                            colors=cores_filtradas,
-                            autopct='%1.1f%%',
-                            startangle=90,
-                            textprops={'fontsize': 10}
-                        )
-                        for autotext in autotexts:
-                            autotext.set_color('white')
-                            autotext.set_fontweight('bold')
-                        ax.set_title('Status dos Documentos', fontweight='bold')
-                    st.pyplot(fig)
-                    plt.close(fig)
-                
-                with col_graf2:
-                    fig, ax = plt.subplots(figsize=(6, 5), facecolor=THEME['bg_card'])
-                    tipos = ['AR', 'RM']
-                    valores_tipo = [total_ars, total_rms]
-                    cores_tipo = [THEME['accent_cyan'], THEME['accent_orange']]
-                    bars = ax.bar(tipos, valores_tipo, color=cores_tipo, alpha=0.8)
-                    ax.set_title('Documentos por Tipo', fontweight='bold')
-                    ax.set_ylabel('Quantidade')
-                    for bar, valor in zip(bars, valores_tipo):
-                        if valor > 0:
-                            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.1, 
-                                    str(valor), ha='center', va='bottom', fontweight='bold')
-                    ax.spines['top'].set_visible(False)
-                    ax.spines['right'].set_visible(False)
-                    fig.tight_layout()
-                    st.pyplot(fig)
-                    plt.close(fig)
         else:
             st.info("📭 Nenhuma AR ou RM encontrada para esta data.")
-    
-    if producoes:
-        st.markdown("<hr>", unsafe_allow_html=True)
-        st.subheader("📈 Análise do Dia")
-        
-        col_g1, col_g2 = st.columns(2)
-        
-        with col_g1:
-            df_grafico = pd.DataFrame(producoes)
-            df_grafico = df_grafico[['referencia', 'produzido', 'meta']].head(15)
-            
-            fig, ax = plt.subplots(figsize=(10, 5), facecolor=THEME['bg_card'])
-            apply_chart_style(ax, fig, "Produção vs Meta por Referência", ylabel="Quantidade")
-            
-            x = range(len(df_grafico))
-            width = 0.35
-            
-            bars1 = ax.bar([i - width/2 for i in x], df_grafico['produzido'], width, label='Produzido', color=THEME['accent_cyan'], alpha=0.8)
-            bars2 = ax.bar([i + width/2 for i in x], df_grafico['meta'], width, label='Meta', color=THEME['accent_orange'], alpha=0.8)
-            
-            ax.set_xticks(x)
-            ax.set_xticklabels(df_grafico['referencia'], rotation=45, ha='right', fontsize=8)
-            ax.legend(loc='upper right')
-            
-            fig.tight_layout()
-            st.pyplot(fig)
-            plt.close(fig)
-        
-        with col_g2:
-            df_eficiencia = pd.DataFrame(producoes)
-            df_eficiencia['eficiencia'] = df_eficiencia.apply(
-                lambda row: (row['produzido'] / row['meta'] * 100) if row['meta'] > 0 else 0, axis=1
-            )
-            df_eficiencia = df_eficiencia[['referencia', 'eficiencia']].head(15)
-            
-            fig, ax = plt.subplots(figsize=(10, 5), facecolor=THEME['bg_card'])
-            apply_chart_style(ax, fig, "Eficiência por Referência", ylabel="Eficiência (%)")
-            
-            cores = [THEME['accent_lime'] if v >= 85 else THEME['accent_orange'] if v >= 70 else THEME['accent_red'] for v in df_eficiencia['eficiencia']]
-            
-            bars = ax.barh(range(len(df_eficiencia)), df_eficiencia['eficiencia'], color=cores, alpha=0.8)
-            ax.axvline(x=85, color=THEME['accent_lime'], linestyle='--', alpha=0.7, label='Meta 85%')
-            ax.axvline(x=70, color=THEME['accent_orange'], linestyle='--', alpha=0.7, label='Alerta 70%')
-            
-            ax.set_yticks(range(len(df_eficiencia)))
-            ax.set_yticklabels(df_eficiencia['referencia'], fontsize=8)
-            ax.set_xlim(0, 110)
-            ax.legend(loc='lower right')
-            
-            for bar, v in zip(bars, df_eficiencia['eficiencia']):
-                ax.text(bar.get_width() + 1, bar.get_y() + bar.get_height()/2, f'{v:.1f}%', va='center', fontsize=8)
-            
-            fig.tight_layout()
-            st.pyplot(fig)
-            plt.close(fig)
-    
-    st.markdown("<hr>", unsafe_allow_html=True)
-    st.subheader("📋 Resumo Executivo")
-    
-    with st.container():
-        col_r1, col_r2, col_r3 = st.columns(3)
-        
-        with col_r1:
-            st.markdown(f"""
-            <div style="background: {THEME['bg_card']}; padding: 15px; border-radius: 10px; border-left: 4px solid {THEME['accent_cyan']};">
-                <b>🏭 PRODUÇÃO</b><br>
-                • Total Produzido: <b>{total_produzido:,}</b> un<br>
-                • Meta Total: <b>{total_meta:,}</b> un<br>
-                • Eficiência Global: <b>{eficiencia:.1f}%</b>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col_r2:
-            st.markdown(f"""
-            <div style="background: {THEME['bg_card']}; padding: 15px; border-radius: 10px; border-left: 4px solid {THEME['accent_red']};">
-                <b>⚠️ PARADAS</b><br>
-                • Setup Total: <b>{minutos_para_horas_str(total_setup_min)}</b><br>
-                • Manutenção Total: <b>{minutos_para_horas_str(total_manut_min)}</b><br>
-                • Total Paradas: <b>{minutos_para_horas_str(total_setup_min + total_manut_min)}</b>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col_r3:
-            itens_baixa = sum(1 for p in producoes if (p.get('produzido', 0) or 0) / max(p.get('meta', 1), 1) * 100 < 80)
-            ars_abertas = sum(1 for d in todos_documentos if str(d.get('status', '')).upper().strip() in ['ABERTO', 'EM ANDAMENTO'])
-            
-            st.markdown(f"""
-            <div style="background: {THEME['bg_card']}; padding: 15px; border-radius: 10px; border-left: 4px solid {THEME['accent_lime']};">
-                <b>📊 INDICADORES</b><br>
-                • Itens com baixa prod.: <b>{itens_baixa}</b><br>
-                • Checklists realizados: <b>{sum(1 for v in checklists.values() if v)}/3</b><br>
-                • Total registro faltas: <b>{len(faltas)}</b><br>
-                • ARs/RMs do dia: <b>{len(todos_documentos)}</b> ({ars_abertas} abertos)
-            </div>
-            """, unsafe_allow_html=True)
     
     st.markdown(f"""
     <div style="text-align:right;padding:16px 0 8px;
@@ -5846,8 +7013,1774 @@ elif aba_selecionada == 'FECHAMENTO TURNO':
     </div>
     """, unsafe_allow_html=True)
 
-
 # ==================================================================================================
+# MANUTENÇÃO PREVENTIVA - COM COLUNA ANÁLISE NA TABELA PRINCIPAL
+# ==================================================================================================
+elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
+    render_page_header("MANUTENÇÃO PREVENTIVA", f"Plano de Manutenção · Atualizado {get_horario_brasilia()}", THEME['accent_purple'])
+    
+    # ======================
+    # INICIALIZAR SESSION STATE
+    # ======================
+    if 'editando_registro' not in st.session_state:
+        st.session_state.editando_registro = None
+    
+    if 'excluindo_registro' not in st.session_state:
+        st.session_state.excluindo_registro = None
+    
+    if 'mes_calendario' not in st.session_state:
+        st.session_state.mes_calendario = datetime.now().replace(day=1)
+    
+    if 'id_selecionado_novo' not in st.session_state:
+        st.session_state.id_selecionado_novo = None
+    
+    if 'termo_busca_maquina' not in st.session_state:
+        st.session_state.termo_busca_maquina = ""
+    
+    # ======================
+    # CONSTANTES
+    # ======================
+    OPCOES_SETORES_PREVENTIVA = [
+        "Produção", "Corte", "Vidraria", "Rodaria", "Embalagem", "Expedição", 
+        "Qualidade", "Ferramentaria", "Manutenção", "Pintura", "Quimica", 
+        "Escritório", "RH", "Portaria", "Loja", "Furação", "Fosco", 
+        "Têmpera", "Area Externa", "Patio", "Outros"
+    ]
+    
+    # ======================
+    # CLASSES DE DADOS
+    # ======================
+    @dataclass
+    class RegistroPreventiva:
+        id: Optional[str] = None
+        data: Optional[datetime] = None
+        maquina: str = ""
+        setor: str = ""
+        descricao: str = ""
+        execucao: str = ""
+        analise: str = ""
+        status: str = "PROGRAMADO"
+        linha: Optional[int] = None
+        eletrica: bool = False
+        mecanica: bool = False
+        liberado: bool = False
+    
+    @dataclass
+    class CadastroMaquina:
+        id: Optional[str] = None
+        maquina: str = ""
+        setor: str = ""
+    
+    # ======================
+    # FUNÇÕES AUXILIARES
+    # ======================
+    def calcular_status_preventiva(data_agendada: date, analise: str, eletrica: bool, mecanica: bool) -> str:
+        hoje = datetime.now().date()
+        
+        # Status FINALIZADO: tem análise E elétrica E mecânica
+        if analise and analise.strip() and eletrica and mecanica:
+            return "FINALIZADO"
+        # Status EM ATRASO: data passou e não está finalizado
+        elif data_agendada < hoje:
+            return "EM ATRASO"
+        # Status EM EXECUÇÃO: data atual
+        elif data_agendada == hoje:
+            return "EM EXECUÇÃO"
+        else:
+            return "PROGRAMADO"
+    
+    def encontrar_linha_preventiva(id_maquina: str, data_agendada: date) -> Optional[int]:
+        try:
+            client = get_gspread_client()
+            if client is None:
+                return None
+            
+            spreadsheet = client.open_by_key(ID_PLANILHA_PREVENTIVA)
+            sheet = spreadsheet.worksheet(ABA_PREVENTIVA)
+            todos_dados = sheet.get_all_values()
+            
+            data_str = data_agendada.strftime("%d/%m/%Y")
+            
+            for idx, row in enumerate(todos_dados, start=1):
+                if idx == 1:
+                    continue
+                if len(row) >= 2:
+                    if row[0] == id_maquina and row[1] == data_str:
+                        return idx
+            return None
+        except Exception as e:
+            return None
+    
+    # ======================
+    # FUNÇÕES DA PLANILHA PREVENTIVA
+    # ======================
+    @retry_on_quota()
+    @st.cache_data(ttl=300)
+    def carregar_preventivas(filtros: Dict[str, Any] = None) -> List[RegistroPreventiva]:
+        registros = []
+        
+        try:
+            client = get_gspread_client()
+            if client is None:
+                return registros
+            
+            spreadsheet = client.open_by_key(ID_PLANILHA_PREVENTIVA)
+            
+            try:
+                sheet = spreadsheet.worksheet(ABA_PREVENTIVA)
+            except Exception as e:
+                sheet = spreadsheet.add_worksheet(title=ABA_PREVENTIVA, rows=1000, cols=20)
+                cabecalho = ["ID", "DATA", "MÁQUINA", "SETOR", "DESCRIÇÃO", "EXECUÇÃO", "ANÁLISE", "STATUS", "ELÉTRICA", "MECÂNICA", "LIBERADO"]
+                sheet.append_row(cabecalho)
+                return registros
+            
+            todos_dados = sheet.get_all_values()
+            
+            for idx, row in enumerate(todos_dados[1:], start=2):
+                if len(row) < 8 or not row[0] or not row[0].strip():
+                    continue
+                
+                try:
+                    registro = RegistroPreventiva()
+                    registro.id = row[0].strip()
+                    registro.linha = idx
+                    
+                    data_str = row[1].strip() if len(row) > 1 and row[1] else ""
+                    if data_str:
+                        try:
+                            registro.data = datetime.strptime(data_str, "%d/%m/%Y")
+                        except:
+                            registro.data = converter_data_br(data_str)
+                    
+                    registro.maquina = row[2].strip() if len(row) > 2 else ""
+                    registro.setor = row[3].strip() if len(row) > 3 else ""
+                    registro.descricao = row[4].strip() if len(row) > 4 else ""
+                    registro.execucao = row[5].strip() if len(row) > 5 else ""
+                    registro.analise = row[6].strip() if len(row) > 6 else ""
+                    
+                    # Carregar checkboxes (se existirem as colunas)
+                    if len(row) > 8:
+                        registro.eletrica = row[8].strip().upper() == "TRUE" if len(row) > 8 else False
+                    if len(row) > 9:
+                        registro.mecanica = row[9].strip().upper() == "TRUE" if len(row) > 9 else False
+                    if len(row) > 10:
+                        registro.liberado = row[10].strip().upper() == "TRUE" if len(row) > 10 else False
+                    
+                    if registro.data:
+                        registro.status = calcular_status_preventiva(registro.data.date(), registro.analise, registro.eletrica, registro.mecanica)
+                    else:
+                        registro.status = "PROGRAMADO"
+                    
+                    registros.append(registro)
+                except Exception as e:
+                    continue
+            
+            if filtros:
+                registros_filtrados = []
+                for r in registros:
+                    incluir = True
+                    if filtros.get('id') and filtros['id'].upper() != r.id.upper():
+                        incluir = False
+                    if filtros.get('maquina') and filtros['maquina'].lower() not in r.maquina.lower():
+                        incluir = False
+                    if filtros.get('setor') and filtros['setor'].upper() != r.setor.upper():
+                        incluir = False
+                    if filtros.get('status') and filtros['status'].upper() != r.status.upper():
+                        incluir = False
+                    if incluir:
+                        registros_filtrados.append(r)
+                return registros_filtrados
+            
+            return registros
+        except Exception as e:
+            return registros
+    
+    @retry_on_quota()
+    @st.cache_data(ttl=600)
+    def carregar_cadastro_maquinas() -> List[CadastroMaquina]:
+        """Carrega o cadastro de máquinas do Google Sheets"""
+        registros = []
+        try:
+            client = get_gspread_client()
+            if client is None:
+                st.error("❌ Não foi possível conectar ao Google Sheets")
+                return registros
+            
+            spreadsheet = client.open_by_key(ID_PLANILHA_PREVENTIVA)
+            
+            # Tentar abrir a aba CADASTRO
+            try:
+                sheet = spreadsheet.worksheet(ABA_CADASTRO_PREVENTIVA)
+            except Exception as e:
+                st.warning(f"Aba '{ABA_CADASTRO_PREVENTIVA}' não encontrada. Criando nova aba...")
+                # Criar a aba se não existir
+                sheet = spreadsheet.add_worksheet(title=ABA_CADASTRO_PREVENTIVA, rows=1000, cols=10)
+                cabecalho = ["ID", "MÁQUINA", "SETOR"]
+                sheet.append_row(cabecalho)
+                return registros
+            
+            # Ler todos os dados
+            todos_dados = sheet.get_all_values()
+            
+            if len(todos_dados) < 2:
+                st.info("Nenhum dado encontrado na aba CADASTRO. Adicione máquinas para começar.")
+                return registros
+            
+            # Processar linhas (pular cabeçalho)
+            for row_idx, row in enumerate(todos_dados[1:], start=2):
+                if len(row) < 3:
+                    continue
+                
+                id_val = row[0].strip() if row[0] else ""
+                maquina_val = row[1].strip() if len(row) > 1 and row[1] else ""
+                setor_val = row[2].strip() if len(row) > 2 and row[2] else ""
+                
+                if not id_val or not maquina_val:
+                    continue
+                
+                try:
+                    registro = CadastroMaquina()
+                    registro.id = id_val
+                    registro.maquina = maquina_val
+                    registro.setor = setor_val
+                    registros.append(registro)
+                except Exception as e:
+                    continue
+            
+            return registros
+            
+        except Exception as e:
+            st.error(f"Erro ao carregar cadastro de máquinas: {str(e)}")
+            return registros
+    
+    def salvar_preventiva(registro: RegistroPreventiva) -> tuple:
+        try:
+            client = get_gspread_client()
+            if client is None:
+                return False, "❌ Erro ao conectar ao Google Sheets"
+            
+            spreadsheet = client.open_by_key(ID_PLANILHA_PREVENTIVA)
+            sheet = spreadsheet.worksheet(ABA_PREVENTIVA)
+            
+            if registro.data:
+                registro.status = calcular_status_preventiva(registro.data.date(), registro.analise, registro.eletrica, registro.mecanica)
+            
+            data_formatada = registro.data.strftime("%d/%m/%Y") if registro.data else ""
+            
+            dados = [
+                registro.id, data_formatada, registro.maquina, registro.setor,
+                registro.descricao, registro.execucao, registro.analise, registro.status,
+                str(registro.eletrica).upper(), str(registro.mecanica).upper(), str(registro.liberado).upper()
+            ]
+            
+            sheet.append_row(dados)
+            st.cache_data.clear()
+            return True, "✅ Manutenção salva com sucesso!"
+        except Exception as e:
+            return False, f"❌ Erro ao salvar: {str(e)}"
+    
+    def atualizar_preventiva(registro: RegistroPreventiva) -> tuple:
+        try:
+            client = get_gspread_client()
+            if client is None:
+                return False, "❌ Erro ao conectar ao Google Sheets"
+            
+            spreadsheet = client.open_by_key(ID_PLANILHA_PREVENTIVA)
+            sheet = spreadsheet.worksheet(ABA_PREVENTIVA)
+            
+            # Atualizar liberado baseado nos checkboxes
+            registro.liberado = registro.eletrica and registro.mecanica
+            
+            if registro.data:
+                registro.status = calcular_status_preventiva(registro.data.date(), registro.analise, registro.eletrica, registro.mecanica)
+            
+            linha = encontrar_linha_preventiva(registro.id, registro.data.date())
+            
+            if not linha:
+                return False, f"❌ Registro não encontrado: ID={registro.id}"
+            
+            data_formatada = registro.data.strftime("%d/%m/%Y") if registro.data else ""
+            
+            dados = [
+                registro.id, data_formatada, registro.maquina, registro.setor,
+                registro.descricao, registro.execucao, registro.analise, registro.status,
+                str(registro.eletrica).upper(), str(registro.mecanica).upper(), str(registro.liberado).upper()
+            ]
+            
+            for col, valor in enumerate(dados, start=1):
+                sheet.update_cell(linha, col, valor)
+            
+            st.cache_data.clear()
+            return True, "✅ Registro atualizado com sucesso!"
+        except Exception as e:
+            return False, f"❌ Erro ao atualizar: {str(e)}"
+    
+    def excluir_preventiva(id_maquina: str, data_agendada: date) -> tuple:
+        try:
+            client = get_gspread_client()
+            if client is None:
+                return False, "❌ Erro ao conectar ao Google Sheets"
+            
+            spreadsheet = client.open_by_key(ID_PLANILHA_PREVENTIVA)
+            sheet = spreadsheet.worksheet(ABA_PREVENTIVA)
+            
+            linha = encontrar_linha_preventiva(id_maquina, data_agendada)
+            
+            if not linha:
+                return False, f"❌ Registro não encontrado: ID={id_maquina}"
+            
+            sheet.delete_rows(linha)
+            st.cache_data.clear()
+            return True, "✅ Registro excluído com sucesso!"
+        except Exception as e:
+            return False, f"❌ Erro ao excluir: {str(e)}"
+    
+    def salvar_cadastro_maquina(registro: CadastroMaquina, eh_alteracao: bool = False) -> tuple:
+        """Salva ou atualiza uma máquina no cadastro"""
+        try:
+            client = get_gspread_client()
+            if client is None:
+                return False, "❌ Não foi possível conectar ao Google Sheets"
+            
+            spreadsheet = client.open_by_key(ID_PLANILHA_PREVENTIVA)
+            
+            # Garantir que a aba existe
+            try:
+                sheet = spreadsheet.worksheet(ABA_CADASTRO_PREVENTIVA)
+            except:
+                sheet = spreadsheet.add_worksheet(title=ABA_CADASTRO_PREVENTIVA, rows=1000, cols=10)
+                cabecalho = ["ID", "MÁQUINA", "SETOR"]
+                sheet.append_row(cabecalho)
+            
+            dados = [registro.id, registro.maquina, registro.setor]
+            
+            if eh_alteracao:
+                # Buscar pela coluna ID (coluna 1)
+                try:
+                    cell = sheet.find(registro.id, in_column=1)
+                    if cell:
+                        # Atualizar linha existente
+                        for col, valor in enumerate(dados, start=1):
+                            sheet.update_cell(cell.row, col, valor)
+                    else:
+                        # Se não encontrou, adicionar nova linha
+                        sheet.append_row(dados)
+                except Exception as e:
+                    print(f"Erro na busca: {e}")
+                    sheet.append_row(dados)
+            else:
+                # Verificar se ID já existe
+                try:
+                    cell = sheet.find(registro.id, in_column=1)
+                    if cell:
+                        return False, f"❌ ID {registro.id} já existe!"
+                except:
+                    pass
+                sheet.append_row(dados)
+            
+            st.cache_data.clear()
+            return True, "✅ Cadastro salvo com sucesso!"
+            
+        except Exception as e:
+            print(f"Erro ao salvar cadastro: {traceback.format_exc()}")
+            return False, f"❌ Erro ao salvar cadastro: {str(e)}"
+    
+    def excluir_cadastro_maquina(id_maquina: str) -> tuple:
+        try:
+            client = get_gspread_client()
+            if client is None:
+                return False, "❌ Erro ao conectar ao Google Sheets"
+            
+            spreadsheet = client.open_by_key(ID_PLANILHA_PREVENTIVA)
+            sheet = spreadsheet.worksheet(ABA_CADASTRO_PREVENTIVA)
+            
+            cell = sheet.find(id_maquina, in_column=1)
+            if cell:
+                sheet.delete_rows(cell.row)
+                st.cache_data.clear()
+                return True, "✅ Cadastro excluído com sucesso!"
+            return False, "❌ Cadastro não encontrado"
+        except Exception as e:
+            return False, f"❌ Erro ao excluir cadastro: {str(e)}"
+    
+    def enviar_email_preventiva(registro: RegistroPreventiva, acao: str = "CRIAÇÃO") -> bool:
+        try:
+            email_config = {
+                "usuario": "erp@luvidarte.com.br",
+                "senha": "Qualidade123#",
+                "smtp_server": "email-ssl.com.br",
+                "smtp_port": 465
+            }
+            
+            destinatarios = [
+                "manutencao@luvidarte.com.br",
+                "engenharia@luvidarte.com.br",
+                "qualidade@luvidarte.com.br"
+            ]
+            
+            data_str = registro.data.strftime("%d/%m/%Y") if registro.data else "Não agendada"
+            liberado_str = "✅ LIBERADO" if registro.liberado else "⏳ AGUARDANDO"
+            
+            msg = MIMEMultipart()
+            msg["From"] = email_config["usuario"]
+            msg["To"] = ", ".join(destinatarios)
+            msg["Subject"] = f"[{acao}] Manutenção Preventiva - {registro.maquina} - {data_str}"
+            
+            corpo = f"""
+            <html><body>
+            <h2>{acao} - Manutenção Preventiva</h2>
+            <p><strong>ID:</strong> {registro.id}</p>
+            <p><strong>Máquina:</strong> {registro.maquina}</p>
+            <p><strong>Setor:</strong> {registro.setor}</p>
+            <p><strong>Data Agendada:</strong> {data_str}</p>
+            <p><strong>Descrição:</strong> {registro.descricao}</p>
+            <p><strong>Responsável:</strong> {registro.execucao or 'Não definido'}</p>
+            <p><strong>Liberação Elétrica:</strong> {'✅ SIM' if registro.eletrica else '❌ NÃO'}</p>
+            <p><strong>Liberação Mecânica:</strong> {'✅ SIM' if registro.mecanica else '❌ NÃO'}</p>
+            <p><strong>Status Liberação:</strong> {liberado_str}</p>
+            <p><strong>Status:</strong> {registro.status}</p>
+            </body></html>
+            """
+            
+            msg.attach(MIMEText(corpo, "html"))
+            
+            with smtplib.SMTP_SSL(email_config["smtp_server"], email_config["smtp_port"], timeout=30) as server:
+                server.login(email_config["usuario"], email_config["senha"])
+                server.send_message(msg)
+            
+            return True
+        except Exception as e:
+            return False
+    
+    # ======================
+    # TABS PRINCIPAIS
+    # ======================
+    tab_agenda, tab_cadastro = st.tabs(["📅 Agenda de Manutenção", "🏭 Cadastro de Máquinas"])
+    
+    with tab_agenda:
+        st.subheader("📅 Plano de Manutenção Preventiva")
+        
+        # FILTROS
+        with st.expander("🔍 Filtros", expanded=False):
+            cadastros_filtro = carregar_cadastro_maquinas()
+            col_f1, col_f2, col_f3 = st.columns(3)
+            
+            with col_f1:
+                opcoes_maquinas = ["(Todas)"] + [c.maquina for c in cadastros_filtro if c.maquina]
+                filtro_maquina = st.selectbox("Máquina", opcoes_maquinas, key="filtro_maquina_pv")
+            
+            with col_f2:
+                opcoes_setores = sorted(list(set([c.setor for c in cadastros_filtro if c.setor])))
+                opcoes_setores = ["(Todos)"] + opcoes_setores
+                filtro_setor = st.selectbox("Setor", opcoes_setores, key="filtro_setor_pv")
+            
+            with col_f3:
+                opcoes_status = ["(Todos)", "PROGRAMADO", "EM EXECUÇÃO", "EM ATRASO", "FINALIZADO"]
+                filtro_status = st.selectbox("Status", opcoes_status, key="filtro_status_pv")
+        
+        # Aplicar filtros
+        filtros = {}
+        if filtro_maquina != "(Todas)":
+            filtros['maquina'] = filtro_maquina
+        if filtro_setor != "(Todos)":
+            filtros['setor'] = filtro_setor
+        if filtro_status != "(Todos)":
+            filtros['status'] = filtro_status
+        
+        with st.spinner("Carregando agenda..."):
+            registros = carregar_preventivas(filtros if filtros else None)
+        
+        # ====================== CALENDÁRIO MENSAL ======================
+        st.markdown("---")
+        st.subheader("📆 Calendário Mensal")
+        
+        # Navegação do calendário
+        col_cal1, col_cal2, col_cal3 = st.columns([1, 3, 1])
+        with col_cal1:
+            if st.button("◀ Mês Anterior", key="btn_mes_anterior", use_container_width=True):
+                st.session_state.mes_calendario = st.session_state.mes_calendario - timedelta(days=1)
+                st.session_state.mes_calendario = st.session_state.mes_calendario.replace(day=1)
+                st.rerun()
+        
+        with col_cal2:
+            st.markdown(f"<h3 style='text-align: center;'>{st.session_state.mes_calendario.strftime('%B %Y')}</h3>", unsafe_allow_html=True)
+        
+        with col_cal3:
+            if st.button("Próximo Mês ▶", key="btn_mes_proximo", use_container_width=True):
+                next_month = st.session_state.mes_calendario.replace(day=28) + timedelta(days=4)
+                st.session_state.mes_calendario = next_month.replace(day=1)
+                st.rerun()
+        
+        # Criar mapa de eventos por data
+        eventos_por_data = {}
+        for reg in registros:
+            if reg.data:
+                data_str = reg.data.strftime("%Y-%m-%d")
+                if data_str not in eventos_por_data:
+                    eventos_por_data[data_str] = []
+                eventos_por_data[data_str].append(reg)
+        
+        # CSS do calendário
+        st.markdown("""
+        <style>
+        .calendario-dia {
+            min-height: 85px;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            padding: 5px;
+            margin: 2px;
+            background: #fafafa;
+            transition: all 0.2s ease;
+        }
+        .calendario-dia:hover {
+            transform: scale(1.02);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            z-index: 10;
+        }
+        .calendario-dia-num {
+            font-size: 13px;
+            font-weight: bold;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 3px;
+            margin-bottom: 5px;
+            color: #333;
+        }
+        .calendario-evento {
+            font-size: 9px;
+            padding: 3px 5px;
+            margin: 2px 0;
+            border-radius: 4px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .calendario-evento:hover {
+            opacity: 0.85;
+            transform: scale(1.02);
+        }
+        .evento-programado { background: #0078D4; color: white; border-left: 3px solid #005a9e; }
+        .evento-execucao { background: #FFB900; color: #333; border-left: 3px solid #d49c00; }
+        .evento-atraso { background: #E81123; color: white; border-left: 3px solid #a80000; }
+        .evento-finalizado { background: #107C10; color: white; border-left: 3px solid #0a5a0a; }
+        .dia-hoje {
+            background: #fff3cd !important;
+            border: 2px solid #FFB900 !important;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        
+        # Gerar calendário
+        import calendar
+        cal = calendar.monthcalendar(st.session_state.mes_calendario.year, st.session_state.mes_calendario.month)
+        dias_semana = ["SEG", "TER", "QUA", "QUI", "SEX", "SAB", "DOM"]
+        
+        # Cabeçalho dos dias da semana
+        cols_header = st.columns(7)
+        for i, dia in enumerate(dias_semana):
+            with cols_header[i]:
+                st.markdown(f"<div style='text-align:center;font-weight:bold;padding:8px;background:#f0f0f0;border-radius:5px;'>{dia}</div>", unsafe_allow_html=True)
+        
+        # Dias do mês
+        for semana in cal:
+            cols = st.columns(7)
+            for i, dia in enumerate(semana):
+                with cols[i]:
+                    if dia == 0:
+                        st.markdown("<div class='calendario-dia' style='background:#f5f5f5;opacity:0.5;'></div>", unsafe_allow_html=True)
+                    else:
+                        data_atual = st.session_state.mes_calendario.replace(day=dia)
+                        data_str = data_atual.strftime("%Y-%m-%d")
+                        eventos = eventos_por_data.get(data_str, [])
+                        
+                        # Destacar dia atual
+                        if data_atual.date() == datetime.now().date():
+                            classe_hoje = "dia-hoje"
+                        else:
+                            classe_hoje = ""
+                        
+                        html_dia = f'<div class="calendario-dia {classe_hoje}">'
+                        html_dia += f'<div class="calendario-dia-num">{dia}</div>'
+                        
+                        for evento in eventos[:3]:
+                            if evento.status == "PROGRAMADO":
+                                classe = "evento-programado"
+                            elif evento.status == "EM EXECUÇÃO":
+                                classe = "evento-execucao"
+                            elif evento.status == "EM ATRASO":
+                                classe = "evento-atraso"
+                            else:
+                                classe = "evento-finalizado"
+                            
+                            liberado_icon = "✅" if evento.liberado else "⏳"
+                            titulo = f"{evento.maquina}: {evento.descricao[:35]} | {liberado_icon}"
+                            html_dia += f'<div class="calendario-evento {classe}" title="{titulo}">🔧 {evento.maquina[:10]} {liberado_icon}</div>'
+                        
+                        if len(eventos) > 3:
+                            html_dia += f'<div class="calendario-evento" style="background:#999;color:white;text-align:center;">+{len(eventos)-3}</div>'
+                        
+                        html_dia += '</div>'
+                        st.markdown(html_dia, unsafe_allow_html=True)
+        
+        # Legenda do calendário
+        st.markdown("---")
+        col_leg1, col_leg2, col_leg3, col_leg4, col_leg5, col_leg6 = st.columns(6)
+        with col_leg1:
+            st.markdown("<span style='background:#0078D4; padding:2px 8px; border-radius:4px; color:white; font-size:11px;'>🔹 PROGRAMADO</span>", unsafe_allow_html=True)
+        with col_leg2:
+            st.markdown("<span style='background:#FFB900; padding:2px 8px; border-radius:4px; color:#333; font-size:11px;'>🔸 EM EXECUÇÃO</span>", unsafe_allow_html=True)
+        with col_leg3:
+            st.markdown("<span style='background:#E81123; padding:2px 8px; border-radius:4px; color:white; font-size:11px;'>🔴 EM ATRASO</span>", unsafe_allow_html=True)
+        with col_leg4:
+            st.markdown("<span style='background:#107C10; padding:2px 8px; border-radius:4px; color:white; font-size:11px;'>✅ FINALIZADO</span>", unsafe_allow_html=True)
+        with col_leg5:
+            st.markdown("<span style='background:#fff3cd; padding:2px 8px; border-radius:4px; color:#333; border:1px solid #FFB900; font-size:11px;'>📅 HOJE</span>", unsafe_allow_html=True)
+        with col_leg6:
+            st.markdown("<span style='font-size:11px;'>✅ Liberado | ⏳ Aguardando</span>", unsafe_allow_html=True)
+        
+        # ====================== TABELA DE REGISTROS DO MÊS ======================
+        st.markdown("---")
+        st.subheader(f"📋 Manutenções - {st.session_state.mes_calendario.strftime('%B %Y')}")
+        
+        ano_mes_atual = st.session_state.mes_calendario.strftime("%Y-%m")
+        registros_mes = [r for r in registros if r.data and r.data.strftime("%Y-%m") == ano_mes_atual]
+        
+        if registros_mes:
+            dados_tabela = []
+            for reg in registros_mes:
+                if reg.status == "PROGRAMADO":
+                    status_display = "🟦 PROGRAMADO"
+                elif reg.status == "EM EXECUÇÃO":
+                    status_display = "🟡 EM EXECUÇÃO"
+                elif reg.status == "EM ATRASO":
+                    status_display = "🔴 EM ATRASO"
+                else:
+                    status_display = "✅ FINALIZADO"
+                
+                liberado_display = "✅ LIBERADO" if reg.liberado else "⏳ AGUARDANDO"
+                analise_display = reg.analise[:40] + "..." if len(reg.analise) > 40 else reg.analise if reg.analise else "-"
+                
+                dados_tabela.append({
+                    "ID": reg.id, 
+                    "Data": reg.data.strftime("%d/%m/%Y"), 
+                    "Máquina": reg.maquina,
+                    "Setor": reg.setor, 
+                    "Descrição": reg.descricao[:40] + "..." if len(reg.descricao) > 40 else reg.descricao,
+                    "Análise": analise_display,
+                    "Elétrica": "✅" if reg.eletrica else "❌",
+                    "Mecânica": "✅" if reg.mecanica else "❌",
+                    "Liberado": liberado_display,
+                    "Status": status_display
+                })
+            
+            df_tabela = pd.DataFrame(dados_tabela)
+            st.dataframe(df_tabela, use_container_width=True, height=500)
+            
+            st.caption(f"Total: {len(registros_mes)} manutenções neste mês | 💡 Para FINALIZAR: marque Elétrica ✅ + Mecânica ✅ e preencha a Análise")
+        else:
+            st.info("📭 Nenhuma manutenção programada para este mês.")
+        
+        # ====================== CRUD - GERENCIAR MANUTENÇÕES ======================
+        st.markdown("---")
+        st.subheader("✏️ Gerenciar Manutenções")
+        
+        acao = st.radio("Ação:", ["➕ Nova Manutenção", "✏️ Editar Manutenção", "🗑️ Excluir Manutenção"], horizontal=True)
+        
+        # ====================== NOVA MANUTENÇÃO COM COMBOBOX DE PESQUISA ======================
+        if acao == "➕ Nova Manutenção":
+            with st.form("nova_preventiva"):
+                # Carregar cadastro de máquinas
+                cadastros_novo = carregar_cadastro_maquinas()
+                
+                if not cadastros_novo:
+                    st.warning("⚠️ Nenhuma máquina cadastrada. Por favor, cadastre máquinas na aba 'Cadastro de Máquinas' primeiro.")
+                    st.form_submit_button("💾 SALVAR MANUTENÇÃO", disabled=True, use_container_width=True)
+                else:
+                    # Criar dicionários para lookup rápido
+                    dict_info_maquinas = {c.id: {"nome": c.maquina, "setor": c.setor} for c in cadastros_novo}
+                    
+                    # Opção de ordenar por nome para facilitar busca
+                    maquinas_ordenadas = sorted(cadastros_novo, key=lambda x: x.maquina)
+                    
+                    # CSS personalizado para o campo de busca
+                    st.markdown("""
+                    <style>
+                    div[data-testid="stTextInput"] input {
+                        font-size: 14px;
+                    }
+                    .search-info {
+                        font-size: 12px;
+                        color: #666;
+                        margin-top: -10px;
+                        margin-bottom: 10px;
+                    }
+                    </style>
+                    """, unsafe_allow_html=True)
+                    
+                    # Campo de busca com texto
+                    st.markdown("### 🔍 Buscar Máquina")
+                    st.caption("Digite parte do nome, ID ou setor da máquina")
+                    
+                    termo_busca = st.text_input(
+                        "🔎 Pesquisar",
+                        value=st.session_state.termo_busca_maquina,
+                        key="campo_busca_maquina",
+                        placeholder="Ex: Prensa, MAQ001, Produção...",
+                        label_visibility="collapsed"
+                    )
+                    
+                    # Atualizar session state
+                    st.session_state.termo_busca_maquina = termo_busca
+                    
+                    # Filtrar máquinas baseado no termo de busca
+                    if termo_busca:
+                        termo_lower = termo_busca.lower()
+                        maquinas_filtradas = [
+                            m for m in maquinas_ordenadas 
+                            if termo_lower in m.id.lower() 
+                            or termo_lower in m.maquina.lower() 
+                            or termo_lower in m.setor.lower()
+                        ]
+                    else:
+                        maquinas_filtradas = maquinas_ordenadas
+                    
+                    # Mostrar resultado da busca
+                    if termo_busca:
+                        if maquinas_filtradas:
+                            st.success(f"✅ Encontradas {len(maquinas_filtradas)} máquina(s)")
+                        else:
+                            st.warning(f"⚠️ Nenhuma máquina encontrada com '{termo_busca}'")
+                            st.info("💡 Dica: Tente buscar por parte do nome, ID ou setor")
+                    
+                    # Selectbox com as máquinas filtradas
+                    if maquinas_filtradas:
+                        opcoes_select = [
+                            f"{m.id} | {m.maquina} | {m.setor}" 
+                            for m in maquinas_filtradas
+                        ]
+                        
+                        selecao_formatada = st.selectbox(
+                            "📋 Selecione a máquina",
+                            options=opcoes_select,
+                            key="select_maquina_nova",
+                            help="Selecione a máquina desejada da lista filtrada"
+                        )
+                        
+                        # Extrair o ID da seleção
+                        if selecao_formatada:
+                            id_selecionado = selecao_formatada.split(" | ")[0].strip()
+                            st.session_state.id_selecionado_novo = id_selecionado
+                            
+                            # Buscar informações completas
+                            info = dict_info_maquinas.get(id_selecionado, {})
+                            maquina_selecionada = info.get("nome", "")
+                            setor_selecionado = info.get("setor", "")
+                        else:
+                            id_selecionado = None
+                            maquina_selecionada = ""
+                            setor_selecionado = ""
+                    else:
+                        id_selecionado = None
+                        maquina_selecionada = ""
+                        setor_selecionado = ""
+                    
+                    # Linha divisória
+                    st.markdown("---")
+                    
+                    # Campos do formulário
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.markdown("### 📋 Dados da Máquina")
+                        
+                        # ID (automático)
+                        st.text_input(
+                            "ID da Máquina*", 
+                            value=id_selecionado if id_selecionado else "", 
+                            disabled=True,
+                            key="novo_id_display",
+                            help="Selecionado automaticamente ao escolher a máquina"
+                        )
+                        
+                        # Nome da Máquina (automático)
+                        st.text_input(
+                            "Máquina*", 
+                            value=maquina_selecionada, 
+                            disabled=True,
+                            key="novo_maquina_display"
+                        )
+                        
+                        # Setor (automático)
+                        st.text_input(
+                            "Setor*", 
+                            value=setor_selecionado, 
+                            disabled=True,
+                            key="novo_setor_display"
+                        )
+                        
+                        # Data agendada
+                        data_agendada = st.date_input(
+                            "📅 Data Agendada*", 
+                            value=datetime.now().date(), 
+                            key="novo_data"
+                        )
+                    
+                    with col2:
+                        st.markdown("### 🔧 Informações da Manutenção")
+                        
+                        descricao = st.text_area(
+                            "📝 Descrição do Serviço*", 
+                            height=100, 
+                            key="novo_descricao",
+                            placeholder="Descreva detalhadamente o serviço a ser executado..."
+                        )
+                        
+                        execucao = st.text_input(
+                            "👤 Responsável pela Execução", 
+                            key="novo_execucao",
+                            placeholder="Nome do técnico responsável"
+                        )
+                        
+                        analise = st.text_area(
+                            "📊 Análise / Resultado", 
+                            height=80, 
+                            key="novo_analise", 
+                            placeholder="Preencha APÓS a execução da manutenção (resultados, observações, etc.)",
+                            help="Este campo deve ser preenchido após a conclusão da manutenção"
+                        )
+                    
+                    # Informação sobre liberações
+                    st.info("ℹ️ **Nota:** As liberações Elétrica e Mecânica serão marcadas na edição, após a execução da manutenção.")
+                    
+                    # Botão de submit
+                    col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
+                    with col_btn2:
+                        submitted = st.form_submit_button(
+                            "💾 SALVAR MANUTENÇÃO", 
+                            type="primary", 
+                            use_container_width=True
+                        )
+                    
+                    if submitted:
+                        # Validações
+                        if not id_selecionado:
+                            st.error("❌ Selecione uma máquina na lista!")
+                        elif not descricao or not descricao.strip():
+                            st.error("❌ Preencha a descrição do serviço!")
+                        elif not data_agendada:
+                            st.error("❌ Selecione uma data válida!")
+                        else:
+                            # Criar registro
+                            novo_registro = RegistroPreventiva(
+                                id=id_selecionado, 
+                                data=datetime.combine(data_agendada, datetime.min.time()),
+                                maquina=maquina_selecionada, 
+                                setor=setor_selecionado, 
+                                descricao=descricao.strip(),
+                                execucao=execucao.strip(), 
+                                analise=analise.strip() if analise else "",
+                                eletrica=False,
+                                mecanica=False,
+                                liberado=False
+                            )
+                            
+                            # Salvar
+                            sucesso, mensagem = salvar_preventiva(novo_registro)
+                            
+                            if sucesso:
+                                st.success(mensagem)
+                                # Tentar enviar email
+                                try:
+                                    enviar_email_preventiva(novo_registro, "CRIAÇÃO")
+                                except:
+                                    pass
+                                
+                                # Limpar campos da busca
+                                st.session_state.termo_busca_maquina = ""
+                                st.session_state.id_selecionado_novo = None
+                                
+                                # Recarregar página
+                                st.rerun()
+                            else:
+                                st.error(mensagem)
+        
+        # ====================== EDITAR MANUTENÇÃO ======================
+        elif acao == "✏️ Editar Manutenção":
+            
+            # Botão para cancelar edição
+            if st.session_state.editando_registro is not None:
+                if st.button("❌ Cancelar Edição", key="btn_cancelar_edicao", use_container_width=True):
+                    st.session_state.editando_registro = None
+                    st.rerun()
+            
+            # Formulário de busca
+            if st.session_state.editando_registro is None:
+                with st.form("buscar_para_editar"):
+                    st.info("🔍 Informe o ID da Máquina e a Data da Manutenção para editar")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        id_busca = st.text_input("ID da Máquina*", key="edit_busca_id")
+                    with col2:
+                        data_busca = st.date_input("Data da Manutenção*", value=datetime.now().date(), key="edit_busca_data")
+                    
+                    buscar_btn = st.form_submit_button("🔍 Buscar Registro", use_container_width=True)
+                    
+                    if buscar_btn and id_busca:
+                        todos_registros = carregar_preventivas()
+                        for reg in todos_registros:
+                            if reg.id == id_busca and reg.data and reg.data.date() == data_busca:
+                                st.session_state.editando_registro = reg
+                                st.rerun()
+                                break
+                        else:
+                            st.error(f"❌ Registro não encontrado para ID={id_busca} e data={data_busca.strftime('%d/%m/%Y')}")
+            
+            # Formulário de edição
+            if st.session_state.editando_registro is not None:
+                reg = st.session_state.editando_registro
+                st.success(f"✅ Editando: {reg.maquina} - {reg.data.strftime('%d/%m/%Y') if reg.data else '-'}")
+                
+                with st.form("form_editar_registro"):
+                    cadastros_edit = carregar_cadastro_maquinas()
+                    dict_maquina_edit = {c.id: {"nome": c.maquina, "setor": c.setor} for c in cadastros_edit}
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.text_input("ID", value=reg.id, disabled=True, key="edit_id_display")
+                        
+                        if reg.id in dict_maquina_edit:
+                            st.text_input("Máquina", value=dict_maquina_edit[reg.id]["nome"], disabled=True, key="edit_maquina_display")
+                            st.text_input("Setor", value=dict_maquina_edit[reg.id]["setor"], disabled=True, key="edit_setor_display")
+                            maquina_val = dict_maquina_edit[reg.id]["nome"]
+                            setor_val = dict_maquina_edit[reg.id]["setor"]
+                        else:
+                            maquina_val = st.text_input("Máquina", value=reg.maquina, key="edit_maquina_input")
+                            setor_val = st.text_input("Setor", value=reg.setor, key="edit_setor_input")
+                        
+                        data_edit = st.date_input("Data", value=reg.data.date() if reg.data else datetime.now().date(), key="edit_data_input")
+                    
+                    with col2:
+                        descricao_edit = st.text_area("Descrição", value=reg.descricao, height=100, key="edit_descricao")
+                        execucao_edit = st.text_input("Responsável", value=reg.execucao, key="edit_execucao")
+                        analise_edit = st.text_area("Análise / Resultado", value=reg.analise, height=80, key="edit_analise")
+                    
+                    # Checkboxes de liberação
+                    st.markdown("---")
+                    st.markdown("### 🔓 Liberações para Finalização")
+                    
+                    col_check1, col_check2 = st.columns(2)
+                    with col_check1:
+                        eletrica_check = st.checkbox("✅ Elétrica - Liberado", value=reg.eletrica, key="edit_eletrica")
+                    with col_check2:
+                        mecanica_check = st.checkbox("✅ Mecânica - Liberado", value=reg.mecanica, key="edit_mecanica")
+                    
+                    # Mostrar status da liberação
+                    liberado_status = eletrica_check and mecanica_check
+                    if liberado_status and analise_edit and analise_edit.strip():
+                        st.success("🎉 **Todas as condições atendidas! O status será alterado para FINALIZADO ao salvar.**")
+                    elif liberado_status:
+                        st.warning("⚠️ **Liberações marcadas, mas falta preencher a Análise para FINALIZAR.**")
+                    elif analise_edit and analise_edit.strip():
+                        st.warning("⚠️ **Análise preenchida, mas faltam as liberações Elétrica e Mecânica para FINALIZAR.**")
+                    else:
+                        st.warning("⚠️ **Para FINALIZAR a manutenção: marque Elétrica ✅ + Mecânica ✅ e preencha a Análise.**")
+                    
+                    col_btn1, col_btn2 = st.columns(2)
+                    with col_btn1:
+                        salvar_btn = st.form_submit_button("💾 SALVAR ALTERAÇÕES", type="primary", use_container_width=True)
+                    with col_btn2:
+                        cancelar_btn = st.form_submit_button("❌ Cancelar", use_container_width=True)
+                    
+                    if salvar_btn:
+                        registro_atualizado = RegistroPreventiva(
+                            id=reg.id,
+                            data=datetime.combine(data_edit, datetime.min.time()),
+                            maquina=maquina_val,
+                            setor=setor_val,
+                            descricao=descricao_edit,
+                            execucao=execucao_edit,
+                            analise=analise_edit,
+                            eletrica=eletrica_check,
+                            mecanica=mecanica_check,
+                            liberado=liberado_status
+                        )
+                        
+                        sucesso, mensagem = atualizar_preventiva(registro_atualizado)
+                        
+                        if sucesso:
+                            st.success(mensagem)
+                            # Enviar e-mail de finalização se for o caso
+                            if liberado_status and analise_edit and analise_edit.strip():
+                                try:
+                                    enviar_email_preventiva(registro_atualizado, "FINALIZAÇÃO")
+                                except:
+                                    pass
+                            st.session_state.editando_registro = None
+                            st.rerun()
+                        else:
+                            st.error(mensagem)
+                    
+                    if cancelar_btn:
+                        st.session_state.editando_registro = None
+                        st.rerun()
+        
+        # ====================== EXCLUIR MANUTENÇÃO ======================
+        elif acao == "🗑️ Excluir Manutenção":
+            
+            # Botão para cancelar exclusão
+            if st.session_state.excluindo_registro is not None:
+                if st.button("❌ Cancelar Exclusão", key="btn_cancelar_exclusao_top", use_container_width=True):
+                    st.session_state.excluindo_registro = None
+                    st.rerun()
+            
+            # Formulário de busca
+            if st.session_state.excluindo_registro is None:
+                with st.form("buscar_para_excluir"):
+                    st.info("🔍 Informe o ID da Máquina e a Data da Manutenção para excluir")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        id_busca = st.text_input("ID da Máquina*", key="del_busca_id")
+                    with col2:
+                        data_busca = st.date_input("Data da Manutenção*", value=datetime.now().date(), key="del_busca_data")
+                    
+                    buscar_btn = st.form_submit_button("🔍 Buscar Registro", use_container_width=True)
+                    
+                    if buscar_btn and id_busca:
+                        todos_registros = carregar_preventivas()
+                        for reg in todos_registros:
+                            if reg.id == id_busca and reg.data and reg.data.date() == data_busca:
+                                st.session_state.excluindo_registro = reg
+                                st.rerun()
+                                break
+                        else:
+                            st.error(f"❌ Registro não encontrado para ID={id_busca} e data={data_busca.strftime('%d/%m/%Y')}")
+            
+            # Confirmação de exclusão
+            if st.session_state.excluindo_registro is not None:
+                reg = st.session_state.excluindo_registro
+                
+                st.error(f"⚠️ ATENÇÃO! Você está prestes a EXCLUIR:")
+                st.markdown(f"""
+                <div style="background: #fff3cd; padding: 15px; border-radius: 8px; border-left: 4px solid red; margin: 10px 0;">
+                    <b>ID:</b> {reg.id}<br>
+                    <b>Máquina:</b> {reg.maquina}<br>
+                    <b>Data:</b> {reg.data.strftime('%d/%m/%Y') if reg.data else '-'}<br>
+                    <b>Descrição:</b> {reg.descricao[:100]}...
+                </div>
+                """, unsafe_allow_html=True)
+                
+                confirmar = st.checkbox("✅ Confirmo que desejo EXCLUIR permanentemente este registro", key="chk_confirmar_exclusao")
+                
+                if confirmar:
+                    if st.button("🗑️ CONFIRMAR EXCLUSÃO", key="btn_confirmar_exclusao", type="primary", use_container_width=True):
+                        sucesso, mensagem = excluir_preventiva(reg.id, reg.data.date() if reg.data else datetime.now().date())
+                        if sucesso:
+                            st.success(mensagem)
+                            st.balloons()
+                            st.session_state.excluindo_registro = None
+                            st.rerun()
+                        else:
+                            st.error(mensagem)
+                
+                if st.button("❌ Cancelar", key="btn_cancelar_exclusao_bottom", use_container_width=True):
+                    st.session_state.excluindo_registro = None
+                    st.rerun()
+    
+    # ======================
+    # TAB CADASTRO DE MÁQUINAS
+    # ======================
+    with tab_cadastro:
+        st.subheader("🏭 Cadastro de Máquinas")
+        
+        cadastros = carregar_cadastro_maquinas()
+        
+        if cadastros:
+            df_cadastro = pd.DataFrame([{"ID": c.id, "Máquina": c.maquina, "Setor": c.setor} for c in cadastros])
+            st.dataframe(df_cadastro, use_container_width=True, height=300)
+            
+            st.caption(f"Total: {len(cadastros)} máquinas cadastradas")
+        else:
+            st.info("📭 Nenhuma máquina cadastrada. Cadastre uma máquina para começar.")
+        
+        st.markdown("---")
+        acao_cadastro = st.radio("Ação:", ["➕ Nova Máquina", "✏️ Editar Máquina", "🗑️ Excluir Máquina"], horizontal=True)
+        
+        if acao_cadastro == "➕ Nova Máquina":
+            with st.form("nova_maquina"):
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    id_novo = st.text_input("ID da Máquina*", placeholder="Ex: MAQ001", key="cad_id_novo")
+                with col2:
+                    maquina_nova = st.text_input("Nome da Máquina*", placeholder="Ex: Prensa Hidráulica", key="cad_maquina_nova")
+                with col3:
+                    setor_novo = st.selectbox("Setor", OPCOES_SETORES_PREVENTIVA, key="cad_setor_novo")
+                
+                if st.form_submit_button("💾 CADASTRAR", type="primary", use_container_width=True):
+                    if not id_novo or not maquina_nova:
+                        st.error("❌ Preencha ID e Nome da Máquina")
+                    elif any(c.id.upper() == id_novo.upper() for c in cadastros):
+                        st.error(f"❌ ID {id_novo} já existe!")
+                    else:
+                        sucesso, msg = salvar_cadastro_maquina(CadastroMaquina(id=id_novo.upper(), maquina=maquina_nova, setor=setor_novo))
+                        if sucesso:
+                            st.success(msg)
+                            st.rerun()
+                        else:
+                            st.error(msg)
+        
+        elif acao_cadastro == "✏️ Editar Máquina":
+            if cadastros:
+                with st.form("editar_maquina"):
+                    id_editar = st.selectbox("Selecione o ID", [c.id for c in cadastros], key="cad_id_editar")
+                    maquina_atual = next((c for c in cadastros if c.id == id_editar), None)
+                    
+                    if maquina_atual:
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            maquina_edit = st.text_input("Nome da Máquina", value=maquina_atual.maquina, key="cad_maquina_edit")
+                        with col2:
+                            idx = OPCOES_SETORES_PREVENTIVA.index(maquina_atual.setor) if maquina_atual.setor in OPCOES_SETORES_PREVENTIVA else 0
+                            setor_edit = st.selectbox("Setor", OPCOES_SETORES_PREVENTIVA, index=idx, key="cad_setor_edit")
+                        
+                        if st.form_submit_button("💾 SALVAR ALTERAÇÕES", type="primary", use_container_width=True):
+                            sucesso, msg = salvar_cadastro_maquina(CadastroMaquina(id=id_editar, maquina=maquina_edit, setor=setor_edit), eh_alteracao=True)
+                            if sucesso:
+                                st.success(msg)
+                                st.rerun()
+                            else:
+                                st.error(msg)
+            else:
+                st.info("📭 Nenhuma máquina cadastrada")
+        
+        elif acao_cadastro == "🗑️ Excluir Máquina":
+            if cadastros:
+                with st.form("excluir_maquina"):
+                    id_excluir = st.selectbox("Selecione o ID", [c.id for c in cadastros], key="cad_id_excluir")
+                    maquina_excluir = next((c for c in cadastros if c.id == id_excluir), None)
+                    
+                    if maquina_excluir:
+                        st.warning(f"⚠️ Excluir máquina: **{maquina_excluir.maquina}** (ID: {id_excluir})")
+                        st.caption("⚠️ Esta ação NÃO remove as manutenções agendadas, apenas o cadastro da máquina.")
+                        confirmar = st.checkbox("✅ Confirmo exclusão do cadastro", key="chk_confirmar_excluir_cadastro")
+                        if confirmar and st.form_submit_button("🗑️ EXCLUIR CADASTRO", type="primary", use_container_width=True):
+                            sucesso, msg = excluir_cadastro_maquina(id_excluir)
+                            if sucesso:
+                                st.success(msg)
+                                st.rerun()
+                            else:
+                                st.error(msg)
+            else:
+                st.info("📭 Nenhuma máquina cadastrada")
+    
+    st.markdown(f"""
+    <div style="text-align:right;padding:16px 0 8px;
+        font-family:'JetBrains Mono',monospace;font-size:10px;
+        color:{THEME['text_muted']};letter-spacing:.1em;">
+        MANUTENÇÃO PREVENTIVA · {get_horario_brasilia()}
+    </div>
+    """, unsafe_allow_html=True)
+    
+# ==================================================================================================
+# RASTREAMENTO DE PRODUÇÃO
+# ==================================================================================================
+elif aba_selecionada == 'RASTREAMENTO DE PRODUÇÃO':
+    render_page_header("RASTREAMENTO DE PRODUÇÃO", f"Rastreabilidade de Lotes · Atualizado {get_horario_brasilia()}", THEME['accent_cyan'])
+    
+    # ======================
+    # CARREGAR DADOS DA PLANILHA PRENSADOS (TRS_INDUSTRIAL)
+    # ======================
+    @retry_on_quota()
+    @st.cache_data(ttl=300)
+    def carregar_dados_rastreamento():
+        """
+        Carrega os dados da planilha TRS_INDUSTRIAL com as colunas específicas
+        para rastreamento de produção.
+        """
+        try:
+            client = get_gspread_client()
+            if client is None:
+                st.error("❌ Erro ao conectar ao Google Sheets")
+                return pd.DataFrame()
+            
+            # Abrir planilha de PRENSADOS/SOPRO
+            sheet = client.open_by_key(ID_PLANILHA_PRENSADOS_SOPRO).worksheet('TRS_INDUSTRIAL')
+            todos_dados = sheet.get_all_values()
+            
+            if len(todos_dados) < 3:
+                return pd.DataFrame()
+            
+            # Cabeçalho na linha 2 (índice 1)
+            cabecalho = todos_dados[1]
+            # Dados começam na linha 3 (índice 2)
+            valores = todos_dados[2:]
+            
+            df = pd.DataFrame(valores, columns=cabecalho)
+            df.columns = df.columns.str.strip().str.upper()
+            
+            # Mapeamento das colunas
+            colunas_necessarias = {
+                'DATA': 'DATA',
+                'CODIGO': 'CODIGO',
+                'REFERÊNCIA': 'REFERENCIA',
+                'TURNO': 'TURNO',
+                'CLIENTE': 'CLIENTE',
+                'PRODUZIDO': 'PRODUZIDO',
+                'APROVADO': 'APROVADO',
+                'REFUGADO': 'REFUGADO',
+                'TRS 100%': 'META_LIQUIDA',
+                'INSPETOR': 'INSPETOR_1',
+                'FIFO': 'FIFO',
+                'D_TEMPERA': 'D_TEMPERA',
+                'AP_TEMPERA': 'AP_TEMPERA',
+                'D_EMBALAGEM': 'D_EMBALAGEM',
+                'AP_EMBALAGEM': 'AP_EMBALAGEM',
+                'BOQUETA': 'BOQUETA'
+            }
+            
+            # Verificar quais colunas existem
+            colunas_existentes = {}
+            for original, novo in colunas_necessarias.items():
+                if original in df.columns:
+                    colunas_existentes[original] = novo
+            
+            # Criar DataFrame com as colunas que existem
+            df_resultado = pd.DataFrame()
+            for original, novo in colunas_existentes.items():
+                df_resultado[novo] = df[original]
+            
+            # Converter datas
+            if 'DATA' in df_resultado.columns:
+                df_resultado['DATA'] = df_resultado['DATA'].apply(converter_data_br)
+            
+            if 'D_TEMPERA' in df_resultado.columns:
+                df_resultado['D_TEMPERA'] = df_resultado['D_TEMPERA'].apply(converter_data_br)
+            
+            if 'D_EMBALAGEM' in df_resultado.columns:
+                df_resultado['D_EMBALAGEM'] = df_resultado['D_EMBALAGEM'].apply(converter_data_br)
+            
+            # Converter valores numéricos
+            colunas_numericas = ['PRODUZIDO', 'APROVADO', 'REFUGADO', 'META_LIQUIDA', 'AP_TEMPERA', 'AP_EMBALAGEM']
+            for col in colunas_numericas:
+                if col in df_resultado.columns:
+                    df_resultado[col] = pd.to_numeric(df_resultado[col], errors='coerce').fillna(0)
+            
+            # Calcular TRS
+            if 'TRS_PRODUCAO' not in df_resultado.columns and 'APROVADO' in df_resultado.columns and 'META_LIQUIDA' in df_resultado.columns:
+                df_resultado['TRS_PRODUCAO'] = df_resultado.apply(
+                    lambda row: (row['APROVADO'] / row['META_LIQUIDA'] * 100) if row['META_LIQUIDA'] > 0 else 0, axis=1
+                )
+            
+            # Converter BOQUETA para numérico
+            if 'BOQUETA' in df_resultado.columns:
+                df_resultado['BOQUETA'] = pd.to_numeric(df_resultado['BOQUETA'], errors='coerce')
+            
+            # Remover linhas sem FIFO
+            df_resultado = df_resultado.dropna(subset=['FIFO'])
+            df_resultado['FIFO'] = df_resultado['FIFO'].astype(str).str.strip()
+            
+            # Identificar se produto precisa de têmpera (código terminado em 1)
+            if 'CODIGO' in df_resultado.columns:
+                df_resultado['PRECISA_TEMPERA'] = df_resultado['CODIGO'].astype(str).str.strip().str.endswith('1')
+            
+            # Ordenar por DATA mais recente primeiro
+            if 'DATA' in df_resultado.columns:
+                df_resultado = df_resultado.sort_values('DATA', ascending=False)
+            
+            return df_resultado
+            
+        except Exception as e:
+            st.error(f"Erro ao carregar dados de rastreamento: {e}")
+            return pd.DataFrame()
+    
+    # ======================
+    # FUNÇÕES PARA DETERMINAR ONDE O LOTE ESTÁ
+    # ======================
+    def is_em_producao(row):
+        """Lote está em PRODUÇÃO? (Ainda não foi produzido - PRODUZIDO = 0)"""
+        produzido = row.get('PRODUZIDO', 0)
+        if pd.isna(produzido) or produzido == 0:
+            return True
+        return False
+    
+    def is_em_tempera(row):
+        """Lote está em TÊMPERA? (Já produzido, precisa de têmpera, ainda não temperado)"""
+        produzido = row.get('PRODUZIDO', 0)
+        precisa_tempera = row.get('PRECISA_TEMPERA', False)
+        ap_tempera = row.get('AP_TEMPERA', 0)
+        
+        if produzido > 0 and precisa_tempera and (pd.isna(ap_tempera) or ap_tempera == 0):
+            return True
+        return False
+    
+    def is_em_embalagem(row):
+        """Lote está em EMBALAGEM? (Já produzido, já temperado se necessário, ainda não embalado)"""
+        produzido = row.get('PRODUZIDO', 0)
+        precisa_tempera = row.get('PRECISA_TEMPERA', False)
+        ap_tempera = row.get('AP_TEMPERA', 0)
+        ap_embalagem = row.get('AP_EMBALAGEM', 0)
+        
+        if produzido == 0:
+            return False
+        
+        if precisa_tempera:
+            if pd.isna(ap_tempera) or ap_tempera == 0:
+                return False
+        
+        if pd.isna(ap_embalagem) or ap_embalagem == 0:
+            return True
+        
+        return False
+    
+    def is_liberado(row):
+        """Lote está LIBERADO? (Completamente finalizado - embalado)"""
+        ap_embalagem = row.get('AP_EMBALAGEM', 0)
+        if ap_embalagem > 0:
+            return True
+        return False
+    
+    def get_situacao_texto(row):
+        """Retorna o texto da situação atual do lote"""
+        if is_em_producao(row):
+            return "📋 PROGRAMADO PRODUZIR"
+        elif is_em_tempera(row):
+            return "🔥 PROCESSO DE TÊMPERA"
+        elif is_em_embalagem(row):
+            return "📦 PROCESSO DE EMBALAGEM"
+        elif is_liberado(row):
+            return "✅ LIBERADO PARA EXPEDIÇÃO"
+        else:
+            return "📋 PROGRAMADO PRODUZIR"
+    
+    # ======================
+    # SIDEBAR FILTROS
+    # ======================
+    with st.sidebar:
+        st.markdown(f"""
+        <div style='font-family:JetBrains Mono,monospace;font-size:10px;
+            letter-spacing:.2em;text-transform:uppercase;
+            color:{THEME['accent_cyan']};margin:20px 0 10px;
+            border-top:1px solid {THEME['border_bright']};padding-top:16px'>
+            ▸ Filtros · Rastreamento
+        </div>
+        """, unsafe_allow_html=True)
+        
+        data_fim_padrao = datetime.now().date()
+        data_ini_padrao = data_fim_padrao - timedelta(days=7)
+        
+        data_ini = st.date_input("Data Inicial", value=data_ini_padrao, key="rast_data_ini")
+        data_fim = st.date_input("Data Final", value=data_fim_padrao, key="rast_data_fim")
+        
+        filtro_referencia = st.text_input("Referência/Código", placeholder="Digite parte do código ou referência", key="rast_ref")
+        
+        tipo_prensa = st.selectbox("Tipo de Prensa", ["(Todos)", "Semi-Automática", "Automática"], key="rast_tipo_prensa")
+        
+        turno = st.selectbox("Turno", ["(Todos)", "M", "T", "N"], key="rast_turno")
+        
+        st.markdown("---")
+        st.caption("📌 Os filtros acima são aplicados em TODOS os setores")
+    
+    # ======================
+    # CARREGAR DADOS
+    # ======================
+    with st.spinner("Carregando dados de rastreamento..."):
+        df_raw = carregar_dados_rastreamento()
+    
+    if df_raw.empty:
+        st.warning("⚠️ Não foi possível carregar os dados. Verifique a planilha.")
+        st.stop()
+    
+    # ======================
+    # APLICAR FILTROS GLOBAIS
+    # ======================
+    df_filtrado = df_raw.copy()
+    
+    # Filtro de data
+    if data_ini and 'DATA' in df_filtrado.columns:
+        df_filtrado = df_filtrado[df_filtrado['DATA'] >= pd.to_datetime(data_ini)]
+    if data_fim and 'DATA' in df_filtrado.columns:
+        df_filtrado = df_filtrado[df_filtrado['DATA'] <= pd.to_datetime(data_fim)]
+    
+    # Filtro de referência/código
+    if filtro_referencia and filtro_referencia.strip():
+        filtro_lower = filtro_referencia.lower().strip()
+        if 'REFERENCIA' in df_filtrado.columns:
+            df_filtrado = df_filtrado[
+                df_filtrado['REFERENCIA'].astype(str).str.lower().str.contains(filtro_lower, na=False) |
+                df_filtrado['CODIGO'].astype(str).str.lower().str.contains(filtro_lower, na=False)
+            ]
+    
+    # ======================
+    # FILTRO DE TIPO DE PRENSA (CORRIGIDO)
+    # Semi-Automática = 1, Automática = 2
+    # ======================
+    if tipo_prensa != "(Todos)" and 'BOQUETA' in df_filtrado.columns:
+        if "Semi" in tipo_prensa:
+            # Semi-Automática = 1
+            df_filtrado = df_filtrado[df_filtrado['BOQUETA'] == 1]
+        elif "Auto" in tipo_prensa:
+            # Automática = 2
+            df_filtrado = df_filtrado[df_filtrado['BOQUETA'] == 2]
+    
+    # Filtro de turno
+    if turno != "(Todos)" and 'TURNO' in df_filtrado.columns:
+        df_filtrado = df_filtrado[df_filtrado['TURNO'].astype(str).str.upper() == turno.upper()]
+    
+    # Adicionar coluna de situação
+    df_filtrado['SITUACAO'] = df_filtrado.apply(get_situacao_texto, axis=1)
+    
+    # Ordenar por DATA mais recente
+    if 'DATA' in df_filtrado.columns:
+        df_filtrado = df_filtrado.sort_values('DATA', ascending=False)
+    
+    # ======================
+    # SEPARAR LOTES POR SETOR
+    # ======================
+    # SETOR 1: Apenas lotes que AINDA NÃO FORAM PRODUZIDOS (PRODUZIDO = 0)
+    df_producao = df_filtrado[df_filtrado['PRODUZIDO'] == 0].copy()
+    
+    # SETOR 2: Lotes JÁ PRODUZIDOS, com código terminado em 1, e SEM AP_TEMPERA
+    df_tempera = df_filtrado[
+        (df_filtrado['PRODUZIDO'] > 0) & 
+        (df_filtrado['PRECISA_TEMPERA'] == True) & 
+        ((df_filtrado['AP_TEMPERA'] == 0) | (df_filtrado['AP_TEMPERA'].isna()))
+    ].copy()
+    
+    # SETOR 3: Lotes JÁ PRODUZIDOS, já temperados (se necessário), e SEM AP_EMBALAGEM
+    df_embalagem = df_filtrado[
+        (df_filtrado['PRODUZIDO'] > 0) & 
+        (df_filtrado['AP_EMBALAGEM'] == 0) &
+        (~((df_filtrado['PRECISA_TEMPERA'] == True) & 
+           ((df_filtrado['AP_TEMPERA'] == 0) | (df_filtrado['AP_TEMPERA'].isna()))))
+    ].copy()
+    
+    # Lotes LIBERADOS
+    df_liberados = df_filtrado[df_filtrado['AP_EMBALAGEM'] > 0].copy()
+    
+    # ======================
+    # CÁLCULO DE PEÇAS POR SITUAÇÃO
+    # ======================
+    # PROGRAMADAS: soma da META_LIQUIDA (quantidade programada para produzir)
+    pecas_programadas = int(df_producao['META_LIQUIDA'].sum()) if 'META_LIQUIDA' in df_producao.columns else 0
+    
+    # TÊMPERA: soma do APROVADO (peças aprovadas na produção que aguardam têmpera)
+    pecas_tempera = int(df_tempera['APROVADO'].sum()) if 'APROVADO' in df_tempera.columns else 0
+    
+    # EMBALAGEM: soma do AP_TEMPERA (peças aprovadas na têmpera que aguardam embalagem)
+    pecas_embalagem = int(df_embalagem['AP_TEMPERA'].sum()) if 'AP_TEMPERA' in df_embalagem.columns else 0
+    
+    # LIBERADAS: soma do AP_EMBALAGEM (peças já embaladas)
+    pecas_liberadas = int(df_liberados['AP_EMBALAGEM'].sum()) if 'AP_EMBALAGEM' in df_liberados.columns else 0
+    
+    total_pecas = pecas_programadas + pecas_tempera + pecas_embalagem + pecas_liberadas
+    
+    # ======================
+    # KPI CARDS
+    # ======================
+    st.markdown("### 📊 Resumo do Rastreamento")
+    
+    total_lotes = len(df_filtrado)
+    lotes_programados_count = len(df_producao)
+    lotes_tempera_count = len(df_tempera)
+    lotes_embalagem_count = len(df_embalagem)
+    lotes_liberados_count = len(df_liberados)
+    
+    col_k1, col_k2, col_k3, col_k4, col_k5 = st.columns(5)
+    with col_k1:
+        st.metric("📦 Total de Lotes", f"{total_lotes:,}")
+    with col_k2:
+        st.metric("📋 Programados", f"{lotes_programados_count:,}")
+    with col_k3:
+        st.metric("🔥 Em Têmpera", f"{lotes_tempera_count:,}")
+    with col_k4:
+        st.metric("📦 Em Embalagem", f"{lotes_embalagem_count:,}")
+    with col_k5:
+        st.metric("✅ Liberados", f"{lotes_liberados_count:,}")
+    
+    st.markdown("<hr>", unsafe_allow_html=True)
+    
+    # ======================
+    # SETOR 1 - PRODUÇÃO (Aguardando Produção)
+    # ======================
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, #0078D4 0%, #005a9e 100%); 
+                padding: 12px 20px; border-radius: 8px; margin: 20px 0 15px 0;">
+        <span style="font-size: 20px; margin-right: 10px;">🏭</span>
+        <span style="font-family: 'Rajdhani', sans-serif; font-size: 18px; font-weight: bold; color: white;">
+            SETOR 1 - PRODUÇÃO (Aguardando Produção) • {len(df_producao)} lotes | {pecas_programadas:,} peças programadas
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    colunas_producao = ['DATA', 'CODIGO', 'REFERENCIA', 'TURNO', 'CLIENTE', 'PRODUZIDO', 'APROVADO', 'REFUGADO', 'META_LIQUIDA', 'TRS_PRODUCAO', 'INSPETOR_1', 'FIFO']
+    colunas_existentes_producao = [c for c in colunas_producao if c in df_producao.columns]
+    
+    if colunas_existentes_producao and not df_producao.empty:
+        df_producao_display = df_producao[colunas_existentes_producao].copy()
+        
+        if 'DATA' in df_producao_display.columns:
+            df_producao_display['DATA'] = pd.to_datetime(df_producao_display['DATA']).dt.strftime('%d/%m/%Y')
+        
+        for col in ['PRODUZIDO', 'APROVADO', 'REFUGADO', 'META_LIQUIDA']:
+            if col in df_producao_display.columns:
+                df_producao_display[col] = df_producao_display[col].apply(lambda x: f"{int(x):,}".replace(",", ".") if pd.notna(x) and x > 0 else "0")
+        
+        if 'TRS_PRODUCAO' in df_producao_display.columns:
+            df_producao_display['TRS_PRODUCAO'] = df_producao_display['TRS_PRODUCAO'].apply(lambda x: f"{float(x):.1f}%" if pd.notna(x) and x > 0 else "0%")
+        
+        renomear = {
+            'DATA': '📅 Data',
+            'CODIGO': '🔢 Código',
+            'REFERENCIA': '🏷️ Referência',
+            'TURNO': '⏰ Turno',
+            'CLIENTE': '👥 Cliente',
+            'PRODUZIDO': '📦 Produzido',
+            'APROVADO': '✅ Aprovado',
+            'REFUGADO': '❌ Refugado',
+            'META_LIQUIDA': '🎯 Meta Líquida',
+            'TRS_PRODUCAO': '📊 TRS Produção',
+            'INSPETOR_1': '🔍 Inspetor',
+            'FIFO': '🔖 Lote (FIFO)'
+        }
+        
+        df_producao_display = df_producao_display.rename(columns={k: v for k, v in renomear.items() if k in df_producao_display.columns})
+        st.dataframe(df_producao_display, use_container_width=True, height=400)
+        st.caption(f"📌 Lotes aguardando produção (PRODUZIDO = 0)")
+    else:
+        st.info("✅ Nenhum lote aguardando produção para os filtros selecionados.")
+    
+    # ======================
+    # SETOR 2 - TÊMPERA
+    # ======================
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, #E86C2C 0%, #c05520 100%); 
+                padding: 12px 20px; border-radius: 8px; margin: 30px 0 15px 0;">
+        <span style="font-size: 20px; margin-right: 10px;">🔥</span>
+        <span style="font-family: 'Rajdhani', sans-serif; font-size: 18px; font-weight: bold; color: white;">
+            SETOR 2 - TÊMPERA • {len(df_tempera)} lotes | {pecas_tempera:,} peças aguardando
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    colunas_tempera = ['DATA', 'D_TEMPERA', 'CODIGO', 'REFERENCIA', 'TURNO', 'CLIENTE', 'PRODUZIDO', 'APROVADO', 'AP_TEMPERA', 'FIFO']
+    colunas_existentes_tempera = [c for c in colunas_tempera if c in df_tempera.columns]
+    
+    if colunas_existentes_tempera and not df_tempera.empty:
+        df_tempera_display = df_tempera[colunas_existentes_tempera].copy()
+        
+        if 'DATA' in df_tempera_display.columns:
+            df_tempera_display['DATA'] = pd.to_datetime(df_tempera_display['DATA']).dt.strftime('%d/%m/%Y')
+        
+        if 'D_TEMPERA' in df_tempera_display.columns:
+            df_tempera_display['D_TEMPERA'] = df_tempera_display['D_TEMPERA'].apply(lambda x: x.strftime('%d/%m/%Y') if pd.notna(x) else "-")
+        
+        for col in ['PRODUZIDO', 'APROVADO', 'AP_TEMPERA']:
+            if col in df_tempera_display.columns:
+                df_tempera_display[col] = df_tempera_display[col].apply(lambda x: f"{int(x):,}".replace(",", ".") if pd.notna(x) and x > 0 else "-")
+        
+        renomear_tempera = {
+            'DATA': '📅 Data Produção',
+            'D_TEMPERA': '📅 Data Têmpera',
+            'CODIGO': '🔢 Código',
+            'REFERENCIA': '🏷️ Referência',
+            'TURNO': '⏰ Turno',
+            'CLIENTE': '👥 Cliente',
+            'PRODUZIDO': '📦 Produzido',
+            'APROVADO': '✅ Aprovado Prod.',
+            'AP_TEMPERA': '🔥 Aprovado Têmpera',
+            'FIFO': '🔖 Lote (FIFO)'
+        }
+        
+        df_tempera_display = df_tempera_display.rename(columns={k: v for k, v in renomear_tempera.items() if k in df_tempera_display.columns})
+        st.dataframe(df_tempera_display, use_container_width=True, height=300)
+        st.caption(f"📌 Lotes aguardando têmpera (Código termina em 1, AP_TEMPERA = 0)")
+    else:
+        st.info("✅ Nenhum lote aguardando têmpera para os filtros selecionados.")
+    
+    # ======================
+    # SETOR 3 - EMBALAGEM (Usa AP_TEMPERA como quantidade a embalar)
+    # ======================
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, #107C10 0%, #0a5a0a 100%); 
+                padding: 12px 20px; border-radius: 8px; margin: 30px 0 15px 0;">
+        <span style="font-size: 20px; margin-right: 10px;">📦</span>
+        <span style="font-family: 'Rajdhani', sans-serif; font-size: 18px; font-weight: bold; color: white;">
+            SETOR 3 - EMBALAGEM • {len(df_embalagem)} lotes | {pecas_embalagem:,} peças aguardando
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    colunas_embalagem = ['DATA', 'D_EMBALAGEM', 'CODIGO', 'REFERENCIA', 'TURNO', 'CLIENTE', 'PRODUZIDO', 'AP_TEMPERA', 'AP_EMBALAGEM', 'FIFO']
+    colunas_existentes_embalagem = [c for c in colunas_embalagem if c in df_embalagem.columns]
+    
+    if colunas_existentes_embalagem and not df_embalagem.empty:
+        df_embalagem_display = df_embalagem[colunas_existentes_embalagem].copy()
+        
+        if 'DATA' in df_embalagem_display.columns:
+            df_embalagem_display['DATA'] = pd.to_datetime(df_embalagem_display['DATA']).dt.strftime('%d/%m/%Y')
+        
+        if 'D_EMBALAGEM' in df_embalagem_display.columns:
+            df_embalagem_display['D_EMBALAGEM'] = df_embalagem_display['D_EMBALAGEM'].apply(lambda x: x.strftime('%d/%m/%Y') if pd.notna(x) else "-")
+        
+        for col in ['PRODUZIDO', 'AP_TEMPERA', 'AP_EMBALAGEM']:
+            if col in df_embalagem_display.columns:
+                df_embalagem_display[col] = df_embalagem_display[col].apply(lambda x: f"{int(x):,}".replace(",", ".") if pd.notna(x) and x > 0 else "-")
+        
+        renomear_embalagem = {
+            'DATA': '📅 Data Produção',
+            'D_EMBALAGEM': '📅 Data Embalagem',
+            'CODIGO': '🔢 Código',
+            'REFERENCIA': '🏷️ Referência',
+            'TURNO': '⏰ Turno',
+            'CLIENTE': '👥 Cliente',
+            'PRODUZIDO': '📦 Produzido',
+            'AP_TEMPERA': '🔥 Aprovado Têmpera',
+            'AP_EMBALAGEM': '📦 Aprovado Embalagem',
+            'FIFO': '🔖 Lote (FIFO)'
+        }
+        
+        df_embalagem_display = df_embalagem_display.rename(columns={k: v for k, v in renomear_embalagem.items() if k in df_embalagem_display.columns})
+        st.dataframe(df_embalagem_display, use_container_width=True, height=300)
+        st.caption(f"📌 Lotes aguardando embalagem - Quantidade a embalar: {pecas_embalagem:,} peças (aprovadas na têmpera)")
+    else:
+        st.info("✅ Nenhum lote aguardando embalagem para os filtros selecionados.")
+    
+    # ======================
+    # RESUMO DOS LOTES COM SITUAÇÃO
+    # ======================
+    st.markdown("<hr>", unsafe_allow_html=True)
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, #6B46C1 0%, #553c9a 100%); 
+                padding: 12px 20px; border-radius: 8px; margin: 20px 0 15px 0;">
+        <span style="font-size: 20px; margin-right: 10px;">📋</span>
+        <span style="font-family: 'Rajdhani', sans-serif; font-size: 18px; font-weight: bold; color: white;">
+            RESUMO DOS LOTES - SITUAÇÃO ATUAL ({len(df_filtrado)} lotes)
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    colunas_resumo = ['FIFO', 'DATA', 'REFERENCIA', 'CODIGO', 'TURNO', 'PRODUZIDO', 'APROVADO', 'AP_TEMPERA', 'AP_EMBALAGEM', 'SITUACAO']
+    colunas_existentes_resumo = [c for c in colunas_resumo if c in df_filtrado.columns]
+    
+    if colunas_existentes_resumo and not df_filtrado.empty:
+        df_resumo = df_filtrado[colunas_existentes_resumo].copy()
+        
+        if 'DATA' in df_resumo.columns:
+            df_resumo['DATA'] = pd.to_datetime(df_resumo['DATA']).dt.strftime('%d/%m/%Y')
+        
+        for col in ['PRODUZIDO', 'APROVADO', 'AP_TEMPERA', 'AP_EMBALAGEM']:
+            if col in df_resumo.columns:
+                df_resumo[col] = df_resumo[col].apply(lambda x: f"{int(x):,}".replace(",", ".") if pd.notna(x) and x > 0 else "-")
+        
+        renomear_resumo = {
+            'FIFO': '🔖 Lote (FIFO)',
+            'DATA': '📅 Data Produção',
+            'REFERENCIA': '🏷️ Referência',
+            'CODIGO': '🔢 Código',
+            'TURNO': '⏰ Turno',
+            'PRODUZIDO': '📦 Produzido',
+            'APROVADO': '✅ Aprovado Prod.',
+            'AP_TEMPERA': '🔥 Aprovado Têmpera',
+            'AP_EMBALAGEM': '📦 Aprovado Embal.',
+            'SITUACAO': '📍 Situação'
+        }
+        
+        df_resumo_display = df_resumo.rename(columns={k: v for k, v in renomear_resumo.items() if k in df_resumo.columns})
+        
+        st.dataframe(df_resumo_display, use_container_width=True, height=500)
+        
+        # ======================
+        # GRÁFICO DE DISTRIBUIÇÃO POR SITUAÇÃO (USANDO PEÇAS)
+        # ======================
+        st.markdown("### 📊 Distribuição de Peças por Situação")
+        
+        categorias = ['📋 PROGRAMADO PRODUZIR', '🔥 PROCESSO DE TÊMPERA', '📦 PROCESSO DE EMBALAGEM', '✅ LIBERADO PARA EXPEDIÇÃO']
+        valores = [pecas_programadas, pecas_tempera, pecas_embalagem, pecas_liberadas]
+        cores = ['#FFB900', '#E86C2C', '#0078D4', '#107C10']
+        
+        dados_grafico = [(cat, val, cor) for cat, val, cor in zip(categorias, valores, cores) if val > 0]
+        
+        if dados_grafico:
+            fig, ax = plt.subplots(figsize=(10, 6), facecolor=THEME['bg_card'])
+            
+            categorias_filtradas = [d[0] for d in dados_grafico]
+            valores_filtrados = [d[1] for d in dados_grafico]
+            cores_filtradas = [d[2] for d in dados_grafico]
+            
+            bars = ax.barh(range(len(categorias_filtradas)), valores_filtrados, color=cores_filtradas, alpha=0.85, edgecolor='white', linewidth=1.5)
+            
+            ax.set_yticks(range(len(categorias_filtradas)))
+            ax.set_yticklabels(categorias_filtradas, fontsize=11)
+            ax.set_xlabel('Quantidade de Peças', fontsize=12)
+            ax.set_title('Distribuição de Peças por Estágio Produtivo', fontweight='bold', fontsize=14, pad=15)
+            
+            for bar, valor in zip(bars, valores_filtrados):
+                ax.text(bar.get_width() + (max(valores_filtrados) * 0.01), 
+                       bar.get_y() + bar.get_height()/2,
+                       f'{valor:,.0f}'.replace(",", "."), 
+                       va='center', fontweight='bold', fontsize=11)
+            
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            ax.spines['left'].set_visible(False)
+            
+            fig.tight_layout()
+            st.pyplot(fig)
+            plt.close(fig)
+            
+            # Gráfico de pizza
+            st.markdown("### 🥧 Proporção de Peças")
+            
+            fig2, ax2 = plt.subplots(figsize=(8, 6), facecolor=THEME['bg_card'])
+            
+            wedges, texts, autotexts = ax2.pie(
+                valores_filtrados,
+                labels=categorias_filtradas,
+                colors=cores_filtradas,
+                autopct=lambda pct: f'{pct:.1f}%\n({int(pct/100*sum(valores_filtrados)):,} peças)'.replace(",", "."),
+                startangle=90,
+                textprops={'fontsize': 10}
+            )
+            
+            for autotext in autotexts:
+                autotext.set_color('white')
+                autotext.set_fontweight('bold')
+                autotext.set_fontsize(10)
+            
+            ax2.set_title('Proporção de Peças por Estágio', fontweight='bold', fontsize=14, pad=20)
+            
+            fig2.tight_layout()
+            st.pyplot(fig2)
+            plt.close(fig2)
+            
+            # Cards de resumo
+            st.markdown("---")
+            col_r1, col_r2, col_r3, col_r4 = st.columns(4)
+            with col_r1:
+                st.metric("📋 Peças Programadas", f"{pecas_programadas:,}".replace(",", "."))
+            with col_r2:
+                st.metric("🔥 Peças em Têmpera", f"{pecas_tempera:,}".replace(",", "."))
+            with col_r3:
+                st.metric("📦 Peças em Embalagem", f"{pecas_embalagem:,}".replace(",", "."))
+            with col_r4:
+                st.metric("✅ Peças Liberadas", f"{pecas_liberadas:,}".replace(",", "."))
+            
+            if total_pecas > 0:
+                st.caption(f"📌 Total de peças consideradas: {total_pecas:,}".replace(",", "."))
+        else:
+            st.info("📭 Nenhum dado disponível para o gráfico de peças.")
+    else:
+        st.info("📭 Nenhum dado disponível para o resumo.")
+    
+    st.markdown(f"""
+    <div style="text-align:right;padding:16px 0 8px;
+        font-family:'JetBrains Mono',monospace;font-size:10px;
+        color:{THEME['text_muted']};letter-spacing:.1em;">
+        RASTREAMENTO DE PRODUÇÃO · {get_horario_brasilia()}
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # ==================================================================================================
 # RENDERIZAR FAIXA DE ROLAGEM NO RODAPÉ (aparece em todas as abas)
 # ==================================================================================================
 # Define a planilha de fechamento para a faixa de rolagem (precisa estar definida antes)
