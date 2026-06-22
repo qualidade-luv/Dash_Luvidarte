@@ -529,7 +529,7 @@ ABAS = {
     'REQUISIÇÃO MANUTENÇÃO': 'RM',
     'FECHAMENTO TURNO': 'FT',
     'MANUTENÇÃO PREVENTIVA': 'MP',
-    'MAPEAMENTO DE HABILIDADES': 'MH'
+    'RASTREAMENTO DE PRODUÇÃO': 'RP'
 }
 
 CAMINHO_PDF_AR = r"\\srv-luvidarte\dados\DOC\Engenharia_Luvidarte\SGQ - LUVIDARTE - ALTERADAS\0-AVISO DE REJEIÇÃO\1-PDF"
@@ -2944,7 +2944,7 @@ elif aba_selecionada == 'SOPRO':
 
 
 # ==================================================================================================
-# TÊMPERA (COM SISTEMA DE CACHE EM ARQUIVO E BACKUP LOCAL)
+# TÊMPERA
 # ==================================================================================================
 elif aba_selecionada == 'TÊMPERA':
     ABA = 'TRS_TEMPERA'
@@ -2961,11 +2961,6 @@ elif aba_selecionada == 'TÊMPERA':
     
     CODIGOS_DEFEITO_REAIS = [2, 3, 4, 5, 6]
 
-    # ======================
-    # ARQUIVO DE CACHE LOCAL
-    # ======================
-    CACHE_FILE_TEMPERA = "cache_tempera.pkl"
-    
     def safe_float(val):
         """Converte valor para float de forma segura"""
         if val is None or pd.isna(val):
@@ -2979,281 +2974,160 @@ elif aba_selecionada == 'TÊMPERA':
         except:
             return 0.0
 
-    def salvar_cache_tempera(df):
-        """Salva o DataFrame em cache local"""
-        try:
-            df.to_pickle(CACHE_FILE_TEMPERA)
-            return True
-        except Exception as e:
-            print(f"Erro ao salvar cache: {e}")
-            return False
-    
-    def carregar_cache_tempera():
-        """Carrega o DataFrame do cache local"""
-        try:
-            if os.path.exists(CACHE_FILE_TEMPERA):
-                # Verificar se o cache é recente (menos de 1 hora)
-                tempo_modificacao = os.path.getmtime(CACHE_FILE_TEMPERA)
-                if time.time() - tempo_modificacao < 3600:  # 1 hora
-                    df = pd.read_pickle(CACHE_FILE_TEMPERA)
-                    if not df.empty:
-                        return df
-            return None
-        except Exception as e:
-            print(f"Erro ao carregar cache: {e}")
-            return None
-
-    # ======================
-    # FUNÇÃO DE PROCESSAMENTO DOS DADOS (REUTILIZÁVEL)
-    # ======================
-    def processar_dados_tempera(todos_dados):
-        """Processa os dados brutos da planilha e retorna DataFrame processado"""
-        if len(todos_dados) < 2:
-            return pd.DataFrame()
-        
-        cabecalho = todos_dados[0]
-        valores = todos_dados[1:]
-        df = pd.DataFrame(valores, columns=cabecalho)
-        colunas = list(df.columns)
-        
-        # Mapear colunas por posição (baseado nos nomes reais)
-        if len(colunas) >= 5:
-            df = df.rename(columns={
-                colunas[0]: 'PRODUCAO',
-                colunas[1]: 'DATA_TEMP',
-                colunas[2]: 'TURNO_TEMP',
-                colunas[3]: 'PRODUTO',
-                colunas[4]: 'GANCHEIRA'
-            })
-        
-        if len(colunas) >= 8:
-            df = df.rename(columns={
-                colunas[5]: 'SUPERIOR',
-                colunas[6]: 'MEIO',
-                colunas[7]: 'INFERIOR'
-            })
-        
-        if len(colunas) >= 11:
-            df = df.rename(columns={
-                colunas[8]: 'A1',
-                colunas[9]: 'C1',
-                colunas[10]: 'A2'
-            })
-        
-        if len(colunas) >= 14:
-            df = df.rename(columns={
-                colunas[11]: 'C2',
-                colunas[12]: 'A3',
-                colunas[13]: 'C3'
-            })
-        
-        if len(colunas) >= 17:
-            df = df.rename(columns={
-                colunas[14]: 'A4',
-                colunas[15]: 'C4',      # HUMIDADE
-                colunas[16]: 'A5'
-            })
-        
-        if len(colunas) >= 20:
-            df = df.rename(columns={
-                colunas[17]: 'C5',
-                colunas[18]: 'A e B'    # PRESSÃO AR
-            })
-        
-        # Converter datas
-        if 'DATA_TEMP' in df.columns:
-            df['DATA'] = df['DATA_TEMP'].apply(converter_data_br)
-        elif 'PRODUCAO' in df.columns:
-            df['DATA'] = df['PRODUCAO'].apply(converter_data_br)
-        
-        if 'DATA' in df.columns:
-            df = df.dropna(subset=['DATA'])
-        
-        # Converter colunas numéricas
-        colunas_numericas = ['SUPERIOR', 'MEIO', 'INFERIOR', 'A1', 'C1', 'A2', 'C2', 'C3', 'A4', 'C4', 'A5', 'C5', 'A e B']
-        
-        for col in colunas_numericas:
-            if col in df.columns:
-                df[col] = df[col].apply(safe_float)
-        
-        # CORREÇÃO: Tempo C2 - converter para segundos
-        if 'C2' in df.columns:
-            def converter_tempo_c2(val):
-                if pd.isna(val) or val == 0:
-                    return 0
-                if val <= 1:
-                    return val * 100
-                elif val <= 10:
-                    return val * 10
-                else:
-                    return val
-            df['C2'] = df['C2'].apply(converter_tempo_c2)
-        
-        # Identificar colunas de posições (19 a 70)
-        colunas_posicoes_validas = []
-        for col in df.columns:
-            try:
-                num = int(str(col).strip())
-                if 19 <= num <= 70:
-                    colunas_posicoes_validas.append(col)
-            except:
-                pass
-        
-        # Inicializar colunas
-        df['TOTAL_PECAS'] = 40
-        df['APROVADO'] = 40
-        df['TOTAL_DEFEITOS'] = 0
-        df['IS_CRITICO'] = False
-        
-        for codigo, nome in MAPEAMENTO_DEFEITOS.items():
-            nome_clean = nome.upper().replace(' ', '_').replace('Ç', 'C').replace('Ã', 'A').replace('Á', 'A').replace('Ó', 'O')
-            df[f'QTD_{nome_clean}'] = 0
-        
-        for idx, row in df.iterrows():
-            defeitos_contagem = {codigo: 0 for codigo in MAPEAMENTO_DEFEITOS.keys()}
-            
-            for col in colunas_posicoes_validas:
-                try:
-                    val = row[col]
-                    if pd.notna(val) and str(val).strip():
-                        codigo = int(float(str(val).strip()))
-                        if codigo in MAPEAMENTO_DEFEITOS:
-                            defeitos_contagem[codigo] += 1
-                except:
-                    pass
-            
-            total_defeitos_reais = sum(defeitos_contagem.get(cod, 0) for cod in CODIGOS_DEFEITO_REAIS)
-            aprovadas = 40 - total_defeitos_reais
-            
-            df.at[idx, 'APROVADO'] = aprovadas
-            df.at[idx, 'TOTAL_DEFEITOS'] = total_defeitos_reais
-            df.at[idx, 'TRS (%)'] = (aprovadas / 40 * 100) if 40 > 0 else 0
-            
-            is_critico = False
-            if defeitos_contagem.get(4, 0) >= 1:
-                is_critico = True
-            if defeitos_contagem.get(3, 0) > 2:
-                is_critico = True
-            df.at[idx, 'IS_CRITICO'] = is_critico
-            
-            for codigo, nome in MAPEAMENTO_DEFEITOS.items():
-                nome_clean = nome.upper().replace(' ', '_').replace('Ç', 'C').replace('Ã', 'A').replace('Á', 'A').replace('Ó', 'O')
-                col_nome = f'QTD_{nome_clean}'
-                if col_nome in df.columns:
-                    df.at[idx, col_nome] = defeitos_contagem.get(codigo, 0)
-        
-        return df
-
-    # ======================
-    # FUNÇÃO DE CARREGAMENTO COM CACHE EM ARQUIVO
-    # ======================
-    @st.cache_data(ttl=600)
-    def carregar_dados_tempera_com_cache():
-        """Carrega dados da têmpera com cache em arquivo"""
-        
-        # 1. TENTAR CARREGAR DO CACHE EM ARQUIVO PRIMEIRO
-        df_cache = carregar_cache_tempera()
-        if df_cache is not None and not df_cache.empty:
-            return df_cache
-        
-        # 2. SE NÃO HOUVER CACHE, TENTAR CARREGAR DA API
+    @st.cache_data(ttl=1200)
+    def carregar_dados_tempera():
         try:
             client = get_gspread_client()
             if client is None:
-                # Se não conseguir conectar, tentar cache novamente (mesmo que antigo)
-                df_cache_antigo = carregar_cache_tempera()
-                if df_cache_antigo is not None and not df_cache_antigo.empty:
-                    st.warning("⚠️ Usando dados em cache (offline). Conecte-se à internet para atualizar.")
-                    return df_cache_antigo
                 return pd.DataFrame()
-            
-            # Pequeno delay para evitar quota
-            time.sleep(1)
-            
             sheet = client.open_by_key(ID_PLANILHA_TEMPERA).worksheet(ABA)
             todos_dados = sheet.get_all_values()
             
             if len(todos_dados) < 2:
                 return pd.DataFrame()
             
-            # Processar os dados
-            df = processar_dados_tempera(todos_dados)
+            cabecalho = todos_dados[0]
+            valores = todos_dados[1:]
+            df = pd.DataFrame(valores, columns=cabecalho)
+            colunas = list(df.columns)
             
-            # Salvar em cache
-            if not df.empty:
-                salvar_cache_tempera(df)
+            # Mapear colunas por posição (baseado nos nomes reais)
+            if len(colunas) >= 5:
+                df = df.rename(columns={
+                    colunas[0]: 'PRODUCAO',
+                    colunas[1]: 'DATA_TEMP',
+                    colunas[2]: 'TURNO_TEMP',
+                    colunas[3]: 'PRODUTO',
+                    colunas[4]: 'GANCHEIRA'
+                })
+            
+            if len(colunas) >= 8:
+                df = df.rename(columns={
+                    colunas[5]: 'SUPERIOR',
+                    colunas[6]: 'MEIO',
+                    colunas[7]: 'INFERIOR'
+                })
+            
+            if len(colunas) >= 11:
+                df = df.rename(columns={
+                    colunas[8]: 'A1',
+                    colunas[9]: 'C1',
+                    colunas[10]: 'A2'
+                })
+            
+            if len(colunas) >= 14:
+                df = df.rename(columns={
+                    colunas[11]: 'C2',
+                    colunas[12]: 'A3',
+                    colunas[13]: 'C3'
+                })
+            
+            if len(colunas) >= 17:
+                df = df.rename(columns={
+                    colunas[14]: 'A4',
+                    colunas[15]: 'C4',      # HUMIDADE
+                    colunas[16]: 'A5'
+                })
+            
+            if len(colunas) >= 20:
+                df = df.rename(columns={
+                    colunas[17]: 'C5',
+                    colunas[18]: 'A e B'    # PRESSÃO AR
+                })
+            
+            # Converter datas
+            if 'DATA_TEMP' in df.columns:
+                df['DATA'] = df['DATA_TEMP'].apply(converter_data_br)
+            elif 'PRODUCAO' in df.columns:
+                df['DATA'] = df['PRODUCAO'].apply(converter_data_br)
+            
+            if 'DATA' in df.columns:
+                df = df.dropna(subset=['DATA'])
+            
+            # Converter colunas numéricas
+            colunas_numericas = ['SUPERIOR', 'MEIO', 'INFERIOR', 'A1', 'C1', 'A2', 'C2', 'A3', 'C3', 'A4', 'C4', 'A5', 'C5', 'A e B']
+            
+            for col in colunas_numericas:
+                if col in df.columns:
+                    df[col] = df[col].apply(safe_float)
+            
+            # CORREÇÃO: Tempo C2 - converter para segundos
+            if 'C2' in df.columns:
+                def converter_tempo_c2(val):
+                    if pd.isna(val) or val == 0:
+                        return 0
+                    if val <= 1:
+                        return val * 100
+                    elif val <= 10:
+                        return val * 10
+                    else:
+                        return val
+                df['C2'] = df['C2'].apply(converter_tempo_c2)
+            
+            # Identificar colunas de posições (19 a 70)
+            colunas_posicoes_validas = []
+            for col in df.columns:
+                try:
+                    num = int(str(col).strip())
+                    if 19 <= num <= 70:
+                        colunas_posicoes_validas.append(col)
+                except:
+                    pass
+            
+            # Inicializar colunas
+            df['TOTAL_PECAS'] = 40
+            df['APROVADO'] = 40
+            df['TOTAL_DEFEITOS'] = 0
+            df['IS_CRITICO'] = False
+            
+            for codigo, nome in MAPEAMENTO_DEFEITOS.items():
+                nome_clean = nome.upper().replace(' ', '_').replace('Ç', 'C').replace('Ã', 'A').replace('Á', 'A').replace('Ó', 'O')
+                df[f'QTD_{nome_clean}'] = 0
+            
+            for idx, row in df.iterrows():
+                defeitos_contagem = {codigo: 0 for codigo in MAPEAMENTO_DEFEITOS.keys()}
+                
+                for col in colunas_posicoes_validas:
+                    try:
+                        val = row[col]
+                        if pd.notna(val) and str(val).strip():
+                            codigo = int(float(str(val).strip()))
+                            if codigo in MAPEAMENTO_DEFEITOS:
+                                defeitos_contagem[codigo] += 1
+                    except:
+                        pass
+                
+                total_defeitos_reais = sum(defeitos_contagem.get(cod, 0) for cod in CODIGOS_DEFEITO_REAIS)
+                aprovadas = 40 - total_defeitos_reais
+                
+                df.at[idx, 'APROVADO'] = aprovadas
+                df.at[idx, 'TOTAL_DEFEITOS'] = total_defeitos_reais
+                df.at[idx, 'TRS (%)'] = (aprovadas / 40 * 100) if 40 > 0 else 0
+                
+                is_critico = False
+                if defeitos_contagem.get(4, 0) >= 1:
+                    is_critico = True
+                if defeitos_contagem.get(3, 0) > 2:
+                    is_critico = True
+                df.at[idx, 'IS_CRITICO'] = is_critico
+                
+                for codigo, nome in MAPEAMENTO_DEFEITOS.items():
+                    nome_clean = nome.upper().replace(' ', '_').replace('Ç', 'C').replace('Ã', 'A').replace('Á', 'A').replace('Ó', 'O')
+                    col_nome = f'QTD_{nome_clean}'
+                    if col_nome in df.columns:
+                        df.at[idx, col_nome] = defeitos_contagem.get(codigo, 0)
             
             return df
             
         except Exception as e:
-            # Tratamento específico para erro de quota
-            if "429" in str(e) or "Quota exceeded" in str(e):
-                st.warning("⚠️ Limite de requisições ao Google Sheets atingido.")
-                # Tentar carregar do cache (mesmo que antigo)
-                df_cache_antigo = carregar_cache_tempera()
-                if df_cache_antigo is not None and not df_cache_antigo.empty:
-                    st.info("📂 Usando dados em cache. Tente novamente em alguns minutos para atualizar.")
-                    return df_cache_antigo
-                else:
-                    st.error("❌ Sem dados em cache disponíveis. Aguarde alguns minutos e tente novamente.")
-                    return pd.DataFrame()
-            else:
-                # Outros erros
-                st.error(f"Erro ao carregar dados: {str(e)}")
-                # Tentar carregar do cache
-                df_cache_antigo = carregar_cache_tempera()
-                if df_cache_antigo is not None and not df_cache_antigo.empty:
-                    st.info("📂 Usando dados em cache devido ao erro.")
-                    return df_cache_antigo
-                return pd.DataFrame()
-
-    # ======================
-    # FUNÇÃO PARA FORCAR RECARREGAMENTO
-    # ======================
-    def forcar_recarregamento_tempera():
-        """Força o recarregamento dos dados da API"""
-        try:
-            # Remover cache em arquivo
-            if os.path.exists(CACHE_FILE_TEMPERA):
-                os.remove(CACHE_FILE_TEMPERA)
-            # Limpar cache do Streamlit
-            st.cache_data.clear()
-            return True
-        except:
-            return False
-
-    # ======================
-    # CARREGAMENTO PRINCIPAL
-    # ======================
-    # Verificar se existe cache e mostrar info
-    cache_existe = os.path.exists(CACHE_FILE_TEMPERA)
-    if cache_existe:
-        try:
-            tempo_modificacao = os.path.getmtime(CACHE_FILE_TEMPERA)
-            tempo_cache = datetime.fromtimestamp(tempo_modificacao)
-            st.sidebar.caption(f"📂 Cache: {tempo_cache.strftime('%d/%m/%Y %H:%M')}")
-        except:
-            pass
+            st.error(f"Erro ao carregar dados: {str(e)}")
+            return pd.DataFrame()
 
     with st.spinner("Carregando dados da Têmpera..."):
-        df_base = carregar_dados_tempera_com_cache()
+        df_base = carregar_dados_tempera()
 
     if df_base.empty:
-        st.warning("""
-        ⚠️ **Não foi possível carregar os dados da Têmpera.**
-        
-        **Possíveis soluções:**
-        1. Aguarde alguns minutos e clique em "🔄 Recarregar Dados" no sidebar
-        2. Verifique sua conexão com a internet
-        3. Se o problema persistir, entre em contato com o suporte técnico
-        """)
-        
-        # Botão para tentar novamente
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            if st.button("🔄 Tentar Novamente", use_container_width=True):
-                forcar_recarregamento_tempera()
-                st.rerun()
+        st.warning("Não foi possível carregar os dados da Têmpera.")
         st.stop()
 
     # ── Sidebar filtros ──
@@ -3277,25 +3151,6 @@ elif aba_selecionada == 'TÊMPERA':
         
         excluir_criticos = st.checkbox("Excluir registros críticos", value=False, key="tempera_excluir_criticos")
         qtd = st.number_input("Linhas na tabela", min_value=0, max_value=5000, value=20, step=10, key="tempera_qtd")
-        
-        st.markdown("---")
-        
-        # Botão para forçar recarregamento
-        if st.button("🔄 Recarregar Dados", key="btn_recarregar_tempera", use_container_width=True):
-            if forcar_recarregamento_tempera():
-                st.success("✅ Cache limpo! Recarregando dados...")
-                time.sleep(1)
-                st.rerun()
-            else:
-                st.error("❌ Erro ao limpar cache")
-        
-        # Informações do cache
-        if os.path.exists(CACHE_FILE_TEMPERA):
-            try:
-                tamanho = os.path.getsize(CACHE_FILE_TEMPERA) / 1024  # KB
-                st.caption(f"💾 Cache: {tamanho:.1f} KB")
-            except:
-                pass
 
     # ── Aplicar filtros ──
     df = df_base.copy()
@@ -8327,324 +8182,175 @@ elif aba_selecionada == 'MANUTENÇÃO PREVENTIVA':
     """, unsafe_allow_html=True)
     
 # ==================================================================================================
-# MAPEAMENTO DE HABILIDADES
+# RASTREAMENTO DE PRODUÇÃO
 # ==================================================================================================
-elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
-    render_page_header("MAPEAMENTO DE HABILIDADES", f"Desenvolvimento de Pessoas · Atualizado {get_horario_brasilia()}", THEME['accent_purple'])
+elif aba_selecionada == 'RASTREAMENTO DE PRODUÇÃO':
+    render_page_header("RASTREAMENTO DE PRODUÇÃO", f"Rastreabilidade de Lotes · Atualizado {get_horario_brasilia()}", THEME['accent_cyan'])
     
     # ======================
-    # CONFIGURAÇÃO DA PLANILHA
-    # ======================
-    ID_PLANILHA_HABILIDADES = '1Kldu2rJKlGDWSAvztvgLUyZ0DwcifOlbWvekj6xhkl4'
-    ABA_HABILIDADES = 'HABILIDADES'
-    
-    # ======================
-    # COLUNAS ESPECÍFICAS DA PLANILHA
-    # ======================
-    # Hard Skills (lado esquerdo)
-    HARD_SKILLS = [
-        'LER_PLANTAS_TECNICAS',
-        'INSPECAO_VISUAL',
-        'CHOQUE_TERMICO',
-        'MENTORIA',
-        'NORMAS_QUALIDADE',
-        'SITEMA_ERP',
-        'EXPEDICAO',
-        'TRS',
-        'OPERACAO_MAQUINA',
-        'PLANTAS_TECNICAS'
-    ]
-    
-    # Soft Skills (lado direito)
-    SOFT_SKILLS = [
-        'COMUNICACAO',
-        'LIDERANCA',
-        'TRABALHO_EQUIPE',
-        'CRIATIVIDADE',
-        'RESOLUCAO_PROBLEMAS',
-        'ADAPTABILIDADE',
-        'AGILIDADE',
-        'INTELIGENCIA_EMOCIONAL',
-        'ASSIDUIDADE',
-        'PONTUALIDADE',
-        'PROATIVIDADE'
-    ]
-    
-    # ======================
-    # FUNÇÃO PARA CARREGAR DADOS DA PLANILHA
+    # CARREGAR DADOS DA PLANILHA PRENSADOS (TRS_INDUSTRIAL)
     # ======================
     @retry_on_quota()
     @st.cache_data(ttl=300)
-    def carregar_dados_habilidades():
+    def carregar_dados_rastreamento():
         """
-        Carrega os dados da planilha de Mapeamento de Habilidades
+        Carrega os dados da planilha TRS_INDUSTRIAL com as colunas específicas
+        para rastreamento de produção.
         """
         try:
             client = get_gspread_client()
             if client is None:
                 st.error("❌ Erro ao conectar ao Google Sheets")
-                return pd.DataFrame(), [], []
+                return pd.DataFrame()
             
-            # Abrir planilha de Habilidades
-            spreadsheet = client.open_by_key(ID_PLANILHA_HABILIDADES)
-            
-            # Tentar abrir a aba HABILIDADES
-            try:
-                sheet = spreadsheet.worksheet(ABA_HABILIDADES)
-            except Exception as e:
-                st.error(f"❌ Aba '{ABA_HABILIDADES}' não encontrada na planilha. Erro: {e}")
-                return pd.DataFrame(), [], []
-            
-            # Ler todos os dados
+            # Abrir planilha de PRENSADOS/SOPRO
+            sheet = client.open_by_key(ID_PLANILHA_PRENSADOS_SOPRO).worksheet('TRS_INDUSTRIAL')
             todos_dados = sheet.get_all_values()
             
-            if len(todos_dados) < 2:
-                st.info("📭 Nenhum dado encontrado na planilha.")
-                return pd.DataFrame(), [], []
+            if len(todos_dados) < 3:
+                return pd.DataFrame()
             
-            # Cabeçalho na primeira linha
-            cabecalho = todos_dados[0]
-            valores = todos_dados[1:]
+            # Cabeçalho na linha 2 (índice 1)
+            cabecalho = todos_dados[1]
+            # Dados começam na linha 3 (índice 2)
+            valores = todos_dados[2:]
             
-            # Criar DataFrame
             df = pd.DataFrame(valores, columns=cabecalho)
-            
-            # Limpar nomes das colunas (remover espaços e acentos)
             df.columns = df.columns.str.strip().str.upper()
-            df.columns = df.columns.str.replace(' ', '_')
-            df.columns = df.columns.str.replace('Ç', 'C')
-            df.columns = df.columns.str.replace('Ã', 'A')
-            df.columns = df.columns.str.replace('Á', 'A')
-            df.columns = df.columns.str.replace('É', 'E')
-            df.columns = df.columns.str.replace('Í', 'I')
-            df.columns = df.columns.str.replace('Ó', 'O')
-            df.columns = df.columns.str.replace('Ú', 'U')
             
-            # Mapeamento de colunas esperadas
-            colunas_esperadas = ['COLABORADOR', 'FUNCAO', 'TURNO', 'SETOR'] + HARD_SKILLS + SOFT_SKILLS
+            # Mapeamento das colunas
+            colunas_necessarias = {
+                'DATA': 'DATA',
+                'CODIGO': 'CODIGO',
+                'REFERÊNCIA': 'REFERENCIA',
+                'TURNO': 'TURNO',
+                'CLIENTE': 'CLIENTE',
+                'PRODUZIDO': 'PRODUZIDO',
+                'APROVADO': 'APROVADO',
+                'REFUGADO': 'REFUGADO',
+                'TRS 100%': 'META_LIQUIDA',
+                'INSPETOR': 'INSPETOR_1',
+                'FIFO': 'FIFO',
+                'D_TEMPERA': 'D_TEMPERA',
+                'AP_TEMPERA': 'AP_TEMPERA',
+                'D_EMBALAGEM': 'D_EMBALAGEM',
+                'AP_EMBALAGEM': 'AP_EMBALAGEM',
+                'BOQUETA': 'BOQUETA'
+            }
             
             # Verificar quais colunas existem
-            colunas_existentes = [col for col in colunas_esperadas if col in df.columns]
+            colunas_existentes = {}
+            for original, novo in colunas_necessarias.items():
+                if original in df.columns:
+                    colunas_existentes[original] = novo
             
-            if not colunas_existentes:
-                st.error("❌ Nenhuma coluna esperada encontrada na planilha.")
-                st.write("Colunas encontradas:", list(df.columns)[:10])
-                return pd.DataFrame(), [], []
+            # Criar DataFrame com as colunas que existem
+            df_resultado = pd.DataFrame()
+            for original, novo in colunas_existentes.items():
+                df_resultado[novo] = df[original]
             
-            # Manter apenas colunas existentes
-            df = df[colunas_existentes]
+            # Converter datas
+            if 'DATA' in df_resultado.columns:
+                df_resultado['DATA'] = df_resultado['DATA'].apply(converter_data_br)
             
-            # Converter colunas numéricas (Hard e Soft Skills)
-            for col in HARD_SKILLS + SOFT_SKILLS:
-                if col in df.columns:
-                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-                    # Limitar entre 0 e 10
-                    df[col] = df[col].clip(0, 10)
+            if 'D_TEMPERA' in df_resultado.columns:
+                df_resultado['D_TEMPERA'] = df_resultado['D_TEMPERA'].apply(converter_data_br)
             
-            # Remover linhas sem colaborador
-            if 'COLABORADOR' in df.columns:
-                df = df[df['COLABORADOR'].astype(str).str.strip() != '']
-                df = df[df['COLABORADOR'].astype(str).str.strip() != 'nan']
-            else:
-                st.warning("⚠️ Coluna 'COLABORADOR' não encontrada na planilha.")
-                return pd.DataFrame(), [], []
+            if 'D_EMBALAGEM' in df_resultado.columns:
+                df_resultado['D_EMBALAGEM'] = df_resultado['D_EMBALAGEM'].apply(converter_data_br)
             
-            # Padronizar turno
-            if 'TURNO' in df.columns:
-                df['TURNO'] = df['TURNO'].astype(str).str.strip().str.upper()
-                df['TURNO'] = df['TURNO'].apply(lambda x: 'M' if x in ['M', 'MANHÃ', 'MANHA'] else 'T' if x in ['T', 'TARDE'] else 'N' if x in ['N', 'NOITE'] else x)
+            # Converter valores numéricos
+            colunas_numericas = ['PRODUZIDO', 'APROVADO', 'REFUGADO', 'META_LIQUIDA', 'AP_TEMPERA', 'AP_EMBALAGEM']
+            for col in colunas_numericas:
+                if col in df_resultado.columns:
+                    df_resultado[col] = pd.to_numeric(df_resultado[col], errors='coerce').fillna(0)
             
-            # Padronizar função e setor
-            if 'FUNCAO' in df.columns:
-                df['FUNCAO'] = df['FUNCAO'].astype(str).str.strip()
+            # Calcular TRS
+            if 'TRS_PRODUCAO' not in df_resultado.columns and 'APROVADO' in df_resultado.columns and 'META_LIQUIDA' in df_resultado.columns:
+                df_resultado['TRS_PRODUCAO'] = df_resultado.apply(
+                    lambda row: (row['APROVADO'] / row['META_LIQUIDA'] * 100) if row['META_LIQUIDA'] > 0 else 0, axis=1
+                )
             
-            if 'SETOR' in df.columns:
-                df['SETOR'] = df['SETOR'].astype(str).str.strip()
+            # Converter BOQUETA para numérico
+            if 'BOQUETA' in df_resultado.columns:
+                df_resultado['BOQUETA'] = pd.to_numeric(df_resultado['BOQUETA'], errors='coerce')
             
-            # Identificar quais Hard Skills existem
-            hard_existentes = [col for col in HARD_SKILLS if col in df.columns]
-            soft_existentes = [col for col in SOFT_SKILLS if col in df.columns]
+            # Remover linhas sem FIFO
+            df_resultado = df_resultado.dropna(subset=['FIFO'])
+            df_resultado['FIFO'] = df_resultado['FIFO'].astype(str).str.strip()
             
-            return df, hard_existentes, soft_existentes
+            # Identificar se produto precisa de têmpera (código terminado em 1)
+            if 'CODIGO' in df_resultado.columns:
+                df_resultado['PRECISA_TEMPERA'] = df_resultado['CODIGO'].astype(str).str.strip().str.endswith('1')
+            
+            # Ordenar por DATA mais recente primeiro
+            if 'DATA' in df_resultado.columns:
+                df_resultado = df_resultado.sort_values('DATA', ascending=False)
+            
+            return df_resultado
             
         except Exception as e:
-            st.error(f"❌ Erro ao carregar dados de habilidades: {e}")
-            return pd.DataFrame(), [], []
+            st.error(f"Erro ao carregar dados de rastreamento: {e}")
+            return pd.DataFrame()
     
     # ======================
-    # FUNÇÃO PARA CRIAR GRÁFICO DE TEIA (RADAR) COM FORMATO ESTILIZADO
+    # FUNÇÕES PARA DETERMINAR ONDE O LOTE ESTÁ
     # ======================
-    def criar_grafico_teia(colaborador_data, nome, funcao, turno, setor, hard_cols, soft_cols):
-        """
-        Cria um gráfico de teia (radar) para um colaborador
-        Hard Skills do lado esquerdo, Soft Skills do lado direito
-        """
-        # Separar dados
-        hard_values = [colaborador_data.get(col, 0) for col in hard_cols]
-        soft_values = [colaborador_data.get(col, 0) for col in soft_cols]
+    def is_em_producao(row):
+        """Lote está em PRODUÇÃO? (Ainda não foi produzido - PRODUZIDO = 0)"""
+        produzido = row.get('PRODUZIDO', 0)
+        if pd.isna(produzido) or produzido == 0:
+            return True
+        return False
+    
+    def is_em_tempera(row):
+        """Lote está em TÊMPERA? (Já produzido, precisa de têmpera, ainda não temperado)"""
+        produzido = row.get('PRODUZIDO', 0)
+        precisa_tempera = row.get('PRECISA_TEMPERA', False)
+        ap_tempera = row.get('AP_TEMPERA', 0)
         
-        # Verificar se há dados
-        if sum(hard_values) == 0 and sum(soft_values) == 0:
-            return None
+        if produzido > 0 and precisa_tempera and (pd.isna(ap_tempera) or ap_tempera == 0):
+            return True
+        return False
+    
+    def is_em_embalagem(row):
+        """Lote está em EMBALAGEM? (Já produzido, já temperado se necessário, ainda não embalado)"""
+        produzido = row.get('PRODUZIDO', 0)
+        precisa_tempera = row.get('PRECISA_TEMPERA', False)
+        ap_tempera = row.get('AP_TEMPERA', 0)
+        ap_embalagem = row.get('AP_EMBALAGEM', 0)
         
-        # Criar figura com dois subplots lado a lado
-        fig = plt.figure(figsize=(16, 8), facecolor=THEME['bg_card'])
-        fig.patch.set_facecolor(THEME['bg_card'])
+        if produzido == 0:
+            return False
         
-        # Criar gridspec para melhor controle
-        gs = fig.add_gridspec(1, 2, width_ratios=[1, 1], wspace=0.3)
+        if precisa_tempera:
+            if pd.isna(ap_tempera) or ap_tempera == 0:
+                return False
         
-        # ===== GRÁFICO ESQUERDO - HARD SKILLS =====
-        ax_left = fig.add_subplot(gs[0, 0], projection='polar')
-        ax_left.set_facecolor(THEME['bg_card'])
+        if pd.isna(ap_embalagem) or ap_embalagem == 0:
+            return True
         
-        if hard_cols and sum(hard_values) > 0:
-            # Número de variáveis
-            N_left = len(hard_cols)
-            
-            # Ângulos para cada variável
-            angles_left = np.linspace(0, 2 * np.pi, N_left, endpoint=False).tolist()
-            angles_left += angles_left[:1]  # Fechar o polígono
-            
-            # Valores
-            values_left = hard_values + hard_values[:1]
-            
-            # Plotar com estilo
-            ax_left.plot(angles_left, values_left, 'o-', linewidth=2.5, 
-                        color=THEME['accent_cyan'], alpha=0.9, label='Hard Skills')
-            ax_left.fill(angles_left, values_left, alpha=0.25, color=THEME['accent_cyan'])
-            
-            # Configurar labels
-            # Formatar nomes das colunas para exibição (remover underline e capitalizar)
-            labels_left = []
-            for col in hard_cols:
-                label = col.replace('_', ' ').title()
-                labels_left.append(label)
-            
-            ax_left.set_xticks(angles_left[:-1])
-            ax_left.set_xticklabels(labels_left, fontsize=8, fontweight='bold')
-            
-            # Limites
-            ax_left.set_ylim(0, 10)
-            ax_left.set_yticks([2, 4, 6, 8, 10])
-            ax_left.set_yticklabels(['2', '4', '6', '8', '10'], fontsize=7)
-            ax_left.grid(True, alpha=0.3)
-            
-            # Adicionar valores nas pontas
-            for i, (angle, value) in enumerate(zip(angles_left[:-1], hard_values)):
-                if value > 0:
-                    ax_left.annotate(f'{value:.0f}', 
-                                    xy=(angle, value),
-                                    xytext=(0, 8),
-                                    textcoords='offset points',
-                                    ha='center', va='center',
-                                    fontsize=8, fontweight='bold',
-                                    color=THEME['text_primary'],
-                                    bbox=dict(boxstyle='round,pad=0.2', 
-                                             facecolor='white', alpha=0.85,
-                                             edgecolor=THEME['accent_cyan'],
-                                             linewidth=1))
+        return False
+    
+    def is_liberado(row):
+        """Lote está LIBERADO? (Completamente finalizado - embalado)"""
+        ap_embalagem = row.get('AP_EMBALAGEM', 0)
+        if ap_embalagem > 0:
+            return True
+        return False
+    
+    def get_situacao_texto(row):
+        """Retorna o texto da situação atual do lote"""
+        if is_em_producao(row):
+            return "📋 PROGRAMADO PRODUZIR"
+        elif is_em_tempera(row):
+            return "🔥 PROCESSO DE TÊMPERA"
+        elif is_em_embalagem(row):
+            return "📦 PROCESSO DE EMBALAGEM"
+        elif is_liberado(row):
+            return "✅ LIBERADO PARA EXPEDIÇÃO"
         else:
-            ax_left.text(0.5, 0.5, 'Sem Hard Skills', 
-                        transform=ax_left.transAxes, ha='center', va='center',
-                        fontsize=12, color='gray')
-        
-        # Título do gráfico esquerdo
-        ax_left.set_title('🛠️ HARD SKILLS', fontsize=14, fontweight='bold', 
-                         color=THEME['accent_cyan'], pad=25)
-        
-        # ===== GRÁFICO DIREITO - SOFT SKILLS =====
-        ax_right = fig.add_subplot(gs[0, 1], projection='polar')
-        ax_right.set_facecolor(THEME['bg_card'])
-        
-        if soft_cols and sum(soft_values) > 0:
-            # Número de variáveis
-            N_right = len(soft_cols)
-            
-            # Ângulos para cada variável
-            angles_right = np.linspace(0, 2 * np.pi, N_right, endpoint=False).tolist()
-            angles_right += angles_right[:1]  # Fechar o polígono
-            
-            # Valores
-            values_right = soft_values + soft_values[:1]
-            
-            # Plotar com estilo
-            ax_right.plot(angles_right, values_right, 'o-', linewidth=2.5, 
-                         color=THEME['accent_purple'], alpha=0.9, label='Soft Skills')
-            ax_right.fill(angles_right, values_right, alpha=0.25, color=THEME['accent_purple'])
-            
-            # Configurar labels
-            # Formatar nomes das colunas para exibição (remover underline e capitalizar)
-            labels_right = []
-            for col in soft_cols:
-                label = col.replace('_', ' ').title()
-                labels_right.append(label)
-            
-            ax_right.set_xticks(angles_right[:-1])
-            ax_right.set_xticklabels(labels_right, fontsize=8, fontweight='bold')
-            
-            # Limites
-            ax_right.set_ylim(0, 10)
-            ax_right.set_yticks([2, 4, 6, 8, 10])
-            ax_right.set_yticklabels(['2', '4', '6', '8', '10'], fontsize=7)
-            ax_right.grid(True, alpha=0.3)
-            
-            # Adicionar valores nas pontas
-            for i, (angle, value) in enumerate(zip(angles_right[:-1], soft_values)):
-                if value > 0:
-                    ax_right.annotate(f'{value:.0f}', 
-                                    xy=(angle, value),
-                                    xytext=(0, 8),
-                                    textcoords='offset points',
-                                    ha='center', va='center',
-                                    fontsize=8, fontweight='bold',
-                                    color=THEME['text_primary'],
-                                    bbox=dict(boxstyle='round,pad=0.2', 
-                                             facecolor='white', alpha=0.85,
-                                             edgecolor=THEME['accent_purple'],
-                                             linewidth=1))
-        else:
-            ax_right.text(0.5, 0.5, 'Sem Soft Skills', 
-                        transform=ax_right.transAxes, ha='center', va='center',
-                        fontsize=12, color='gray')
-        
-        # Título do gráfico direito
-        ax_right.set_title('💡 SOFT SKILLS', fontsize=14, fontweight='bold', 
-                          color=THEME['accent_purple'], pad=25)
-        
-        # ===== TÍTULO PRINCIPAL DA FIGURA =====
-        titulo_principal = f"👤 {nome}"
-        if funcao and str(funcao).strip() and str(funcao).strip().lower() != 'nan':
-            titulo_principal += f" | 📋 {funcao}"
-        if turno and str(turno).strip() and str(turno).strip().lower() != 'nan':
-            titulo_principal += f" | 🕐 Turno: {turno}"
-        if setor and str(setor).strip() and str(setor).strip().lower() != 'nan':
-            titulo_principal += f" | 🏢 {setor}"
-        
-        fig.suptitle(titulo_principal, fontsize=18, fontweight='bold', 
-                    color=THEME['text_primary'], y=1.02)
-        
-        # Adicionar legenda com médias
-        media_hard = sum(hard_values) / len(hard_values) if hard_values else 0
-        media_soft = sum(soft_values) / len(soft_values) if soft_values else 0
-        
-        fig.text(0.25, 0.02, f'📊 Média Hard Skills: {media_hard:.1f}/10', 
-                fontsize=11, ha='center', color=THEME['accent_cyan'], fontweight='bold')
-        fig.text(0.75, 0.02, f'📊 Média Soft Skills: {media_soft:.1f}/10', 
-                fontsize=11, ha='center', color=THEME['accent_purple'], fontweight='bold')
-        
-        plt.tight_layout()
-        return fig
-    
-    # ======================
-    # CARREGAR DADOS
-    # ======================
-    with st.spinner("Carregando dados de habilidades..."):
-        df, hard_cols, soft_cols = carregar_dados_habilidades()
-    
-    if df.empty:
-        st.warning("⚠️ Não foi possível carregar os dados. Verifique a planilha.")
-        st.stop()
+            return "📋 PROGRAMADO PRODUZIR"
     
     # ======================
     # SIDEBAR FILTROS
@@ -8653,365 +8359,424 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
         st.markdown(f"""
         <div style='font-family:JetBrains Mono,monospace;font-size:10px;
             letter-spacing:.2em;text-transform:uppercase;
-            color:{THEME['accent_purple']};margin:20px 0 10px;
+            color:{THEME['accent_cyan']};margin:20px 0 10px;
             border-top:1px solid {THEME['border_bright']};padding-top:16px'>
-            ▸ Filtros · Habilidades
+            ▸ Filtros · Rastreamento
         </div>
         """, unsafe_allow_html=True)
         
-        # Filtro de Colaborador
-        if 'COLABORADOR' in df.columns:
-            colaboradores = sorted([str(c) for c in df['COLABORADOR'].dropna().unique() if str(c).strip() and str(c).strip().lower() != 'nan'])
-            colaborador_selecionado = st.selectbox(
-                "👤 Colaborador", 
-                options=["(Todos)"] + colaboradores,
-                key="habilidade_colaborador"
-            )
-        else:
-            colaborador_selecionado = "(Todos)"
-            st.warning("⚠️ Coluna 'COLABORADOR' não encontrada")
+        data_fim_padrao = datetime.now().date()
+        data_ini_padrao = data_fim_padrao - timedelta(days=7)
         
-        # Filtro de Turno
-        if 'TURNO' in df.columns:
-            turnos = sorted([str(t) for t in df['TURNO'].dropna().unique() if str(t).strip() and str(t).strip().lower() != 'nan'])
-            turno_selecionado = st.selectbox(
-                "🕐 Turno", 
-                options=["(Todos)"] + turnos,
-                key="habilidade_turno"
-            )
-        else:
-            turno_selecionado = "(Todos)"
+        data_ini = st.date_input("Data Inicial", value=data_ini_padrao, key="rast_data_ini")
+        data_fim = st.date_input("Data Final", value=data_fim_padrao, key="rast_data_fim")
         
-        # Filtro de Função
-        if 'FUNCAO' in df.columns:
-            funcoes = sorted([str(f) for f in df['FUNCAO'].dropna().unique() if str(f).strip() and str(f).strip().lower() != 'nan'])
-            funcao_selecionada = st.selectbox(
-                "📋 Função", 
-                options=["(Todos)"] + funcoes,
-                key="habilidade_funcao"
-            )
-        else:
-            funcao_selecionada = "(Todos)"
+        filtro_referencia = st.text_input("Referência/Código", placeholder="Digite parte do código ou referência", key="rast_ref")
         
-        # Filtro de Setor
-        if 'SETOR' in df.columns:
-            setores = sorted([str(s) for s in df['SETOR'].dropna().unique() if str(s).strip() and str(s).strip().lower() != 'nan'])
-            setor_selecionado = st.selectbox(
-                "🏢 Setor", 
-                options=["(Todos)"] + setores,
-                key="habilidade_setor"
-            )
-        else:
-            setor_selecionado = "(Todos)"
+        tipo_prensa = st.selectbox("Tipo de Prensa", ["(Todos)", "Semi-Automática", "Automática"], key="rast_tipo_prensa")
+        
+        turno = st.selectbox("Turno", ["(Todos)", "M", "T", "N"], key="rast_turno")
         
         st.markdown("---")
-        st.caption("📌 Selecione um colaborador ou use filtros para refinar")
-        st.caption(f"📊 {len(df)} colaboradores cadastrados")
-        
-        # Informações das colunas detectadas
-        if hard_cols:
-            st.caption(f"🛠️ Hard Skills: {len(hard_cols)}")
-        if soft_cols:
-            st.caption(f"💡 Soft Skills: {len(soft_cols)}")
+        st.caption("📌 Os filtros acima são aplicados em TODOS os setores")
     
     # ======================
-    # APLICAR FILTROS
+    # CARREGAR DADOS
     # ======================
-    df_filtrado = df.copy()
+    with st.spinner("Carregando dados de rastreamento..."):
+        df_raw = carregar_dados_rastreamento()
     
-    if colaborador_selecionado != "(Todos)":
-        df_filtrado = df_filtrado[df_filtrado['COLABORADOR'].astype(str).str.strip() == colaborador_selecionado]
-    
-    if turno_selecionado != "(Todos)":
-        df_filtrado = df_filtrado[df_filtrado['TURNO'].astype(str).str.strip() == turno_selecionado]
-    
-    if funcao_selecionada != "(Todos)":
-        df_filtrado = df_filtrado[df_filtrado['FUNCAO'].astype(str).str.strip() == funcao_selecionada]
-    
-    if setor_selecionado != "(Todos)":
-        df_filtrado = df_filtrado[df_filtrado['SETOR'].astype(str).str.strip() == setor_selecionado]
-    
-    # ======================
-    # KPIS
-    # ======================
-    total_colaboradores = len(df_filtrado)
-    media_hard = 0
-    media_soft = 0
-    
-    if hard_cols and total_colaboradores > 0:
-        media_hard = df_filtrado[hard_cols].mean().mean()
-    if soft_cols and total_colaboradores > 0:
-        media_soft = df_filtrado[soft_cols].mean().mean()
-    
-    col_k1, col_k2, col_k3 = st.columns(3)
-    with col_k1:
-        st.metric("👥 Colaboradores", f"{total_colaboradores:,}")
-    with col_k2:
-        st.metric("🛠️ Média Hard Skills", f"{media_hard:.1f}/10")
-    with col_k3:
-        st.metric("💡 Média Soft Skills", f"{media_soft:.1f}/10")
-    
-    st.markdown("<hr>", unsafe_allow_html=True)
-    
-    # ======================
-    # EXIBIR GRÁFICOS DE TEIA POR COLABORADOR
-    # ======================
-    if df_filtrado.empty:
-        st.warning("⚠️ Nenhum colaborador encontrado com os filtros selecionados.")
+    if df_raw.empty:
+        st.warning("⚠️ Não foi possível carregar os dados. Verifique a planilha.")
         st.stop()
     
-    # Se um colaborador específico foi selecionado, mostrar apenas ele
-    if colaborador_selecionado != "(Todos)":
-        # Mostrar gráfico de teia do colaborador específico
-        row = df_filtrado.iloc[0]
-        nome = row.get('COLABORADOR', 'Não definido')
-        funcao = row.get('FUNCAO', '')
-        turno = row.get('TURNO', '')
-        setor = row.get('SETOR', '')
-        
-        # Criar dicionário com dados do colaborador
-        dados_colaborador = row.to_dict()
-        
-        # Criar gráfico de teia
-        fig = criar_grafico_teia(dados_colaborador, nome, funcao, turno, setor, hard_cols, soft_cols)
-        
-        if fig:
-            st.pyplot(fig)
-            plt.close(fig)
-        else:
-            st.info(f"📭 Nenhum dado de habilidade disponível para {nome}")
-        
-        # Mostrar tabela de habilidades detalhada
-        with st.expander("📊 Ver detalhamento de habilidades", expanded=False):
-            dados_habilidades = []
-            
-            for col in hard_cols + soft_cols:
-                valor = row.get(col, 0)
-                if valor > 0:
-                    # Formatar nome da habilidade para exibição
-                    nome_habilidade = col.replace('_', ' ').title()
-                    tipo = '🛠️ Hard Skill' if col in hard_cols else '💡 Soft Skill'
-                    dados_habilidades.append({
-                        'Habilidade': nome_habilidade,
-                        'Nível': f"{valor:.0f}/10",
-                        'Tipo': tipo
-                    })
-            
-            if dados_habilidades:
-                df_detalhes = pd.DataFrame(dados_habilidades)
-                # Ordenar por tipo e depois por nível
-                df_detalhes = df_detalhes.sort_values(['Tipo', 'Nível'], ascending=[True, False])
-                st.dataframe(df_detalhes, use_container_width=True, hide_index=True)
-            else:
-                st.info("📭 Nenhuma habilidade registrada")
+    # ======================
+    # APLICAR FILTROS GLOBAIS
+    # ======================
+    df_filtrado = df_raw.copy()
     
-    else:
-        # Mostrar gráficos em grade para todos os colaboradores filtrados
-        st.markdown(f"### 📊 Gráficos de Habilidades por Colaborador")
-        st.caption(f"Exibindo {len(df_filtrado)} colaboradores")
-        
-        # Número de colunas por linha (1 gráfico por linha para melhor visualização)
-        cols_per_row = 1
-        
-        # Criar uma lista de índices para iterar
-        indices = list(range(len(df_filtrado)))
-        
-        # Agrupar de 1 em 1
-        for i in range(0, len(indices), cols_per_row):
-            # Criar colunas
-            cols = st.columns(cols_per_row)
-            
-            # Para cada coluna, processar um colaborador
-            for j in range(cols_per_row):
-                idx = i + j
-                if idx < len(df_filtrado):
-                    row = df_filtrado.iloc[idx]
-                    nome = row.get('COLABORADOR', 'Não definido')
-                    funcao = row.get('FUNCAO', '')
-                    turno = row.get('TURNO', '')
-                    setor = row.get('SETOR', '')
-                    
-                    dados_colaborador = row.to_dict()
-                    fig = criar_grafico_teia(dados_colaborador, nome, funcao, turno, setor, hard_cols, soft_cols)
-                    
-                    with cols[j]:
-                        if fig:
-                            st.pyplot(fig)
-                            plt.close(fig)
-                        else:
-                            st.info(f"📭 Sem dados: {nome}")
-        
-        # Adicionar botão para expandir todos os gráficos
-        with st.expander("📋 Ver todos os colaboradores em lista", expanded=False):
-            # Criar tabela resumo
-            dados_resumo = []
-            for _, row in df_filtrado.iterrows():
-                nome = row.get('COLABORADOR', 'Não definido')
-                funcao = row.get('FUNCAO', '')
-                turno = row.get('TURNO', '')
-                setor = row.get('SETOR', '')
-                
-                # Calcular médias
-                hard_vals = [row.get(col, 0) for col in hard_cols] if hard_cols else [0]
-                soft_vals = [row.get(col, 0) for col in soft_cols] if soft_cols else [0]
-                
-                media_hard_col = sum(hard_vals) / len(hard_vals) if hard_vals else 0
-                media_soft_col = sum(soft_vals) / len(soft_vals) if soft_vals else 0
-                
-                dados_resumo.append({
-                    'Colaborador': nome,
-                    'Função': funcao,
-                    'Turno': turno,
-                    'Setor': setor,
-                    'Hard Skills': f"{media_hard_col:.1f}/10",
-                    'Soft Skills': f"{media_soft_col:.1f}/10"
-                })
-            
-            if dados_resumo:
-                df_resumo = pd.DataFrame(dados_resumo)
-                st.dataframe(df_resumo, use_container_width=True, hide_index=True)
+    # Filtro de data
+    if data_ini and 'DATA' in df_filtrado.columns:
+        df_filtrado = df_filtrado[df_filtrado['DATA'] >= pd.to_datetime(data_ini)]
+    if data_fim and 'DATA' in df_filtrado.columns:
+        df_filtrado = df_filtrado[df_filtrado['DATA'] <= pd.to_datetime(data_fim)]
+    
+    # Filtro de referência/código
+    if filtro_referencia and filtro_referencia.strip():
+        filtro_lower = filtro_referencia.lower().strip()
+        if 'REFERENCIA' in df_filtrado.columns:
+            df_filtrado = df_filtrado[
+                df_filtrado['REFERENCIA'].astype(str).str.lower().str.contains(filtro_lower, na=False) |
+                df_filtrado['CODIGO'].astype(str).str.lower().str.contains(filtro_lower, na=False)
+            ]
     
     # ======================
-    # ESTATÍSTICAS GERAIS
+    # FILTRO DE TIPO DE PRENSA (CORRIGIDO)
+    # Semi-Automática = 1, Automática = 2
+    # ======================
+    if tipo_prensa != "(Todos)" and 'BOQUETA' in df_filtrado.columns:
+        if "Semi" in tipo_prensa:
+            # Semi-Automática = 1
+            df_filtrado = df_filtrado[df_filtrado['BOQUETA'] == 1]
+        elif "Auto" in tipo_prensa:
+            # Automática = 2
+            df_filtrado = df_filtrado[df_filtrado['BOQUETA'] == 2]
+    
+    # Filtro de turno
+    if turno != "(Todos)" and 'TURNO' in df_filtrado.columns:
+        df_filtrado = df_filtrado[df_filtrado['TURNO'].astype(str).str.upper() == turno.upper()]
+    
+    # Adicionar coluna de situação
+    df_filtrado['SITUACAO'] = df_filtrado.apply(get_situacao_texto, axis=1)
+    
+    # Ordenar por DATA mais recente
+    if 'DATA' in df_filtrado.columns:
+        df_filtrado = df_filtrado.sort_values('DATA', ascending=False)
+    
+    # ======================
+    # SEPARAR LOTES POR SETOR
+    # ======================
+    # SETOR 1: Apenas lotes que AINDA NÃO FORAM PRODUZIDOS (PRODUZIDO = 0)
+    df_producao = df_filtrado[df_filtrado['PRODUZIDO'] == 0].copy()
+    
+    # SETOR 2: Lotes JÁ PRODUZIDOS, com código terminado em 1, e SEM AP_TEMPERA
+    df_tempera = df_filtrado[
+        (df_filtrado['PRODUZIDO'] > 0) & 
+        (df_filtrado['PRECISA_TEMPERA'] == True) & 
+        ((df_filtrado['AP_TEMPERA'] == 0) | (df_filtrado['AP_TEMPERA'].isna()))
+    ].copy()
+    
+    # SETOR 3: Lotes JÁ PRODUZIDOS, já temperados (se necessário), e SEM AP_EMBALAGEM
+    df_embalagem = df_filtrado[
+        (df_filtrado['PRODUZIDO'] > 0) & 
+        (df_filtrado['AP_EMBALAGEM'] == 0) &
+        (~((df_filtrado['PRECISA_TEMPERA'] == True) & 
+           ((df_filtrado['AP_TEMPERA'] == 0) | (df_filtrado['AP_TEMPERA'].isna()))))
+    ].copy()
+    
+    # Lotes LIBERADOS
+    df_liberados = df_filtrado[df_filtrado['AP_EMBALAGEM'] > 0].copy()
+    
+    # ======================
+    # CÁLCULO DE PEÇAS POR SITUAÇÃO
+    # ======================
+    # PROGRAMADAS: soma da META_LIQUIDA (quantidade programada para produzir)
+    pecas_programadas = int(df_producao['META_LIQUIDA'].sum()) if 'META_LIQUIDA' in df_producao.columns else 0
+    
+    # TÊMPERA: soma do APROVADO (peças aprovadas na produção que aguardam têmpera)
+    pecas_tempera = int(df_tempera['APROVADO'].sum()) if 'APROVADO' in df_tempera.columns else 0
+    
+    # EMBALAGEM: soma do AP_TEMPERA (peças aprovadas na têmpera que aguardam embalagem)
+    pecas_embalagem = int(df_embalagem['AP_TEMPERA'].sum()) if 'AP_TEMPERA' in df_embalagem.columns else 0
+    
+    # LIBERADAS: soma do AP_EMBALAGEM (peças já embaladas)
+    pecas_liberadas = int(df_liberados['AP_EMBALAGEM'].sum()) if 'AP_EMBALAGEM' in df_liberados.columns else 0
+    
+    total_pecas = pecas_programadas + pecas_tempera + pecas_embalagem + pecas_liberadas
+    
+    # ======================
+    # KPI CARDS
+    # ======================
+    st.markdown("### 📊 Resumo do Rastreamento")
+    
+    total_lotes = len(df_filtrado)
+    lotes_programados_count = len(df_producao)
+    lotes_tempera_count = len(df_tempera)
+    lotes_embalagem_count = len(df_embalagem)
+    lotes_liberados_count = len(df_liberados)
+    
+    col_k1, col_k2, col_k3, col_k4, col_k5 = st.columns(5)
+    with col_k1:
+        st.metric("📦 Total de Lotes", f"{total_lotes:,}")
+    with col_k2:
+        st.metric("📋 Programados", f"{lotes_programados_count:,}")
+    with col_k3:
+        st.metric("🔥 Em Têmpera", f"{lotes_tempera_count:,}")
+    with col_k4:
+        st.metric("📦 Em Embalagem", f"{lotes_embalagem_count:,}")
+    with col_k5:
+        st.metric("✅ Liberados", f"{lotes_liberados_count:,}")
+    
+    st.markdown("<hr>", unsafe_allow_html=True)
+    
+    # ======================
+    # SETOR 1 - PRODUÇÃO (Aguardando Produção)
+    # ======================
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, #0078D4 0%, #005a9e 100%); 
+                padding: 12px 20px; border-radius: 8px; margin: 20px 0 15px 0;">
+        <span style="font-size: 20px; margin-right: 10px;">🏭</span>
+        <span style="font-family: 'Rajdhani', sans-serif; font-size: 18px; font-weight: bold; color: white;">
+            SETOR 1 - PRODUÇÃO (Aguardando Produção) • {len(df_producao)} lotes | {pecas_programadas:,} peças programadas
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    colunas_producao = ['DATA', 'CODIGO', 'REFERENCIA', 'TURNO', 'CLIENTE', 'PRODUZIDO', 'APROVADO', 'REFUGADO', 'META_LIQUIDA', 'TRS_PRODUCAO', 'INSPETOR_1', 'FIFO']
+    colunas_existentes_producao = [c for c in colunas_producao if c in df_producao.columns]
+    
+    if colunas_existentes_producao and not df_producao.empty:
+        df_producao_display = df_producao[colunas_existentes_producao].copy()
+        
+        if 'DATA' in df_producao_display.columns:
+            df_producao_display['DATA'] = pd.to_datetime(df_producao_display['DATA']).dt.strftime('%d/%m/%Y')
+        
+        for col in ['PRODUZIDO', 'APROVADO', 'REFUGADO', 'META_LIQUIDA']:
+            if col in df_producao_display.columns:
+                df_producao_display[col] = df_producao_display[col].apply(lambda x: f"{int(x):,}".replace(",", ".") if pd.notna(x) and x > 0 else "0")
+        
+        if 'TRS_PRODUCAO' in df_producao_display.columns:
+            df_producao_display['TRS_PRODUCAO'] = df_producao_display['TRS_PRODUCAO'].apply(lambda x: f"{float(x):.1f}%" if pd.notna(x) and x > 0 else "0%")
+        
+        renomear = {
+            'DATA': '📅 Data',
+            'CODIGO': '🔢 Código',
+            'REFERENCIA': '🏷️ Referência',
+            'TURNO': '⏰ Turno',
+            'CLIENTE': '👥 Cliente',
+            'PRODUZIDO': '📦 Produzido',
+            'APROVADO': '✅ Aprovado',
+            'REFUGADO': '❌ Refugado',
+            'META_LIQUIDA': '🎯 Meta Líquida',
+            'TRS_PRODUCAO': '📊 TRS Produção',
+            'INSPETOR_1': '🔍 Inspetor',
+            'FIFO': '🔖 Lote (FIFO)'
+        }
+        
+        df_producao_display = df_producao_display.rename(columns={k: v for k, v in renomear.items() if k in df_producao_display.columns})
+        st.dataframe(df_producao_display, use_container_width=True, height=400)
+        st.caption(f"📌 Lotes aguardando produção (PRODUZIDO = 0)")
+    else:
+        st.info("✅ Nenhum lote aguardando produção para os filtros selecionados.")
+    
+    # ======================
+    # SETOR 2 - TÊMPERA
+    # ======================
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, #E86C2C 0%, #c05520 100%); 
+                padding: 12px 20px; border-radius: 8px; margin: 30px 0 15px 0;">
+        <span style="font-size: 20px; margin-right: 10px;">🔥</span>
+        <span style="font-family: 'Rajdhani', sans-serif; font-size: 18px; font-weight: bold; color: white;">
+            SETOR 2 - TÊMPERA • {len(df_tempera)} lotes | {pecas_tempera:,} peças aguardando
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    colunas_tempera = ['DATA', 'D_TEMPERA', 'CODIGO', 'REFERENCIA', 'TURNO', 'CLIENTE', 'PRODUZIDO', 'APROVADO', 'AP_TEMPERA', 'FIFO']
+    colunas_existentes_tempera = [c for c in colunas_tempera if c in df_tempera.columns]
+    
+    if colunas_existentes_tempera and not df_tempera.empty:
+        df_tempera_display = df_tempera[colunas_existentes_tempera].copy()
+        
+        if 'DATA' in df_tempera_display.columns:
+            df_tempera_display['DATA'] = pd.to_datetime(df_tempera_display['DATA']).dt.strftime('%d/%m/%Y')
+        
+        if 'D_TEMPERA' in df_tempera_display.columns:
+            df_tempera_display['D_TEMPERA'] = df_tempera_display['D_TEMPERA'].apply(lambda x: x.strftime('%d/%m/%Y') if pd.notna(x) else "-")
+        
+        for col in ['PRODUZIDO', 'APROVADO', 'AP_TEMPERA']:
+            if col in df_tempera_display.columns:
+                df_tempera_display[col] = df_tempera_display[col].apply(lambda x: f"{int(x):,}".replace(",", ".") if pd.notna(x) and x > 0 else "-")
+        
+        renomear_tempera = {
+            'DATA': '📅 Data Produção',
+            'D_TEMPERA': '📅 Data Têmpera',
+            'CODIGO': '🔢 Código',
+            'REFERENCIA': '🏷️ Referência',
+            'TURNO': '⏰ Turno',
+            'CLIENTE': '👥 Cliente',
+            'PRODUZIDO': '📦 Produzido',
+            'APROVADO': '✅ Aprovado Prod.',
+            'AP_TEMPERA': '🔥 Aprovado Têmpera',
+            'FIFO': '🔖 Lote (FIFO)'
+        }
+        
+        df_tempera_display = df_tempera_display.rename(columns={k: v for k, v in renomear_tempera.items() if k in df_tempera_display.columns})
+        st.dataframe(df_tempera_display, use_container_width=True, height=300)
+        st.caption(f"📌 Lotes aguardando têmpera (Código termina em 1, AP_TEMPERA = 0)")
+    else:
+        st.info("✅ Nenhum lote aguardando têmpera para os filtros selecionados.")
+    
+    # ======================
+    # SETOR 3 - EMBALAGEM (Usa AP_TEMPERA como quantidade a embalar)
+    # ======================
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, #107C10 0%, #0a5a0a 100%); 
+                padding: 12px 20px; border-radius: 8px; margin: 30px 0 15px 0;">
+        <span style="font-size: 20px; margin-right: 10px;">📦</span>
+        <span style="font-family: 'Rajdhani', sans-serif; font-size: 18px; font-weight: bold; color: white;">
+            SETOR 3 - EMBALAGEM • {len(df_embalagem)} lotes | {pecas_embalagem:,} peças aguardando
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    colunas_embalagem = ['DATA', 'D_EMBALAGEM', 'CODIGO', 'REFERENCIA', 'TURNO', 'CLIENTE', 'PRODUZIDO', 'AP_TEMPERA', 'AP_EMBALAGEM', 'FIFO']
+    colunas_existentes_embalagem = [c for c in colunas_embalagem if c in df_embalagem.columns]
+    
+    if colunas_existentes_embalagem and not df_embalagem.empty:
+        df_embalagem_display = df_embalagem[colunas_existentes_embalagem].copy()
+        
+        if 'DATA' in df_embalagem_display.columns:
+            df_embalagem_display['DATA'] = pd.to_datetime(df_embalagem_display['DATA']).dt.strftime('%d/%m/%Y')
+        
+        if 'D_EMBALAGEM' in df_embalagem_display.columns:
+            df_embalagem_display['D_EMBALAGEM'] = df_embalagem_display['D_EMBALAGEM'].apply(lambda x: x.strftime('%d/%m/%Y') if pd.notna(x) else "-")
+        
+        for col in ['PRODUZIDO', 'AP_TEMPERA', 'AP_EMBALAGEM']:
+            if col in df_embalagem_display.columns:
+                df_embalagem_display[col] = df_embalagem_display[col].apply(lambda x: f"{int(x):,}".replace(",", ".") if pd.notna(x) and x > 0 else "-")
+        
+        renomear_embalagem = {
+            'DATA': '📅 Data Produção',
+            'D_EMBALAGEM': '📅 Data Embalagem',
+            'CODIGO': '🔢 Código',
+            'REFERENCIA': '🏷️ Referência',
+            'TURNO': '⏰ Turno',
+            'CLIENTE': '👥 Cliente',
+            'PRODUZIDO': '📦 Produzido',
+            'AP_TEMPERA': '🔥 Aprovado Têmpera',
+            'AP_EMBALAGEM': '📦 Aprovado Embalagem',
+            'FIFO': '🔖 Lote (FIFO)'
+        }
+        
+        df_embalagem_display = df_embalagem_display.rename(columns={k: v for k, v in renomear_embalagem.items() if k in df_embalagem_display.columns})
+        st.dataframe(df_embalagem_display, use_container_width=True, height=300)
+        st.caption(f"📌 Lotes aguardando embalagem - Quantidade a embalar: {pecas_embalagem:,} peças (aprovadas na têmpera)")
+    else:
+        st.info("✅ Nenhum lote aguardando embalagem para os filtros selecionados.")
+    
+    # ======================
+    # RESUMO DOS LOTES COM SITUAÇÃO
     # ======================
     st.markdown("<hr>", unsafe_allow_html=True)
-    st.markdown("### 📊 Estatísticas Gerais")
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, #6B46C1 0%, #553c9a 100%); 
+                padding: 12px 20px; border-radius: 8px; margin: 20px 0 15px 0;">
+        <span style="font-size: 20px; margin-right: 10px;">📋</span>
+        <span style="font-family: 'Rajdhani', sans-serif; font-size: 18px; font-weight: bold; color: white;">
+            RESUMO DOS LOTES - SITUAÇÃO ATUAL ({len(df_filtrado)} lotes)
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
     
-    col_est1, col_est2 = st.columns(2)
+    colunas_resumo = ['FIFO', 'DATA', 'REFERENCIA', 'CODIGO', 'TURNO', 'PRODUZIDO', 'APROVADO', 'AP_TEMPERA', 'AP_EMBALAGEM', 'SITUACAO']
+    colunas_existentes_resumo = [c for c in colunas_resumo if c in df_filtrado.columns]
     
-    with col_est1:
-        st.markdown("#### 🛠️ Hard Skills - Média por Colaborador")
-        if hard_cols and not df_filtrado.empty:
-            medias_hard = {}
-            for col in hard_cols:
-                if col in df_filtrado.columns:
-                    medias_hard[col] = df_filtrado[col].mean()
+    if colunas_existentes_resumo and not df_filtrado.empty:
+        df_resumo = df_filtrado[colunas_existentes_resumo].copy()
+        
+        if 'DATA' in df_resumo.columns:
+            df_resumo['DATA'] = pd.to_datetime(df_resumo['DATA']).dt.strftime('%d/%m/%Y')
+        
+        for col in ['PRODUZIDO', 'APROVADO', 'AP_TEMPERA', 'AP_EMBALAGEM']:
+            if col in df_resumo.columns:
+                df_resumo[col] = df_resumo[col].apply(lambda x: f"{int(x):,}".replace(",", ".") if pd.notna(x) and x > 0 else "-")
+        
+        renomear_resumo = {
+            'FIFO': '🔖 Lote (FIFO)',
+            'DATA': '📅 Data Produção',
+            'REFERENCIA': '🏷️ Referência',
+            'CODIGO': '🔢 Código',
+            'TURNO': '⏰ Turno',
+            'PRODUZIDO': '📦 Produzido',
+            'APROVADO': '✅ Aprovado Prod.',
+            'AP_TEMPERA': '🔥 Aprovado Têmpera',
+            'AP_EMBALAGEM': '📦 Aprovado Embal.',
+            'SITUACAO': '📍 Situação'
+        }
+        
+        df_resumo_display = df_resumo.rename(columns={k: v for k, v in renomear_resumo.items() if k in df_resumo.columns})
+        
+        st.dataframe(df_resumo_display, use_container_width=True, height=500)
+        
+        # ======================
+        # GRÁFICO DE DISTRIBUIÇÃO POR SITUAÇÃO (USANDO PEÇAS)
+        # ======================
+        st.markdown("### 📊 Distribuição de Peças por Situação")
+        
+        categorias = ['📋 PROGRAMADO PRODUZIR', '🔥 PROCESSO DE TÊMPERA', '📦 PROCESSO DE EMBALAGEM', '✅ LIBERADO PARA EXPEDIÇÃO']
+        valores = [pecas_programadas, pecas_tempera, pecas_embalagem, pecas_liberadas]
+        cores = ['#FFB900', '#E86C2C', '#0078D4', '#107C10']
+        
+        dados_grafico = [(cat, val, cor) for cat, val, cor in zip(categorias, valores, cores) if val > 0]
+        
+        if dados_grafico:
+            fig, ax = plt.subplots(figsize=(10, 6), facecolor=THEME['bg_card'])
             
-            if medias_hard:
-                df_medias_hard = pd.DataFrame(list(medias_hard.items()), columns=['Habilidade', 'Média'])
-                df_medias_hard = df_medias_hard.sort_values('Média', ascending=False)
-                
-                # Formatar nomes para exibição
-                df_medias_hard['Habilidade'] = df_medias_hard['Habilidade'].str.replace('_', ' ').str.title()
-                
-                fig, ax = plt.subplots(figsize=(8, 5), facecolor=THEME['bg_card'])
-                ax.set_facecolor(THEME['bg_card'])
-                
-                bars = ax.barh(range(len(df_medias_hard)), df_medias_hard['Média'], 
-                              color=THEME['accent_cyan'], alpha=0.8)
-                
-                ax.set_yticks(range(len(df_medias_hard)))
-                ax.set_yticklabels(df_medias_hard['Habilidade'], fontsize=9)
-                ax.set_xlabel('Média', fontsize=10)
-                ax.set_title('Média das Hard Skills', fontweight='bold', fontsize=12)
-                ax.set_xlim(0, 10)
-                
-                for bar, val in zip(bars, df_medias_hard['Média']):
-                    ax.text(bar.get_width() + 0.1, bar.get_y() + bar.get_height()/2,
-                           f'{val:.1f}', va='center', fontsize=9, fontweight='bold')
-                
-                ax.spines['top'].set_visible(False)
-                ax.spines['right'].set_visible(False)
-                
-                fig.tight_layout()
-                st.pyplot(fig)
-                plt.close(fig)
-            else:
-                st.info("📭 Nenhuma Hard Skill encontrada")
-        else:
-            st.info("📭 Nenhuma Hard Skill encontrada")
-    
-    with col_est2:
-        st.markdown("#### 💡 Soft Skills - Média por Colaborador")
-        if soft_cols and not df_filtrado.empty:
-            medias_soft = {}
-            for col in soft_cols:
-                if col in df_filtrado.columns:
-                    medias_soft[col] = df_filtrado[col].mean()
+            categorias_filtradas = [d[0] for d in dados_grafico]
+            valores_filtrados = [d[1] for d in dados_grafico]
+            cores_filtradas = [d[2] for d in dados_grafico]
             
-            if medias_soft:
-                df_medias_soft = pd.DataFrame(list(medias_soft.items()), columns=['Habilidade', 'Média'])
-                df_medias_soft = df_medias_soft.sort_values('Média', ascending=False)
-                
-                # Formatar nomes para exibição
-                df_medias_soft['Habilidade'] = df_medias_soft['Habilidade'].str.replace('_', ' ').str.title()
-                
-                fig, ax = plt.subplots(figsize=(8, 5), facecolor=THEME['bg_card'])
-                ax.set_facecolor(THEME['bg_card'])
-                
-                bars = ax.barh(range(len(df_medias_soft)), df_medias_soft['Média'], 
-                              color=THEME['accent_purple'], alpha=0.8)
-                
-                ax.set_yticks(range(len(df_medias_soft)))
-                ax.set_yticklabels(df_medias_soft['Habilidade'], fontsize=9)
-                ax.set_xlabel('Média', fontsize=10)
-                ax.set_title('Média das Soft Skills', fontweight='bold', fontsize=12)
-                ax.set_xlim(0, 10)
-                
-                for bar, val in zip(bars, df_medias_soft['Média']):
-                    ax.text(bar.get_width() + 0.1, bar.get_y() + bar.get_height()/2,
-                           f'{val:.1f}', va='center', fontsize=9, fontweight='bold')
-                
-                ax.spines['top'].set_visible(False)
-                ax.spines['right'].set_visible(False)
-                
-                fig.tight_layout()
-                st.pyplot(fig)
-                plt.close(fig)
-            else:
-                st.info("📭 Nenhuma Soft Skill encontrada")
-        else:
-            st.info("📭 Nenhuma Soft Skill encontrada")
-    
-    # ======================
-    # MATRIZ DE HABILIDADES (Tabela Geral)
-    # ======================
-    with st.expander("📋 Matriz de Habilidades - Todos os Colaboradores", expanded=False):
-        if not df_filtrado.empty:
-            # Selecionar colunas para exibir
-            colunas_base = ['COLABORADOR', 'FUNCAO', 'TURNO', 'SETOR']
-            colunas_base_existentes = [c for c in colunas_base if c in df_filtrado.columns]
+            bars = ax.barh(range(len(categorias_filtradas)), valores_filtrados, color=cores_filtradas, alpha=0.85, edgecolor='white', linewidth=1.5)
             
-            df_exibicao = df_filtrado[colunas_base_existentes].copy()
+            ax.set_yticks(range(len(categorias_filtradas)))
+            ax.set_yticklabels(categorias_filtradas, fontsize=11)
+            ax.set_xlabel('Quantidade de Peças', fontsize=12)
+            ax.set_title('Distribuição de Peças por Estágio Produtivo', fontweight='bold', fontsize=14, pad=15)
             
-            # Renomear colunas para exibição
-            rename_map = {
-                'COLABORADOR': 'Colaborador',
-                'FUNCAO': 'Função',
-                'TURNO': 'Turno',
-                'SETOR': 'Setor'
-            }
-            df_exibicao = df_exibicao.rename(columns={k: v for k, v in rename_map.items() if k in df_exibicao.columns})
+            for bar, valor in zip(bars, valores_filtrados):
+                ax.text(bar.get_width() + (max(valores_filtrados) * 0.01), 
+                       bar.get_y() + bar.get_height()/2,
+                       f'{valor:,.0f}'.replace(",", "."), 
+                       va='center', fontweight='bold', fontsize=11)
             
-            # Calcular médias
-            if hard_cols:
-                df_exibicao['Média Hard Skills'] = df_filtrado[hard_cols].mean(axis=1).round(1)
-            if soft_cols:
-                df_exibicao['Média Soft Skills'] = df_filtrado[soft_cols].mean(axis=1).round(1)
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            ax.spines['left'].set_visible(False)
             
-            # Ordenar por nome
-            if 'Colaborador' in df_exibicao.columns:
-                df_exibicao = df_exibicao.sort_values('Colaborador')
+            fig.tight_layout()
+            st.pyplot(fig)
+            plt.close(fig)
             
-            st.dataframe(df_exibicao, use_container_width=True, hide_index=True, height=400)
+            # Gráfico de pizza
+            st.markdown("### 🥧 Proporção de Peças")
             
-            # Download da matriz
-            csv = df_exibicao.to_csv(index=False, encoding='utf-8-sig')
-            st.download_button(
-                label="📥 Baixar Matriz (CSV)",
-                data=csv,
-                file_name=f"matriz_habilidades_{datetime.now().strftime('%Y%m%d')}.csv",
-                mime="text/csv",
-                use_container_width=True
+            fig2, ax2 = plt.subplots(figsize=(8, 6), facecolor=THEME['bg_card'])
+            
+            wedges, texts, autotexts = ax2.pie(
+                valores_filtrados,
+                labels=categorias_filtradas,
+                colors=cores_filtradas,
+                autopct=lambda pct: f'{pct:.1f}%\n({int(pct/100*sum(valores_filtrados)):,} peças)'.replace(",", "."),
+                startangle=90,
+                textprops={'fontsize': 10}
             )
+            
+            for autotext in autotexts:
+                autotext.set_color('white')
+                autotext.set_fontweight('bold')
+                autotext.set_fontsize(10)
+            
+            ax2.set_title('Proporção de Peças por Estágio', fontweight='bold', fontsize=14, pad=20)
+            
+            fig2.tight_layout()
+            st.pyplot(fig2)
+            plt.close(fig2)
+            
+            # Cards de resumo
+            st.markdown("---")
+            col_r1, col_r2, col_r3, col_r4 = st.columns(4)
+            with col_r1:
+                st.metric("📋 Peças Programadas", f"{pecas_programadas:,}".replace(",", "."))
+            with col_r2:
+                st.metric("🔥 Peças em Têmpera", f"{pecas_tempera:,}".replace(",", "."))
+            with col_r3:
+                st.metric("📦 Peças em Embalagem", f"{pecas_embalagem:,}".replace(",", "."))
+            with col_r4:
+                st.metric("✅ Peças Liberadas", f"{pecas_liberadas:,}".replace(",", "."))
+            
+            if total_pecas > 0:
+                st.caption(f"📌 Total de peças consideradas: {total_pecas:,}".replace(",", "."))
         else:
-            st.info("📭 Nenhum dado disponível")
+            st.info("📭 Nenhum dado disponível para o gráfico de peças.")
+    else:
+        st.info("📭 Nenhum dado disponível para o resumo.")
     
     st.markdown(f"""
     <div style="text-align:right;padding:16px 0 8px;
         font-family:'JetBrains Mono',monospace;font-size:10px;
         color:{THEME['text_muted']};letter-spacing:.1em;">
-        MAPEAMENTO DE HABILIDADES · {get_horario_brasilia()}
+        RASTREAMENTO DE PRODUÇÃO · {get_horario_brasilia()}
     </div>
     """, unsafe_allow_html=True)
     
