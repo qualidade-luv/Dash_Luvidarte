@@ -8327,11 +8327,11 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
             return pd.DataFrame(), [], []
     
     # ======================
-    # FUNÇÃO PARA CRIAR GRÁFICO DE TEIA (RADAR) COM FORMATO ESTILIZADO
+    # FUNÇÃO PARA CRIAR GRÁFICO DE TEIA (RADAR) UNIFICADO
     # ======================
-    def criar_grafico_teia(colaborador_data, nome, funcao, turno, setor, hard_cols, soft_cols):
+    def criar_grafico_teia_unificado(colaborador_data, nome, funcao, turno, setor, hard_cols, soft_cols):
         """
-        Cria um gráfico de teia (radar) para um colaborador
+        Cria um único gráfico de teia (radar) com Hard Skills e Soft Skills
         Hard Skills do lado esquerdo, Soft Skills do lado direito
         """
         # Separar dados
@@ -8342,130 +8342,107 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
         if sum(hard_values) == 0 and sum(soft_values) == 0:
             return None
         
-        # Criar figura com dois subplots lado a lado
-        fig = plt.figure(figsize=(16, 8), facecolor=THEME['bg_card'])
+        # Unir todas as habilidades (Hard + Soft)
+        all_skills = hard_cols + soft_cols
+        all_values = hard_values + soft_values
+        
+        # Número total de variáveis
+        N = len(all_skills)
+        
+        # Ângulos para cada variável
+        angles = np.linspace(0, 2 * np.pi, N, endpoint=False).tolist()
+        angles += angles[:1]  # Fechar o polígono
+        
+        # Valores (fechar o polígono)
+        values = all_values + all_values[:1]
+        
+        # Criar figura
+        fig = plt.figure(figsize=(12, 10), facecolor=THEME['bg_card'])
         fig.patch.set_facecolor(THEME['bg_card'])
         
-        # Criar gridspec para melhor controle
-        gs = fig.add_gridspec(1, 2, width_ratios=[1, 1], wspace=0.3)
+        # Criar subplot polar
+        ax = fig.add_subplot(111, projection='polar')
+        ax.set_facecolor(THEME['bg_card'])
         
-        # ===== GRÁFICO ESQUERDO - HARD SKILLS =====
-        ax_left = fig.add_subplot(gs[0, 0], projection='polar')
-        ax_left.set_facecolor(THEME['bg_card'])
+        # Definir cores para Hard Skills e Soft Skills
+        hard_colors = [THEME['accent_cyan'] for _ in range(len(hard_cols))]
+        soft_colors = [THEME['accent_purple'] for _ in range(len(soft_cols))]
+        all_colors = hard_colors + soft_colors
         
-        if hard_cols and sum(hard_values) > 0:
-            # Número de variáveis
-            N_left = len(hard_cols)
-            
-            # Ângulos para cada variável
-            angles_left = np.linspace(0, 2 * np.pi, N_left, endpoint=False).tolist()
-            angles_left += angles_left[:1]  # Fechar o polígono
-            
-            # Valores
-            values_left = hard_values + hard_values[:1]
-            
-            # Plotar com estilo
-            ax_left.plot(angles_left, values_left, 'o-', linewidth=2.5, 
-                        color=THEME['accent_cyan'], alpha=0.9, label='Hard Skills')
-            ax_left.fill(angles_left, values_left, alpha=0.25, color=THEME['accent_cyan'])
-            
-            # Configurar labels
-            # Formatar nomes das colunas para exibição (remover underline e capitalizar)
-            labels_left = []
-            for col in hard_cols:
-                label = col.replace('_', ' ').title()
-                labels_left.append(label)
-            
-            ax_left.set_xticks(angles_left[:-1])
-            ax_left.set_xticklabels(labels_left, fontsize=8, fontweight='bold')
-            
-            # Limites
-            ax_left.set_ylim(0, 10)
-            ax_left.set_yticks([2, 4, 6, 8, 10])
-            ax_left.set_yticklabels(['2', '4', '6', '8', '10'], fontsize=7)
-            ax_left.grid(True, alpha=0.3)
-            
-            # Adicionar valores nas pontas
-            for i, (angle, value) in enumerate(zip(angles_left[:-1], hard_values)):
-                if value > 0:
-                    ax_left.annotate(f'{value:.0f}', 
-                                    xy=(angle, value),
-                                    xytext=(0, 8),
-                                    textcoords='offset points',
-                                    ha='center', va='center',
-                                    fontsize=8, fontweight='bold',
-                                    color=THEME['text_primary'],
-                                    bbox=dict(boxstyle='round,pad=0.2', 
-                                             facecolor='white', alpha=0.85,
-                                             edgecolor=THEME['accent_cyan'],
-                                             linewidth=1))
-        else:
-            ax_left.text(0.5, 0.5, 'Sem Hard Skills', 
-                        transform=ax_left.transAxes, ha='center', va='center',
-                        fontsize=12, color='gray')
+        # Plotar o polígono principal com degradê
+        ax.plot(angles, values, 'o-', linewidth=2.5, color=THEME['accent_cyan'], alpha=0.8)
         
-        # Título do gráfico esquerdo
-        ax_left.set_title('🛠️ HARD SKILLS', fontsize=14, fontweight='bold', 
-                         color=THEME['accent_cyan'], pad=25)
+        # Preencher com cor personalizada (gradiente)
+        # Criar um polígono com diferentes cores para cada seção
+        for i in range(N):
+            angle1 = angles[i]
+            angle2 = angles[i+1] if i+1 < len(angles) else angles[0]
+            value1 = values[i]
+            value2 = values[i+1] if i+1 < len(values) else values[0]
+            
+            # Determinar cor baseada no tipo (Hard ou Soft)
+            if i < len(hard_cols):
+                color = THEME['accent_cyan']
+                alpha_fill = 0.2
+            else:
+                color = THEME['accent_purple']
+                alpha_fill = 0.2
+            
+            # Criar setor preenchido
+            theta = np.linspace(angle1, angle2, 20)
+            r = np.linspace(0, max(value1, value2), 20)
+            
+            # Usar fill_between para criar o setor
+            ax.fill_between(theta, 0, np.interp(theta, [angle1, angle2], [value1, value2]), 
+                           color=color, alpha=alpha_fill)
         
-        # ===== GRÁFICO DIREITO - SOFT SKILLS =====
-        ax_right = fig.add_subplot(gs[0, 1], projection='polar')
-        ax_right.set_facecolor(THEME['bg_card'])
+        # Configurar labels com cores diferentes
+        ax.set_xticks(angles[:-1])
         
-        if soft_cols and sum(soft_values) > 0:
-            # Número de variáveis
-            N_right = len(soft_cols)
-            
-            # Ângulos para cada variável
-            angles_right = np.linspace(0, 2 * np.pi, N_right, endpoint=False).tolist()
-            angles_right += angles_right[:1]  # Fechar o polígono
-            
-            # Valores
-            values_right = soft_values + soft_values[:1]
-            
-            # Plotar com estilo
-            ax_right.plot(angles_right, values_right, 'o-', linewidth=2.5, 
-                         color=THEME['accent_purple'], alpha=0.9, label='Soft Skills')
-            ax_right.fill(angles_right, values_right, alpha=0.25, color=THEME['accent_purple'])
-            
-            # Configurar labels
-            # Formatar nomes das colunas para exibição (remover underline e capitalizar)
-            labels_right = []
-            for col in soft_cols:
-                label = col.replace('_', ' ').title()
-                labels_right.append(label)
-            
-            ax_right.set_xticks(angles_right[:-1])
-            ax_right.set_xticklabels(labels_right, fontsize=8, fontweight='bold')
-            
-            # Limites
-            ax_right.set_ylim(0, 10)
-            ax_right.set_yticks([2, 4, 6, 8, 10])
-            ax_right.set_yticklabels(['2', '4', '6', '8', '10'], fontsize=7)
-            ax_right.grid(True, alpha=0.3)
-            
-            # Adicionar valores nas pontas
-            for i, (angle, value) in enumerate(zip(angles_right[:-1], soft_values)):
-                if value > 0:
-                    ax_right.annotate(f'{value:.0f}', 
-                                    xy=(angle, value),
-                                    xytext=(0, 8),
-                                    textcoords='offset points',
-                                    ha='center', va='center',
-                                    fontsize=8, fontweight='bold',
-                                    color=THEME['text_primary'],
-                                    bbox=dict(boxstyle='round,pad=0.2', 
-                                             facecolor='white', alpha=0.85,
-                                             edgecolor=THEME['accent_purple'],
-                                             linewidth=1))
-        else:
-            ax_right.text(0.5, 0.5, 'Sem Soft Skills', 
-                        transform=ax_right.transAxes, ha='center', va='center',
-                        fontsize=12, color='gray')
+        # Criar labels com cores (Hard em azul, Soft em roxo)
+        labels = []
+        for i, skill in enumerate(all_skills):
+            label = skill.replace('_', ' ').title()
+            if i < len(hard_cols):
+                labels.append(label)
+            else:
+                labels.append(label)
         
-        # Título do gráfico direito
-        ax_right.set_title('💡 SOFT SKILLS', fontsize=14, fontweight='bold', 
-                          color=THEME['accent_purple'], pad=25)
+        ax.set_xticklabels(labels, fontsize=9, fontweight='bold')
+        
+        # Colorir os labels manualmente
+        for i, label in enumerate(ax.get_xticklabels()):
+            if i < len(hard_cols):
+                label.set_color(THEME['accent_cyan'])
+            else:
+                label.set_color(THEME['accent_purple'])
+        
+        # Limites
+        ax.set_ylim(0, 10)
+        ax.set_yticks([2, 4, 6, 8, 10])
+        ax.set_yticklabels(['2', '4', '6', '8', '10'], fontsize=8)
+        ax.grid(True, alpha=0.3)
+        
+        # Adicionar valores nas pontas
+        for i, (angle, value, skill) in enumerate(zip(angles[:-1], all_values, all_skills)):
+            if value > 0:
+                # Definir cor do valor baseado no tipo
+                if i < len(hard_cols):
+                    val_color = THEME['accent_cyan']
+                else:
+                    val_color = THEME['accent_purple']
+                
+                ax.annotate(f'{value:.0f}', 
+                           xy=(angle, value),
+                           xytext=(0, 8),
+                           textcoords='offset points',
+                           ha='center', va='center',
+                           fontsize=8, fontweight='bold',
+                           color=val_color,
+                           bbox=dict(boxstyle='round,pad=0.2', 
+                                    facecolor='white', alpha=0.85,
+                                    edgecolor=val_color,
+                                    linewidth=1.5))
         
         # ===== TÍTULO PRINCIPAL DA FIGURA =====
         titulo_principal = f"👤 {nome}"
@@ -8479,14 +8456,21 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
         fig.suptitle(titulo_principal, fontsize=18, fontweight='bold', 
                     color=THEME['text_primary'], y=1.02)
         
-        # Adicionar legenda com médias
+        # ===== ADICIONAR LEGENDA =====
+        from matplotlib.patches import Patch
+        legend_elements = [
+            Patch(facecolor=THEME['accent_cyan'], alpha=0.3, label='🛠️ Hard Skills'),
+            Patch(facecolor=THEME['accent_purple'], alpha=0.3, label='💡 Soft Skills')
+        ]
+        ax.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(1.1, 1.1), fontsize=10)
+        
+        # Adicionar médias no rodapé
         media_hard = sum(hard_values) / len(hard_values) if hard_values else 0
         media_soft = sum(soft_values) / len(soft_values) if soft_values else 0
         
-        fig.text(0.25, 0.02, f'📊 Média Hard Skills: {media_hard:.1f}/10', 
-                fontsize=11, ha='center', color=THEME['accent_cyan'], fontweight='bold')
-        fig.text(0.75, 0.02, f'📊 Média Soft Skills: {media_soft:.1f}/10', 
-                fontsize=11, ha='center', color=THEME['accent_purple'], fontweight='bold')
+        fig.text(0.5, 0.02, 
+                f'📊 Média Hard Skills: {media_hard:.1f}/10  |  Média Soft Skills: {media_soft:.1f}/10', 
+                fontsize=12, ha='center', color=THEME['text_muted'], fontweight='bold')
         
         plt.tight_layout()
         return fig
@@ -8609,7 +8593,7 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
     st.markdown("<hr>", unsafe_allow_html=True)
     
     # ======================
-    # EXIBIR GRÁFICOS DE TEIA POR COLABORADOR
+    # EXIBIR GRÁFICOS DE TEIA POR COLABORADOR (UNIFICADO)
     # ======================
     if df_filtrado.empty:
         st.warning("⚠️ Nenhum colaborador encontrado com os filtros selecionados.")
@@ -8627,8 +8611,8 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
         # Criar dicionário com dados do colaborador
         dados_colaborador = row.to_dict()
         
-        # Criar gráfico de teia
-        fig = criar_grafico_teia(dados_colaborador, nome, funcao, turno, setor, hard_cols, soft_cols)
+        # Criar gráfico de teia unificado
+        fig = criar_grafico_teia_unificado(dados_colaborador, nome, funcao, turno, setor, hard_cols, soft_cols)
         
         if fig:
             st.pyplot(fig)
@@ -8687,7 +8671,7 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
                     setor = row.get('SETOR', '')
                     
                     dados_colaborador = row.to_dict()
-                    fig = criar_grafico_teia(dados_colaborador, nome, funcao, turno, setor, hard_cols, soft_cols)
+                    fig = criar_grafico_teia_unificado(dados_colaborador, nome, funcao, turno, setor, hard_cols, soft_cols)
                     
                     with cols[j]:
                         if fig:
