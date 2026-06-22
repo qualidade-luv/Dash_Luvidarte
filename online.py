@@ -2944,7 +2944,7 @@ elif aba_selecionada == 'SOPRO':
 
 
 # ==================================================================================================
-# TÊMPERA (COM VALIDAÇÃO E CARREGAMENTO CONFIÁVEL)
+# TÊMPERA (COM MAPEAMENTO CORRETO DAS COLUNAS)
 # ==================================================================================================
 elif aba_selecionada == 'TÊMPERA':
     ABA = 'TRS_TEMPERA'
@@ -3001,7 +3001,7 @@ elif aba_selecionada == 'TÊMPERA':
             return None
 
     # ======================
-    # FUNÇÃO DE PROCESSAMENTO DOS DADOS
+    # FUNÇÃO DE PROCESSAMENTO DOS DADOS - CORRIGIDA
     # ======================
     def processar_dados_tempera(todos_dados):
         """Processa os dados brutos da planilha e retorna DataFrame processado"""
@@ -3011,63 +3011,67 @@ elif aba_selecionada == 'TÊMPERA':
         cabecalho = todos_dados[0]
         valores = todos_dados[1:]
         df = pd.DataFrame(valores, columns=cabecalho)
-        colunas = list(df.columns)
         
-        # Mapear colunas por posição (baseado nos nomes reais)
-        if len(colunas) >= 5:
-            df = df.rename(columns={
-                colunas[0]: 'PRODUCAO',
-                colunas[1]: 'DATA_TEMP',
-                colunas[2]: 'TURNO_TEMP',
-                colunas[3]: 'PRODUTO',
-                colunas[4]: 'GANCHEIRA'
-            })
+        # ===== CORREÇÃO: Mapeamento baseado nos nomes REAIS das colunas =====
+        # Baseado no diagnóstico: os nomes reais são 'DATA TEMP.', 'TURNO TEMP.', 'PROD.'
         
-        if len(colunas) >= 8:
-            df = df.rename(columns={
-                colunas[5]: 'SUPERIOR',
-                colunas[6]: 'MEIO',
-                colunas[7]: 'INFERIOR'
-            })
+        # Mapeamento de nomes de colunas
+        rename_map = {}
         
-        if len(colunas) >= 11:
-            df = df.rename(columns={
-                colunas[8]: 'A1',
-                colunas[9]: 'C1',
-                colunas[10]: 'A2'
-            })
+        for col in df.columns:
+            col_clean = str(col).strip().upper()
+            
+            if 'DATA TEMP' in col_clean or col_clean == 'DATA':
+                rename_map[col] = 'DATA_TEMP'
+            elif 'TURNO TEMP' in col_clean or col_clean == 'TURNO':
+                rename_map[col] = 'TURNO_TEMP'
+            elif col_clean == 'PROD.' or col_clean == 'PRODUTO' or col_clean == 'PROD':
+                rename_map[col] = 'PRODUTO'
+            elif col_clean == 'GANCHEIRA':
+                rename_map[col] = 'GANCHEIRA'
+            elif col_clean == 'SUPEIOR' or col_clean == 'SUPERIOR':
+                rename_map[col] = 'SUPERIOR'
+            elif col_clean == 'MEIO':
+                rename_map[col] = 'MEIO'
+            elif col_clean == 'INFERIOR':
+                rename_map[col] = 'INFERIOR'
+            elif col_clean == 'A1':
+                rename_map[col] = 'A1'
+            elif col_clean == 'C1':
+                rename_map[col] = 'C1'
+            elif col_clean == 'A2':
+                rename_map[col] = 'A2'
+            elif col_clean == 'C2':
+                rename_map[col] = 'C2'
+            elif col_clean == 'A3':
+                rename_map[col] = 'A3'
+            elif col_clean == 'C3':
+                rename_map[col] = 'C3'
+            elif col_clean == 'A4':
+                rename_map[col] = 'A4'
+            elif col_clean == 'C4':
+                rename_map[col] = 'C4'
+            elif col_clean == 'A5':
+                rename_map[col] = 'A5'
+            elif col_clean == 'C5':
+                rename_map[col] = 'C5'
+            elif col_clean == 'A E B':
+                rename_map[col] = 'A e B'
+            elif col_clean == 'APROVADAS':
+                rename_map[col] = 'APROVADAS'
         
-        if len(colunas) >= 14:
-            df = df.rename(columns={
-                colunas[11]: 'C2',
-                colunas[12]: 'A3',
-                colunas[13]: 'C3'
-            })
-        
-        if len(colunas) >= 17:
-            df = df.rename(columns={
-                colunas[14]: 'A4',
-                colunas[15]: 'C4',
-                colunas[16]: 'A5'
-            })
-        
-        if len(colunas) >= 20:
-            df = df.rename(columns={
-                colunas[17]: 'C5',
-                colunas[18]: 'A e B'
-            })
+        # Aplicar renomeação
+        df = df.rename(columns=rename_map)
         
         # Converter datas
         if 'DATA_TEMP' in df.columns:
             df['DATA'] = df['DATA_TEMP'].apply(converter_data_br)
-        elif 'PRODUCAO' in df.columns:
-            df['DATA'] = df['PRODUCAO'].apply(converter_data_br)
         
         if 'DATA' in df.columns:
             df = df.dropna(subset=['DATA'])
         
         # Converter colunas numéricas
-        colunas_numericas = ['SUPERIOR', 'MEIO', 'INFERIOR', 'A1', 'C1', 'A2', 'C2', 'A3', 'C3', 'A4', 'C4', 'A5', 'C5', 'A e B']
+        colunas_numericas = ['SUPERIOR', 'MEIO', 'INFERIOR', 'A1', 'C1', 'A2', 'C2', 'A3', 'C3', 'A4', 'C4', 'A5', 'C5', 'A e B', 'APROVADAS']
         
         for col in colunas_numericas:
             if col in df.columns:
@@ -3086,15 +3090,26 @@ elif aba_selecionada == 'TÊMPERA':
                     return val
             df['C2'] = df['C2'].apply(converter_tempo_c2)
         
-        # Identificar colunas de posições (19 a 70)
+        # Identificar colunas de posições (colunas com números)
         colunas_posicoes_validas = []
         for col in df.columns:
             try:
-                num = int(str(col).strip())
+                # Tenta converter para número
+                num = float(str(col).strip())
                 if 19 <= num <= 70:
                     colunas_posicoes_validas.append(col)
             except:
                 pass
+        
+        # Se não encontrou colunas de posição, tentar identificar colunas com números
+        if not colunas_posicoes_validas:
+            for col in df.columns:
+                try:
+                    num = float(str(col).strip())
+                    if 1 <= num <= 100:
+                        colunas_posicoes_validas.append(col)
+                except:
+                    pass
         
         # Inicializar colunas
         df['TOTAL_PECAS'] = 40
@@ -3106,6 +3121,7 @@ elif aba_selecionada == 'TÊMPERA':
             nome_clean = nome.upper().replace(' ', '_').replace('Ç', 'C').replace('Ã', 'A').replace('Á', 'A').replace('Ó', 'O')
             df[f'QTD_{nome_clean}'] = 0
         
+        # Processar cada linha para contar defeitos
         for idx, row in df.iterrows():
             defeitos_contagem = {codigo: 0 for codigo in MAPEAMENTO_DEFEITOS.keys()}
             
@@ -3113,7 +3129,9 @@ elif aba_selecionada == 'TÊMPERA':
                 try:
                     val = row[col]
                     if pd.notna(val) and str(val).strip():
-                        codigo = int(float(str(val).strip()))
+                        # Converter para número
+                        val_str = str(val).strip().replace(',', '.')
+                        codigo = int(float(val_str))
                         if codigo in MAPEAMENTO_DEFEITOS:
                             defeitos_contagem[codigo] += 1
                 except:
@@ -3144,12 +3162,17 @@ elif aba_selecionada == 'TÊMPERA':
     # ======================
     # FUNÇÃO DE CARREGAMENTO COM VALIDAÇÃO
     # ======================
-    @retry_on_quota(max_retries=2, delay=3)
+    @retry_on_quota(max_retries=3, delay=5)
     def carregar_dados_tempera():
         """
         Carrega dados da têmpera com validação e fallback para cache
         """
-        # 1. TENTAR CARREGAR DA API
+        # 1. TENTAR CARREGAR DO CACHE PRIMEIRO (mais rápido)
+        df_cache = carregar_cache_tempera()
+        if df_cache is not None and not df_cache.empty:
+            return df_cache
+        
+        # 2. TENTAR CARREGAR DA API
         try:
             client = get_gspread_client()
             if client is None:
@@ -3171,11 +3194,6 @@ elif aba_selecionada == 'TÊMPERA':
                 st.warning("⚠️ A planilha está vazia ou não tem dados suficientes.")
                 return pd.DataFrame()
             
-            # Validar se o cabeçalho existe
-            if not todos_dados[0]:
-                st.warning("⚠️ A planilha não tem cabeçalho.")
-                return pd.DataFrame()
-            
             # Processar os dados
             df = processar_dados_tempera(todos_dados)
             
@@ -3184,12 +3202,7 @@ elif aba_selecionada == 'TÊMPERA':
                 st.warning("⚠️ Nenhum dado válido encontrado na planilha.")
                 return pd.DataFrame()
             
-            # Verificar se há dados para exibir
-            if len(df) == 0:
-                st.warning("⚠️ A planilha não contém registros válidos.")
-                return pd.DataFrame()
-            
-            # Salvar em cache para uso futuro
+            # Salvar em cache
             salvar_cache_tempera(df)
             
             return df
@@ -3198,7 +3211,7 @@ elif aba_selecionada == 'TÊMPERA':
             # Tratamento para erro de quota
             if "429" in str(e) or "Quota exceeded" in str(e):
                 st.warning("⚠️ Limite de requisições ao Google Sheets atingido.")
-                # Tentar carregar do cache
+                # Tentar carregar do cache novamente
                 df_cache = carregar_cache_tempera()
                 if df_cache is not None and not df_cache.empty:
                     st.info(f"📂 Usando dados em cache ({len(df_cache)} registros).")
@@ -3207,9 +3220,7 @@ elif aba_selecionada == 'TÊMPERA':
                     st.error("❌ Sem dados em cache disponíveis. Aguarde alguns minutos e tente novamente.")
                     return pd.DataFrame()
             else:
-                # Outros erros
                 st.error(f"❌ Erro ao carregar dados: {str(e)}")
-                # Tentar carregar do cache
                 df_cache = carregar_cache_tempera()
                 if df_cache is not None and not df_cache.empty:
                     st.info(f"📂 Usando dados em cache devido ao erro ({len(df_cache)} registros).")
@@ -3230,7 +3241,7 @@ elif aba_selecionada == 'TÊMPERA':
             return False
 
     # ======================
-    # CARREGAR DADOS PRIMEIRO (ANTES DOS FILTROS)
+    # CARREGAR DADOS PRIMEIRO
     # ======================
     with st.spinner("Carregando dados da Têmpera..."):
         df_base = carregar_dados_tempera()
@@ -3245,14 +3256,21 @@ elif aba_selecionada == 'TÊMPERA':
         3. Problemas de conexão com a internet
         
         **Soluções:**
-        1. Aguarde alguns minutos e tente novamente
+        1. Aguarde alguns minutos e clique em "Recarregar Dados da Planilha" no sidebar
         2. Verifique se a planilha está acessível
         3. Verifique sua conexão com a internet
         """)
+        
+        # Botão para tentar novamente
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            if st.button("🔄 Tentar Novamente", use_container_width=True):
+                forcar_recarregamento_tempera()
+                st.rerun()
         st.stop()
 
     # ======================
-    # SIDEBAR FILTROS (AGORA DEPOIS DO CARREGAMENTO)
+    # SIDEBAR FILTROS
     # ======================
     with st.sidebar:
         st.markdown(f"<div style='font-family:JetBrains Mono,monospace;font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:{THEME['accent_purple']};margin:20px 0 10px;border-top:1px solid {THEME['border_bright']};padding-top:16px'>▸ Filtros · Têmpera</div>", unsafe_allow_html=True)
