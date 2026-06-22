@@ -2944,7 +2944,7 @@ elif aba_selecionada == 'SOPRO':
 
 
 # ==================================================================================================
-# TÊMPERA
+# TÊMPERA (COM CONTROLE DE QUOTA E CACHE)
 # ==================================================================================================
 elif aba_selecionada == 'TÊMPERA':
     ABA = 'TRS_TEMPERA'
@@ -2974,12 +2974,20 @@ elif aba_selecionada == 'TÊMPERA':
         except:
             return 0.0
 
-    @st.cache_data(ttl=1200)
-    def carregar_dados_tempera():
+    # ======================
+    # FUNÇÃO DE CARREGAMENTO COM CACHE E RETRY
+    # ======================
+    @st.cache_data(ttl=600)  # Cache de 10 minutos
+    def carregar_dados_tempera_com_cache():
+        """Carrega dados da têmpera com cache para reduzir chamadas à API"""
         try:
             client = get_gspread_client()
             if client is None:
                 return pd.DataFrame()
+            
+            # Pequeno delay para evitar quota
+            time.sleep(0.5)
+            
             sheet = client.open_by_key(ID_PLANILHA_TEMPERA).worksheet(ABA)
             todos_dados = sheet.get_all_values()
             
@@ -3120,11 +3128,36 @@ elif aba_selecionada == 'TÊMPERA':
             return df
             
         except Exception as e:
-            st.error(f"Erro ao carregar dados: {str(e)}")
-            return pd.DataFrame()
+            # Tratamento específico para erro de quota
+            if "429" in str(e) or "Quota exceeded" in str(e):
+                st.warning("⚠️ Limite de requisições ao Google Sheets atingido. Aguarde alguns segundos...")
+                time.sleep(3)  # Aguarda 3 segundos antes de tentar novamente
+                # Tenta novamente uma vez
+                try:
+                    return carregar_dados_tempera_com_cache()
+                except:
+                    return pd.DataFrame()
+            else:
+                st.error(f"Erro ao carregar dados: {str(e)}")
+                return pd.DataFrame()
 
+    # ======================
+    # FUNÇÃO WRAPPER COM RETRY DECORATOR
+    # ======================
+    @retry_on_quota(max_retries=3, delay=5)
+    def carregar_dados_tempera_wrapper():
+        """Wrapper com retry para carregar dados da têmpera"""
+        return carregar_dados_tempera_com_cache()
+
+    # ======================
+    # CARREGAMENTO PRINCIPAL
+    # ======================
     with st.spinner("Carregando dados da Têmpera..."):
-        df_base = carregar_dados_tempera()
+        try:
+            df_base = carregar_dados_tempera_wrapper()
+        except Exception as e:
+            st.error(f"Erro ao carregar dados da Têmpera: {str(e)}")
+            st.stop()
 
     if df_base.empty:
         st.warning("Não foi possível carregar os dados da Têmpera.")
@@ -3151,6 +3184,11 @@ elif aba_selecionada == 'TÊMPERA':
         
         excluir_criticos = st.checkbox("Excluir registros críticos", value=False, key="tempera_excluir_criticos")
         qtd = st.number_input("Linhas na tabela", min_value=0, max_value=5000, value=20, step=10, key="tempera_qtd")
+        
+        # Botão para forçar recarregamento
+        if st.button("🔄 Recarregar Dados", key="btn_recarregar_tempera"):
+            st.cache_data.clear()
+            st.rerun()
 
     # ── Aplicar filtros ──
     df = df_base.copy()
