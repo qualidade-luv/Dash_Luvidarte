@@ -2944,7 +2944,7 @@ elif aba_selecionada == 'SOPRO':
 
 
 # ==================================================================================================
-# TÊMPERA (COM CONTROLE DE QUOTA E CACHE)
+# TÊMPERA (COM SISTEMA DE CACHE EM ARQUIVO E BACKUP LOCAL)
 # ==================================================================================================
 elif aba_selecionada == 'TÊMPERA':
     ABA = 'TRS_TEMPERA'
@@ -2961,6 +2961,11 @@ elif aba_selecionada == 'TÊMPERA':
     
     CODIGOS_DEFEITO_REAIS = [2, 3, 4, 5, 6]
 
+    # ======================
+    # ARQUIVO DE CACHE LOCAL
+    # ======================
+    CACHE_FILE_TEMPERA = "cache_tempera.pkl"
+    
     def safe_float(val):
         """Converte valor para float de forma segura"""
         if val is None or pd.isna(val):
@@ -2974,19 +2979,196 @@ elif aba_selecionada == 'TÊMPERA':
         except:
             return 0.0
 
+    def salvar_cache_tempera(df):
+        """Salva o DataFrame em cache local"""
+        try:
+            df.to_pickle(CACHE_FILE_TEMPERA)
+            return True
+        except Exception as e:
+            print(f"Erro ao salvar cache: {e}")
+            return False
+    
+    def carregar_cache_tempera():
+        """Carrega o DataFrame do cache local"""
+        try:
+            if os.path.exists(CACHE_FILE_TEMPERA):
+                # Verificar se o cache é recente (menos de 1 hora)
+                tempo_modificacao = os.path.getmtime(CACHE_FILE_TEMPERA)
+                if time.time() - tempo_modificacao < 3600:  # 1 hora
+                    df = pd.read_pickle(CACHE_FILE_TEMPERA)
+                    if not df.empty:
+                        return df
+            return None
+        except Exception as e:
+            print(f"Erro ao carregar cache: {e}")
+            return None
+
     # ======================
-    # FUNÇÃO DE CARREGAMENTO COM CACHE E RETRY
+    # FUNÇÃO DE PROCESSAMENTO DOS DADOS (REUTILIZÁVEL)
     # ======================
-    @st.cache_data(ttl=600)  # Cache de 10 minutos
+    def processar_dados_tempera(todos_dados):
+        """Processa os dados brutos da planilha e retorna DataFrame processado"""
+        if len(todos_dados) < 2:
+            return pd.DataFrame()
+        
+        cabecalho = todos_dados[0]
+        valores = todos_dados[1:]
+        df = pd.DataFrame(valores, columns=cabecalho)
+        colunas = list(df.columns)
+        
+        # Mapear colunas por posição (baseado nos nomes reais)
+        if len(colunas) >= 5:
+            df = df.rename(columns={
+                colunas[0]: 'PRODUCAO',
+                colunas[1]: 'DATA_TEMP',
+                colunas[2]: 'TURNO_TEMP',
+                colunas[3]: 'PRODUTO',
+                colunas[4]: 'GANCHEIRA'
+            })
+        
+        if len(colunas) >= 8:
+            df = df.rename(columns={
+                colunas[5]: 'SUPERIOR',
+                colunas[6]: 'MEIO',
+                colunas[7]: 'INFERIOR'
+            })
+        
+        if len(colunas) >= 11:
+            df = df.rename(columns={
+                colunas[8]: 'A1',
+                colunas[9]: 'C1',
+                colunas[10]: 'A2'
+            })
+        
+        if len(colunas) >= 14:
+            df = df.rename(columns={
+                colunas[11]: 'C2',
+                colunas[12]: 'A3',
+                colunas[13]: 'C3'
+            })
+        
+        if len(colunas) >= 17:
+            df = df.rename(columns={
+                colunas[14]: 'A4',
+                colunas[15]: 'C4',      # HUMIDADE
+                colunas[16]: 'A5'
+            })
+        
+        if len(colunas) >= 20:
+            df = df.rename(columns={
+                colunas[17]: 'C5',
+                colunas[18]: 'A e B'    # PRESSÃO AR
+            })
+        
+        # Converter datas
+        if 'DATA_TEMP' in df.columns:
+            df['DATA'] = df['DATA_TEMP'].apply(converter_data_br)
+        elif 'PRODUCAO' in df.columns:
+            df['DATA'] = df['PRODUCAO'].apply(converter_data_br)
+        
+        if 'DATA' in df.columns:
+            df = df.dropna(subset=['DATA'])
+        
+        # Converter colunas numéricas
+        colunas_numericas = ['SUPERIOR', 'MEIO', 'INFERIOR', 'A1', 'C1', 'A2', 'C2', 'C3', 'A4', 'C4', 'A5', 'C5', 'A e B']
+        
+        for col in colunas_numericas:
+            if col in df.columns:
+                df[col] = df[col].apply(safe_float)
+        
+        # CORREÇÃO: Tempo C2 - converter para segundos
+        if 'C2' in df.columns:
+            def converter_tempo_c2(val):
+                if pd.isna(val) or val == 0:
+                    return 0
+                if val <= 1:
+                    return val * 100
+                elif val <= 10:
+                    return val * 10
+                else:
+                    return val
+            df['C2'] = df['C2'].apply(converter_tempo_c2)
+        
+        # Identificar colunas de posições (19 a 70)
+        colunas_posicoes_validas = []
+        for col in df.columns:
+            try:
+                num = int(str(col).strip())
+                if 19 <= num <= 70:
+                    colunas_posicoes_validas.append(col)
+            except:
+                pass
+        
+        # Inicializar colunas
+        df['TOTAL_PECAS'] = 40
+        df['APROVADO'] = 40
+        df['TOTAL_DEFEITOS'] = 0
+        df['IS_CRITICO'] = False
+        
+        for codigo, nome in MAPEAMENTO_DEFEITOS.items():
+            nome_clean = nome.upper().replace(' ', '_').replace('Ç', 'C').replace('Ã', 'A').replace('Á', 'A').replace('Ó', 'O')
+            df[f'QTD_{nome_clean}'] = 0
+        
+        for idx, row in df.iterrows():
+            defeitos_contagem = {codigo: 0 for codigo in MAPEAMENTO_DEFEITOS.keys()}
+            
+            for col in colunas_posicoes_validas:
+                try:
+                    val = row[col]
+                    if pd.notna(val) and str(val).strip():
+                        codigo = int(float(str(val).strip()))
+                        if codigo in MAPEAMENTO_DEFEITOS:
+                            defeitos_contagem[codigo] += 1
+                except:
+                    pass
+            
+            total_defeitos_reais = sum(defeitos_contagem.get(cod, 0) for cod in CODIGOS_DEFEITO_REAIS)
+            aprovadas = 40 - total_defeitos_reais
+            
+            df.at[idx, 'APROVADO'] = aprovadas
+            df.at[idx, 'TOTAL_DEFEITOS'] = total_defeitos_reais
+            df.at[idx, 'TRS (%)'] = (aprovadas / 40 * 100) if 40 > 0 else 0
+            
+            is_critico = False
+            if defeitos_contagem.get(4, 0) >= 1:
+                is_critico = True
+            if defeitos_contagem.get(3, 0) > 2:
+                is_critico = True
+            df.at[idx, 'IS_CRITICO'] = is_critico
+            
+            for codigo, nome in MAPEAMENTO_DEFEITOS.items():
+                nome_clean = nome.upper().replace(' ', '_').replace('Ç', 'C').replace('Ã', 'A').replace('Á', 'A').replace('Ó', 'O')
+                col_nome = f'QTD_{nome_clean}'
+                if col_nome in df.columns:
+                    df.at[idx, col_nome] = defeitos_contagem.get(codigo, 0)
+        
+        return df
+
+    # ======================
+    # FUNÇÃO DE CARREGAMENTO COM CACHE EM ARQUIVO
+    # ======================
+    @st.cache_data(ttl=600)
     def carregar_dados_tempera_com_cache():
-        """Carrega dados da têmpera com cache para reduzir chamadas à API"""
+        """Carrega dados da têmpera com cache em arquivo"""
+        
+        # 1. TENTAR CARREGAR DO CACHE EM ARQUIVO PRIMEIRO
+        df_cache = carregar_cache_tempera()
+        if df_cache is not None and not df_cache.empty:
+            return df_cache
+        
+        # 2. SE NÃO HOUVER CACHE, TENTAR CARREGAR DA API
         try:
             client = get_gspread_client()
             if client is None:
+                # Se não conseguir conectar, tentar cache novamente (mesmo que antigo)
+                df_cache_antigo = carregar_cache_tempera()
+                if df_cache_antigo is not None and not df_cache_antigo.empty:
+                    st.warning("⚠️ Usando dados em cache (offline). Conecte-se à internet para atualizar.")
+                    return df_cache_antigo
                 return pd.DataFrame()
             
             # Pequeno delay para evitar quota
-            time.sleep(0.5)
+            time.sleep(1)
             
             sheet = client.open_by_key(ID_PLANILHA_TEMPERA).worksheet(ABA)
             todos_dados = sheet.get_all_values()
@@ -2994,173 +3176,84 @@ elif aba_selecionada == 'TÊMPERA':
             if len(todos_dados) < 2:
                 return pd.DataFrame()
             
-            cabecalho = todos_dados[0]
-            valores = todos_dados[1:]
-            df = pd.DataFrame(valores, columns=cabecalho)
-            colunas = list(df.columns)
+            # Processar os dados
+            df = processar_dados_tempera(todos_dados)
             
-            # Mapear colunas por posição (baseado nos nomes reais)
-            if len(colunas) >= 5:
-                df = df.rename(columns={
-                    colunas[0]: 'PRODUCAO',
-                    colunas[1]: 'DATA_TEMP',
-                    colunas[2]: 'TURNO_TEMP',
-                    colunas[3]: 'PRODUTO',
-                    colunas[4]: 'GANCHEIRA'
-                })
-            
-            if len(colunas) >= 8:
-                df = df.rename(columns={
-                    colunas[5]: 'SUPERIOR',
-                    colunas[6]: 'MEIO',
-                    colunas[7]: 'INFERIOR'
-                })
-            
-            if len(colunas) >= 11:
-                df = df.rename(columns={
-                    colunas[8]: 'A1',
-                    colunas[9]: 'C1',
-                    colunas[10]: 'A2'
-                })
-            
-            if len(colunas) >= 14:
-                df = df.rename(columns={
-                    colunas[11]: 'C2',
-                    colunas[12]: 'A3',
-                    colunas[13]: 'C3'
-                })
-            
-            if len(colunas) >= 17:
-                df = df.rename(columns={
-                    colunas[14]: 'A4',
-                    colunas[15]: 'C4',      # HUMIDADE
-                    colunas[16]: 'A5'
-                })
-            
-            if len(colunas) >= 20:
-                df = df.rename(columns={
-                    colunas[17]: 'C5',
-                    colunas[18]: 'A e B'    # PRESSÃO AR
-                })
-            
-            # Converter datas
-            if 'DATA_TEMP' in df.columns:
-                df['DATA'] = df['DATA_TEMP'].apply(converter_data_br)
-            elif 'PRODUCAO' in df.columns:
-                df['DATA'] = df['PRODUCAO'].apply(converter_data_br)
-            
-            if 'DATA' in df.columns:
-                df = df.dropna(subset=['DATA'])
-            
-            # Converter colunas numéricas
-            colunas_numericas = ['SUPERIOR', 'MEIO', 'INFERIOR', 'A1', 'C1', 'A2', 'C2', 'A3', 'C3', 'A4', 'C4', 'A5', 'C5', 'A e B']
-            
-            for col in colunas_numericas:
-                if col in df.columns:
-                    df[col] = df[col].apply(safe_float)
-            
-            # CORREÇÃO: Tempo C2 - converter para segundos
-            if 'C2' in df.columns:
-                def converter_tempo_c2(val):
-                    if pd.isna(val) or val == 0:
-                        return 0
-                    if val <= 1:
-                        return val * 100
-                    elif val <= 10:
-                        return val * 10
-                    else:
-                        return val
-                df['C2'] = df['C2'].apply(converter_tempo_c2)
-            
-            # Identificar colunas de posições (19 a 70)
-            colunas_posicoes_validas = []
-            for col in df.columns:
-                try:
-                    num = int(str(col).strip())
-                    if 19 <= num <= 70:
-                        colunas_posicoes_validas.append(col)
-                except:
-                    pass
-            
-            # Inicializar colunas
-            df['TOTAL_PECAS'] = 40
-            df['APROVADO'] = 40
-            df['TOTAL_DEFEITOS'] = 0
-            df['IS_CRITICO'] = False
-            
-            for codigo, nome in MAPEAMENTO_DEFEITOS.items():
-                nome_clean = nome.upper().replace(' ', '_').replace('Ç', 'C').replace('Ã', 'A').replace('Á', 'A').replace('Ó', 'O')
-                df[f'QTD_{nome_clean}'] = 0
-            
-            for idx, row in df.iterrows():
-                defeitos_contagem = {codigo: 0 for codigo in MAPEAMENTO_DEFEITOS.keys()}
-                
-                for col in colunas_posicoes_validas:
-                    try:
-                        val = row[col]
-                        if pd.notna(val) and str(val).strip():
-                            codigo = int(float(str(val).strip()))
-                            if codigo in MAPEAMENTO_DEFEITOS:
-                                defeitos_contagem[codigo] += 1
-                    except:
-                        pass
-                
-                total_defeitos_reais = sum(defeitos_contagem.get(cod, 0) for cod in CODIGOS_DEFEITO_REAIS)
-                aprovadas = 40 - total_defeitos_reais
-                
-                df.at[idx, 'APROVADO'] = aprovadas
-                df.at[idx, 'TOTAL_DEFEITOS'] = total_defeitos_reais
-                df.at[idx, 'TRS (%)'] = (aprovadas / 40 * 100) if 40 > 0 else 0
-                
-                is_critico = False
-                if defeitos_contagem.get(4, 0) >= 1:
-                    is_critico = True
-                if defeitos_contagem.get(3, 0) > 2:
-                    is_critico = True
-                df.at[idx, 'IS_CRITICO'] = is_critico
-                
-                for codigo, nome in MAPEAMENTO_DEFEITOS.items():
-                    nome_clean = nome.upper().replace(' ', '_').replace('Ç', 'C').replace('Ã', 'A').replace('Á', 'A').replace('Ó', 'O')
-                    col_nome = f'QTD_{nome_clean}'
-                    if col_nome in df.columns:
-                        df.at[idx, col_nome] = defeitos_contagem.get(codigo, 0)
+            # Salvar em cache
+            if not df.empty:
+                salvar_cache_tempera(df)
             
             return df
             
         except Exception as e:
             # Tratamento específico para erro de quota
             if "429" in str(e) or "Quota exceeded" in str(e):
-                st.warning("⚠️ Limite de requisições ao Google Sheets atingido. Aguarde alguns segundos...")
-                time.sleep(3)  # Aguarda 3 segundos antes de tentar novamente
-                # Tenta novamente uma vez
-                try:
-                    return carregar_dados_tempera_com_cache()
-                except:
+                st.warning("⚠️ Limite de requisições ao Google Sheets atingido.")
+                # Tentar carregar do cache (mesmo que antigo)
+                df_cache_antigo = carregar_cache_tempera()
+                if df_cache_antigo is not None and not df_cache_antigo.empty:
+                    st.info("📂 Usando dados em cache. Tente novamente em alguns minutos para atualizar.")
+                    return df_cache_antigo
+                else:
+                    st.error("❌ Sem dados em cache disponíveis. Aguarde alguns minutos e tente novamente.")
                     return pd.DataFrame()
             else:
+                # Outros erros
                 st.error(f"Erro ao carregar dados: {str(e)}")
+                # Tentar carregar do cache
+                df_cache_antigo = carregar_cache_tempera()
+                if df_cache_antigo is not None and not df_cache_antigo.empty:
+                    st.info("📂 Usando dados em cache devido ao erro.")
+                    return df_cache_antigo
                 return pd.DataFrame()
 
     # ======================
-    # FUNÇÃO WRAPPER COM RETRY DECORATOR
+    # FUNÇÃO PARA FORCAR RECARREGAMENTO
     # ======================
-    @retry_on_quota(max_retries=3, delay=5)
-    def carregar_dados_tempera_wrapper():
-        """Wrapper com retry para carregar dados da têmpera"""
-        return carregar_dados_tempera_com_cache()
+    def forcar_recarregamento_tempera():
+        """Força o recarregamento dos dados da API"""
+        try:
+            # Remover cache em arquivo
+            if os.path.exists(CACHE_FILE_TEMPERA):
+                os.remove(CACHE_FILE_TEMPERA)
+            # Limpar cache do Streamlit
+            st.cache_data.clear()
+            return True
+        except:
+            return False
 
     # ======================
     # CARREGAMENTO PRINCIPAL
     # ======================
-    with st.spinner("Carregando dados da Têmpera..."):
+    # Verificar se existe cache e mostrar info
+    cache_existe = os.path.exists(CACHE_FILE_TEMPERA)
+    if cache_existe:
         try:
-            df_base = carregar_dados_tempera_wrapper()
-        except Exception as e:
-            st.error(f"Erro ao carregar dados da Têmpera: {str(e)}")
-            st.stop()
+            tempo_modificacao = os.path.getmtime(CACHE_FILE_TEMPERA)
+            tempo_cache = datetime.fromtimestamp(tempo_modificacao)
+            st.sidebar.caption(f"📂 Cache: {tempo_cache.strftime('%d/%m/%Y %H:%M')}")
+        except:
+            pass
+
+    with st.spinner("Carregando dados da Têmpera..."):
+        df_base = carregar_dados_tempera_com_cache()
 
     if df_base.empty:
-        st.warning("Não foi possível carregar os dados da Têmpera.")
+        st.warning("""
+        ⚠️ **Não foi possível carregar os dados da Têmpera.**
+        
+        **Possíveis soluções:**
+        1. Aguarde alguns minutos e clique em "🔄 Recarregar Dados" no sidebar
+        2. Verifique sua conexão com a internet
+        3. Se o problema persistir, entre em contato com o suporte técnico
+        """)
+        
+        # Botão para tentar novamente
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            if st.button("🔄 Tentar Novamente", use_container_width=True):
+                forcar_recarregamento_tempera()
+                st.rerun()
         st.stop()
 
     # ── Sidebar filtros ──
@@ -3185,10 +3278,24 @@ elif aba_selecionada == 'TÊMPERA':
         excluir_criticos = st.checkbox("Excluir registros críticos", value=False, key="tempera_excluir_criticos")
         qtd = st.number_input("Linhas na tabela", min_value=0, max_value=5000, value=20, step=10, key="tempera_qtd")
         
+        st.markdown("---")
+        
         # Botão para forçar recarregamento
-        if st.button("🔄 Recarregar Dados", key="btn_recarregar_tempera"):
-            st.cache_data.clear()
-            st.rerun()
+        if st.button("🔄 Recarregar Dados", key="btn_recarregar_tempera", use_container_width=True):
+            if forcar_recarregamento_tempera():
+                st.success("✅ Cache limpo! Recarregando dados...")
+                time.sleep(1)
+                st.rerun()
+            else:
+                st.error("❌ Erro ao limpar cache")
+        
+        # Informações do cache
+        if os.path.exists(CACHE_FILE_TEMPERA):
+            try:
+                tamanho = os.path.getsize(CACHE_FILE_TEMPERA) / 1024  # KB
+                st.caption(f"💾 Cache: {tamanho:.1f} KB")
+            except:
+                pass
 
     # ── Aplicar filtros ──
     df = df_base.copy()
