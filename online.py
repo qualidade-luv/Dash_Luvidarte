@@ -8487,7 +8487,7 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
             return pd.DataFrame(), [], []
     
     # ======================
-    # FUNÇÃO PARA CRIAR GRÁFICO DE TEIA (RADAR) UNIFICADO
+    # FUNÇÃO PARA CRIAR GRÁFICO DE TEIA (RADAR) UNIFICADO - TAMANHO REDUZIDO
     # ======================
     def criar_grafico_teia_unificado(colaborador_data, nome, funcao, turno, setor, hard_cols, soft_cols):
         """
@@ -8516,8 +8516,8 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
         # Valores (fechar o polígono)
         values = all_values + all_values[:1]
         
-        # Criar figura
-        fig = plt.figure(figsize=(12, 10), facecolor=THEME['bg_card'])
+        # Criar figura - TAMANHO REDUZIDO
+        fig = plt.figure(figsize=(10, 8), facecolor=THEME['bg_card'])
         fig.patch.set_facecolor(THEME['bg_card'])
         
         # Criar subplot polar
@@ -8533,14 +8533,12 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
         ax.plot(angles, values, 'o-', linewidth=2.5, color=THEME['accent_cyan'], alpha=0.8)
         
         # Preencher com cor personalizada (gradiente)
-        # Criar um polígono com diferentes cores para cada seção
         for i in range(N):
             angle1 = angles[i]
             angle2 = angles[i+1] if i+1 < len(angles) else angles[0]
             value1 = values[i]
             value2 = values[i+1] if i+1 < len(values) else values[0]
             
-            # Determinar cor baseada no tipo (Hard ou Soft)
             if i < len(hard_cols):
                 color = THEME['accent_cyan']
                 alpha_fill = 0.2
@@ -8548,29 +8546,21 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
                 color = THEME['accent_purple']
                 alpha_fill = 0.2
             
-            # Criar setor preenchido
             theta = np.linspace(angle1, angle2, 20)
-            r = np.linspace(0, max(value1, value2), 20)
-            
-            # Usar fill_between para criar o setor
             ax.fill_between(theta, 0, np.interp(theta, [angle1, angle2], [value1, value2]), 
                            color=color, alpha=alpha_fill)
         
-        # Configurar labels com cores diferentes
+        # Configurar labels
         ax.set_xticks(angles[:-1])
         
-        # Criar labels com cores (Hard em azul, Soft em roxo)
         labels = []
         for i, skill in enumerate(all_skills):
             label = skill.replace('_', ' ').title()
-            if i < len(hard_cols):
-                labels.append(label)
-            else:
-                labels.append(label)
+            labels.append(label)
         
-        ax.set_xticklabels(labels, fontsize=9, fontweight='bold')
+        ax.set_xticklabels(labels, fontsize=8, fontweight='bold')
         
-        # Colorir os labels manualmente
+        # Colorir os labels
         for i, label in enumerate(ax.get_xticklabels()):
             if i < len(hard_cols):
                 label.set_color(THEME['accent_cyan'])
@@ -8580,13 +8570,12 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
         # Limites - escala máxima 5
         ax.set_ylim(0, 5)
         ax.set_yticks([1, 2, 3, 4, 5])
-        ax.set_yticklabels(['1', '2', '3', '4', '5'], fontsize=8)
+        ax.set_yticklabels(['1', '2', '3', '4', '5'], fontsize=7)
         ax.grid(True, alpha=0.3)
         
         # Adicionar valores nas pontas
         for i, (angle, value, skill) in enumerate(zip(angles[:-1], all_values, all_skills)):
             if value > 0:
-                # Definir cor do valor baseado no tipo
                 if i < len(hard_cols):
                     val_color = THEME['accent_cyan']
                 else:
@@ -8594,15 +8583,15 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
                 
                 ax.annotate(f'{value:.0f}', 
                            xy=(angle, value),
-                           xytext=(0, 8),
+                           xytext=(0, 6),
                            textcoords='offset points',
                            ha='center', va='center',
-                           fontsize=8, fontweight='bold',
+                           fontsize=7, fontweight='bold',
                            color=val_color,
-                           bbox=dict(boxstyle='round,pad=0.2', 
+                           bbox=dict(boxstyle='round,pad=0.15', 
                                     facecolor='white', alpha=0.85,
                                     edgecolor=val_color,
-                                    linewidth=1.5))
+                                    linewidth=1))
         
         # ===== TÍTULO PRINCIPAL DA FIGURA =====
         titulo_principal = f"👤 {nome}"
@@ -8613,7 +8602,7 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
         if setor and str(setor).strip() and str(setor).strip().lower() != 'nan':
             titulo_principal += f" | 🏢 {setor}"
         
-        fig.suptitle(titulo_principal, fontsize=18, fontweight='bold', 
+        fig.suptitle(titulo_principal, fontsize=15, fontweight='bold', 
                     color=THEME['text_primary'], y=1.02)
         
         # ===== ADICIONAR LEGENDA =====
@@ -8622,7 +8611,7 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
             Patch(facecolor=THEME['accent_cyan'], alpha=0.3, label='🛠️ Hard Skills'),
             Patch(facecolor=THEME['accent_purple'], alpha=0.3, label='💡 Soft Skills')
         ]
-        ax.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(1.1, 1.1), fontsize=10)
+        ax.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(1.08, 1.08), fontsize=9)
         
         # Adicionar médias no rodapé
         media_hard = sum(hard_values) / len(hard_values) if hard_values else 0
@@ -8630,7 +8619,7 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
         
         fig.text(0.5, 0.02, 
                 f'📊 Média Hard Skills: {media_hard:.1f}/10  |  Média Soft Skills: {media_soft:.1f}/10', 
-                fontsize=12, ha='center', color=THEME['text_muted'], fontweight='bold')
+                fontsize=10, ha='center', color=THEME['text_muted'], fontweight='bold')
         
         plt.tight_layout()
         return fig
@@ -8809,13 +8798,13 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
         st.markdown(f"### 📊 Gráficos de Habilidades por Colaborador")
         st.caption(f"Exibindo {len(df_filtrado)} colaboradores")
         
-        # Número de colunas por linha (1 gráfico por linha para melhor visualização)
-        cols_per_row = 1
+        # Número de colunas por linha - 2 gráficos por linha para melhor visualização
+        cols_per_row = 2
         
         # Criar uma lista de índices para iterar
         indices = list(range(len(df_filtrado)))
         
-        # Agrupar de 1 em 1
+        # Agrupar de 2 em 2
         for i in range(0, len(indices), cols_per_row):
             # Criar colunas
             cols = st.columns(cols_per_row)
@@ -8945,7 +8934,7 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
                 ax.set_yticklabels(df_medias_soft['Habilidade'], fontsize=9)
                 ax.set_xlabel('Média', fontsize=10)
                 ax.set_title('Média das Soft Skills', fontweight='bold', fontsize=12)
-                ax.set_xlim(0, 10)
+                ax.set_xlim(0, 5)
                 
                 for bar, val in zip(bars, df_medias_soft['Média']):
                     ax.text(bar.get_width() + 0.1, bar.get_y() + bar.get_height()/2,
