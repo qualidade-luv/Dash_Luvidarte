@@ -606,11 +606,13 @@ def hash_senha(senha: str) -> str:
     return hashlib.sha256(senha.encode()).hexdigest()
 
 # ======================
-# FUNÇÃO DE LOGIN - VERIFICA CREDENCIAIS NA PLANILHA
+# ======================
+# FUNÇÃO DE LOGIN - VERIFICA CREDENCIAIS NA PLANILHA (SENHAS EM TEXTO PURO)
 # ======================
 def verificar_login(user: str, senha: str) -> tuple:
     """
     Verifica as credenciais na planilha LOGIN
+    As senhas são armazenadas em texto puro (NÃO HASH)
     Retorna: (sucesso, nivel, setor, status, mensagem)
     """
     try:
@@ -636,22 +638,22 @@ def verificar_login(user: str, senha: str) -> tuple:
                 
             id_user = row[0].strip()
             usuario = row[1].strip()
-            senha_hash = row[2].strip()
+            senha_armazenada = row[2].strip()  # Senha em texto puro
             nivel = row[3].strip()
             setor = row[4].strip()
             status = row[5].strip().upper()
             
-            # Verifica se o usuário existe
+            # DEBUG: Mostra o que está sendo verificado
+            print(f"Verificando: Usuário='{usuario}', Senha armazenada='{senha_armazenada}'")
+            
+            # Verifica se o usuário existe (case insensitive)
             if usuario.lower() == user.lower():
                 # Verifica se o status é ATIVO
                 if status != "ATIVO":
-                    return False, None, None, None, "❌ Usuário bloqueado. Contate o administrador."
+                    return False, None, None, None, f"❌ Usuário bloqueado. Status: {status}"
                 
-                # Gera o hash da senha fornecida
-                hash_informado = hash_senha(senha)
-                
-                # Verifica a senha (hash)
-                if hash_informado == senha_hash:
+                # Comparação direta de senha (texto puro)
+                if senha == senha_armazenada:
                     return True, nivel, setor, status, "✅ Login realizado com sucesso!"
                 else:
                     return False, None, None, None, "❌ Senha incorreta!"
