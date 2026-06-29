@@ -585,6 +585,477 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+# ==================================================================================================
+# SISTEMA DE LOGIN - SESSÃO E AUTENTICAÇÃO
+# ==================================================================================================
+
+# Importações adicionais para o login
+import hashlib
+from datetime import datetime, timedelta
+
+# ======================
+# CONFIGURAÇÕES DE SEGURANÇA
+# ======================
+SESSAO_EXPIRACAO_MINUTOS = 10  # Tempo de expiração da sessão em minutos
+
+# ======================
+# FUNÇÃO DE HASH PARA SENHAS
+# ======================
+def hash_senha(senha: str) -> str:
+    """Cria um hash seguro da senha usando SHA-256"""
+    return hashlib.sha256(senha.encode()).hexdigest()
+
+# ======================
+# FUNÇÃO DE LOGIN - VERIFICA CREDENCIAIS NA PLANILHA
+# ======================
+def verificar_login(user: str, senha: str) -> tuple:
+    """
+    Verifica as credenciais na planilha LOGIN
+    Retorna: (sucesso, nivel, setor, status, mensagem)
+    """
+    try:
+        # Obtém cliente do Google Sheets
+        client = get_gspread_client()
+        if client is None:
+            return False, None, None, None, "❌ Erro de conexão com o banco de dados"
+        
+        # Acessa a planilha de LOGIN
+        spreadsheet = client.open_by_key('1_54o1YFfG8GxqBJQ2stwWNpeQptJQHUc4SSzT4gV1QM')
+        sheet = spreadsheet.worksheet('LOGIN')
+        
+        # Lê todos os dados
+        todos_dados = sheet.get_all_values()
+        
+        if len(todos_dados) < 2:
+            return False, None, None, None, "❌ Nenhum usuário cadastrado"
+        
+        # Procura o usuário
+        for row in todos_dados[1:]:  # Pula cabeçalho
+            if len(row) < 6:
+                continue
+                
+            id_user = row[0].strip()
+            usuario = row[1].strip()
+            senha_hash = row[2].strip()
+            nivel = row[3].strip()
+            setor = row[4].strip()
+            status = row[5].strip().upper()
+            
+            # Verifica se o usuário existe
+            if usuario.lower() == user.lower():
+                # Verifica se o status é ATIVO
+                if status != "ATIVO":
+                    return False, None, None, None, "❌ Usuário bloqueado. Contate o administrador."
+                
+                # Gera o hash da senha fornecida
+                hash_informado = hash_senha(senha)
+                
+                # Verifica a senha (hash)
+                if hash_informado == senha_hash:
+                    return True, nivel, setor, status, "✅ Login realizado com sucesso!"
+                else:
+                    return False, None, None, None, "❌ Senha incorreta!"
+        
+        return False, None, None, None, "❌ Usuário não encontrado!"
+        
+    except Exception as e:
+        return False, None, None, None, f"❌ Erro ao verificar login: {str(e)}"
+
+# ======================
+# FUNÇÃO PARA INICIALIZAR SESSÃO
+# ======================
+def inicializar_sessao():
+    """Inicializa a sessão do usuário"""
+    st.session_state.logado = True
+    st.session_state.usuario = st.session_state.user_input
+    st.session_state.nivel = st.session_state.nivel_usuario
+    st.session_state.setor = st.session_state.setor_usuario
+    st.session_state.tempo_login = datetime.now()
+    st.session_state.ultima_atividade = datetime.now()
+
+# ======================
+# FUNÇÃO PARA VERIFICAR EXPIRAÇÃO DA SESSÃO
+# ======================
+def verificar_expiracao_sessao():
+    """
+    Verifica se a sessão expirou.
+    Retorna True se expirou, False se ainda está ativa.
+    """
+    if 'logado' not in st.session_state or not st.session_state.logado:
+        return True
+    
+    if 'ultima_atividade' not in st.session_state:
+        return True
+    
+    tempo_decorrido = (datetime.now() - st.session_state.ultima_atividade).total_seconds()
+    tempo_limite = SESSAO_EXPIRACAO_MINUTOS * 60  # Converte para segundos
+    
+    if tempo_decorrido > tempo_limite:
+        # Sessão expirada
+        st.session_state.logado = False
+        st.session_state.mensagem_logout = "⏰ Sessão expirada! Faça login novamente."
+        return True
+    
+    return False
+
+# ======================
+# FUNÇÃO PARA ATUALIZAR ATIVIDADE
+# ======================
+def atualizar_atividade():
+    """Atualiza o timestamp da última atividade"""
+    if 'logado' in st.session_state and st.session_state.logado:
+        st.session_state.ultima_atividade = datetime.now()
+
+# ======================
+# FUNÇÃO DE LOGOUT
+# ======================
+def fazer_logout():
+    """Realiza o logout do usuário"""
+    st.session_state.logado = False
+    st.session_state.mensagem_logout = "👋 Logout realizado com sucesso!"
+    if 'user_input' in st.session_state:
+        st.session_state.user_input = ""
+    if 'password_input' in st.session_state:
+        st.session_state.password_input = ""
+    # Limpa o cache para evitar dados antigos
+    st.cache_data.clear()
+    st.rerun()
+
+# ======================
+# CSS DA TELA DE LOGIN
+# ======================
+LOGIN_CSS = """
+<style>
+/* Reset e fundo */
+.login-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+    font-family: 'Barlow', sans-serif;
+    padding: 20px;
+}
+
+/* Card de login */
+.login-card {
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(10px);
+    border-radius: 20px;
+    padding: 50px 40px;
+    width: 100%;
+    max-width: 420px;
+    box-shadow: 0 25px 60px rgba(0,0,0,0.5);
+    border: 1px solid rgba(255,255,255,0.1);
+    animation: slideUp 0.6s ease-out;
+}
+
+@keyframes slideUp {
+    from {
+        opacity: 0;
+        transform: translateY(30px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Logo e título */
+.login-logo {
+    text-align: center;
+    margin-bottom: 35px;
+}
+
+.login-logo .icon {
+    font-size: 48px;
+    display: block;
+    margin-bottom: 10px;
+}
+
+.login-logo h1 {
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 28px;
+    font-weight: 700;
+    color: #1a1a2e;
+    letter-spacing: 0.1em;
+    margin: 0;
+}
+
+.login-logo .subtitle {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: #6b7280;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    margin-top: 5px;
+}
+
+/* Campos de input */
+.login-field {
+    margin-bottom: 20px;
+}
+
+.login-field label {
+    display: block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 600;
+    color: #4b5563;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+}
+
+.login-field .input-wrapper {
+    position: relative;
+}
+
+.login-field input {
+    width: 100%;
+    padding: 12px 15px;
+    border: 2px solid #e5e7eb;
+    border-radius: 10px;
+    font-size: 15px;
+    font-family: 'Barlow', sans-serif;
+    color: #1a1a2e;
+    background: #f9fafb;
+    transition: all 0.3s ease;
+    outline: none;
+}
+
+.login-field input:focus {
+    border-color: #0078D4;
+    background: white;
+    box-shadow: 0 0 0 4px rgba(0,120,212,0.1);
+}
+
+.login-field input::placeholder {
+    color: #9ca3af;
+}
+
+/* Botão de login */
+.login-btn {
+    width: 100%;
+    padding: 14px;
+    background: linear-gradient(135deg, #0078D4, #005a9e);
+    color: white;
+    border: none;
+    border-radius: 10px;
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    margin-top: 10px;
+}
+
+.login-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(0,120,212,0.3);
+}
+
+.login-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* Mensagens de erro/sucesso */
+.login-message {
+    text-align: center;
+    padding: 10px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    margin-top: 15px;
+}
+
+.login-message.error {
+    background: #fee2e2;
+    color: #dc2626;
+    border: 1px solid #fecaca;
+}
+
+.login-message.success {
+    background: #d1fae5;
+    color: #059669;
+    border: 1px solid #a7f3d0;
+}
+
+/* Rodapé */
+.login-footer {
+    text-align: center;
+    margin-top: 25px;
+    font-size: 11px;
+    color: #9ca3af;
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: 0.05em;
+}
+
+/* Responsivo */
+@media (max-width: 480px) {
+    .login-card {
+        padding: 30px 20px;
+    }
+    
+    .login-logo h1 {
+        font-size: 22px;
+    }
+}
+</style>
+"""
+
+# ======================
+# FUNÇÃO PARA RENDERIZAR TELA DE LOGIN
+# ======================
+def renderizar_tela_login():
+    """Renderiza a tela de login profissional"""
+    
+    st.markdown(LOGIN_CSS, unsafe_allow_html=True)
+    
+    st.markdown("""
+    <div class="login-container">
+        <div class="login-card">
+            <div class="login-logo">
+                <span class="icon">⚙️</span>
+                <h1>TRS DASHBOARD</h1>
+                <div class="subtitle">Sistema de Gestão Industrial</div>
+            </div>
+    """, unsafe_allow_html=True)
+    
+    with st.form("login_form", clear_on_submit=False):
+        # Campo de usuário
+        st.markdown("""
+        <div class="login-field">
+            <label>👤 Usuário</label>
+            <div class="input-wrapper">
+        """, unsafe_allow_html=True)
+        
+        user = st.text_input(
+            "Usuário",
+            placeholder="Digite seu usuário",
+            key="user_input",
+            label_visibility="collapsed"
+        )
+        
+        st.markdown("</div></div>", unsafe_allow_html=True)
+        
+        # Campo de senha
+        st.markdown("""
+        <div class="login-field">
+            <label>🔒 Senha</label>
+            <div class="input-wrapper">
+        """, unsafe_allow_html=True)
+        
+        senha = st.text_input(
+            "Senha",
+            placeholder="Digite sua senha",
+            type="password",
+            key="password_input",
+            label_visibility="collapsed"
+        )
+        
+        st.markdown("</div></div>", unsafe_allow_html=True)
+        
+        # Mensagem de erro
+        if 'mensagem_login' in st.session_state:
+            tipo = st.session_state.mensagem_login.get('tipo', 'error')
+            texto = st.session_state.mensagem_login.get('texto', '')
+            if texto:
+                st.markdown(f"""
+                <div class="login-message {tipo}">
+                    {texto}
+                </div>
+                """, unsafe_allow_html=True)
+        
+        # Botão de login
+        submitted = st.form_submit_button(
+            "🔐 ENTRAR",
+            use_container_width=True,
+            type="primary"
+        )
+        
+        # Rodapé
+        st.markdown("""
+        <div class="login-footer">
+            Sistema protegido © 2026 Luvidarte<br>
+            <span style="font-size: 10px;">Versão 2.0</span>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown("</div></div>", unsafe_allow_html=True)
+    
+    # Processar login
+    if submitted:
+        if not user:
+            st.session_state.mensagem_login = {
+                'tipo': 'error',
+                'texto': '❌ Por favor, digite seu usuário!'
+            }
+            st.rerun()
+        elif not senha:
+            st.session_state.mensagem_login = {
+                'tipo': 'error',
+                'texto': '❌ Por favor, digite sua senha!'
+            }
+            st.rerun()
+        else:
+            # Verificar credenciais
+            sucesso, nivel, setor, status, mensagem = verificar_login(user, senha)
+            
+            if sucesso:
+                # Login bem-sucedido
+                st.session_state.logado = True
+                st.session_state.usuario = user
+                st.session_state.nivel = nivel
+                st.session_state.setor = setor
+                st.session_state.nivel_usuario = nivel
+                st.session_state.setor_usuario = setor
+                st.session_state.tempo_login = datetime.now()
+                st.session_state.ultima_atividade = datetime.now()
+                
+                st.session_state.mensagem_login = {
+                    'tipo': 'success',
+                    'texto': f'✅ Bem-vindo, {user}!'
+                }
+                
+                st.rerun()
+            else:
+                st.session_state.mensagem_login = {
+                    'tipo': 'error',
+                    'texto': mensagem
+                }
+                st.rerun()
+
+# ======================
+# FUNÇÃO PARA VERIFICAR SE O USUÁRIO ESTÁ LOGADO
+# ======================
+def verificar_acesso():
+    """
+    Verifica se o usuário está logado e se a sessão é válida.
+    Retorna True se tudo ok, False se precisa fazer login.
+    """
+    # Verifica se já está logado
+    if 'logado' not in st.session_state:
+        st.session_state.logado = False
+    
+    if not st.session_state.logado:
+        renderizar_tela_login()
+        return False
+    
+    # Verifica expiração da sessão (apenas para nível != 0)
+    if st.session_state.get('nivel', '0') != '0':
+        if verificar_expiracao_sessao():
+            renderizar_tela_login()
+            return False
+    
+    # Atualiza atividade a cada requisição
+    atualizar_atividade()
+    
+    return True
 
 # ======================
 # FUNÇÃO PARA HORÁRIO BRASÍLIA
@@ -1842,6 +2313,7 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # ======================
+# ======================
 # SIDEBAR - navegação
 # ======================
 with st.sidebar:
@@ -1855,6 +2327,46 @@ with st.sidebar:
     st.markdown(f"<div style='font-family:JetBrains Mono,monospace;font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:{THEME['accent_cyan']};margin-bottom:8px'>▸ Setor</div>", unsafe_allow_html=True)
     aba_selecionada = st.radio("", list(ABAS.keys()), label_visibility="collapsed")
     st.session_state.aba_selecionada = aba_selecionada
+    
+    # ===== INFORMAÇÕES DO USUÁRIO E LOGOUT =====
+    st.markdown("---")
+    
+    # Informações do usuário
+    usuario_logado = st.session_state.get('usuario', 'Usuário')
+    nivel_logado = st.session_state.get('nivel', '0')
+    setor_logado = st.session_state.get('setor', '')
+    
+    col_info, col_btn = st.columns([3, 1])
+    with col_info:
+        st.markdown(f"""
+        <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: {THEME['text_muted']};">
+            👤 <b style="color: {THEME['text_primary']};">{usuario_logado}</b><br>
+            📊 Nível: {nivel_logado}<br>
+            🏢 {setor_logado}
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col_btn:
+        if st.button("🚪", help="Sair do sistema", key="btn_logout", use_container_width=True):
+            fazer_logout()
+
+# ==================================================================================================
+# VERIFICAÇÃO DE LOGIN - Protege todo o sistema
+# ==================================================================================================
+
+# Verifica se o usuário está logado e se a sessão é válida
+if not verificar_acesso():
+    # Se não estiver logado, a tela de login já foi renderizada
+    # Para a execução aqui para não mostrar o resto do sistema
+    st.stop()
+
+# Se chegou aqui, o usuário está logado e a sessão é válida
+# Remove mensagens de login antigas para não aparecerem na interface
+if 'mensagem_login' in st.session_state:
+    del st.session_state.mensagem_login
+
+# Adiciona um botão de logout no sidebar (após a navegação)
+# Modifique a seção do sidebar para incluir o logout
 
 # ======================
 # RENDERIZAR POPUPS PENDENTES E VERIFICAR NOVOS REGISTROS
