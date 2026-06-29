@@ -2650,33 +2650,11 @@ elif aba_selecionada == 'SOPRO':
         st.stop()
 
     df_base_calc = df_base.copy()
-    
-    # ===== CORREÇÃO: Carregar META diretamente da planilha =====
     if 'TRS_BRUTO' in df_base_calc.columns:
         df_base_calc['TRS LÍQUIDO (%)'] = (df_base_calc['TRS_BRUTO'] * 100).round(2)
-        
-        # Tenta carregar META da coluna existente na planilha
-        if 'META' in df_base_calc.columns:
-            df_base_calc['META'] = pd.to_numeric(df_base_calc['META'], errors='coerce').fillna(0)
-            df_base_calc['META'] = df_base_calc['META'].astype(int)
-        else:
-            # Buscar coluna com nome similar
-            meta_col = None
-            for col in df_base_calc.columns:
-                col_upper = str(col).upper()
-                if col_upper in ['META', 'META (TRS 100%)', 'TRS 100%', 'META (TRS 100%)']:
-                    meta_col = col
-                    break
-            
-            if meta_col:
-                df_base_calc['META'] = pd.to_numeric(df_base_calc[meta_col], errors='coerce').fillna(0)
-                df_base_calc['META'] = df_base_calc['META'].astype(int)
-            else:
-                # Fallback: calcular a meta baseado no TRS (mantido para compatibilidade)
-                df_base_calc['META'] = df_base_calc.apply(
-                    lambda row: (row['APROVADO'] / (row['TRS LÍQUIDO (%)'] / 100)) if row['TRS LÍQUIDO (%)'] > 0 else row['APROVADO'], axis=1
-                ).round(0)
-                st.warning("⚠️ Coluna 'META' não encontrada na planilha. Usando cálculo automático (pode gerar divergência).")
+        df_base_calc['META'] = df_base_calc.apply(
+            lambda row: (row['APROVADO'] / (row['TRS LÍQUIDO (%)'] / 100)) if row['TRS LÍQUIDO (%)'] > 0 else row['APROVADO'], axis=1
+        ).round(0)
     else:
         df_base_calc['TRS LÍQUIDO (%)'] = 0
         df_base_calc['META'] = 0
@@ -2721,14 +2699,13 @@ elif aba_selecionada == 'SOPRO':
     if praca != "(Todas)" and 'PRAÇA' in df.columns:
         df = df[df['PRAÇA'].fillna('').str.upper() == praca.upper()]
 
-    for col in ['PRODUZIDO', 'REFUGADO', 'APROVADO', 'TRS_BRUTO', 'META']:
+    for col in ['PRODUZIDO', 'REFUGADO', 'APROVADO', 'TRS_BRUTO']:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
     total_prod   = int(df['PRODUZIDO'].sum()) if 'PRODUZIDO' in df.columns else 0
     total_refugo = int(df['REFUGADO'].sum())  if 'REFUGADO'  in df.columns else 0
     total_apro   = int(df['APROVADO'].sum())  if 'APROVADO'  in df.columns else 0
-    total_meta   = int(df['META'].sum())      if 'META'      in df.columns else 0
     trs_liq_med  = df['TRS_BRUTO'].mean() * 100 if 'TRS_BRUTO' in df.columns and not df.empty else 0
     
     if not df.empty and 'TRS_BRUTO' in df.columns and 'APROVADO' in df.columns:
