@@ -24,6 +24,52 @@ from datetime import datetime, timedelta, date, time as dt_time
 from functools import wraps
 
 # ======================
+# FUNÇÃO PARA LIMPAR CACHE E RECARREGAR
+# ======================
+def limpar_cache_e_recarregar():
+    """
+    Limpa todo o cache do Streamlit e força o recarregamento dos dados
+    """
+    try:
+        # Limpa o cache de dados
+        st.cache_data.clear()
+        
+        # Limpa o cache de recursos
+        st.cache_resource.clear()
+        
+        # Limpa arquivos de cache locais, se existirem
+        arquivos_cache = [
+            "cache_prensados.pkl",
+            "cache_sopro.pkl", 
+            "cache_tempera.pkl",
+            "cache_ar.pkl",
+            "cache_rm.pkl",
+            "cache_preventiva.pkl",
+            "cache_habilidades.pkl",
+            "notificacoes_enviadas.json"
+        ]
+        
+        for arquivo in arquivos_cache:
+            try:
+                if os.path.exists(arquivo):
+                    os.remove(arquivo)
+                    print(f"🗑️ Cache removido: {arquivo}")
+            except:
+                pass
+        
+        # Reset dos timestamps de atualização
+        if "ultima_verificacao_popup" in st.session_state:
+            st.session_state.ultima_verificacao_popup = datetime.now() - timedelta(minutes=5)
+        
+        if "ultima_atualizacao_mensagem" in st.session_state:
+            st.session_state.ultima_atualizacao_mensagem = datetime.now() - timedelta(minutes=5)
+        
+        return True, "✅ Cache limpo com sucesso! Recarregando dados..."
+        
+    except Exception as e:
+        return False, f"❌ Erro ao limpar cache: {str(e)}"
+
+# ======================
 # DECORATOR DE RETRY PARA ERROS DE QUOTA (429)
 # ======================
 def retry_on_quota(max_retries=3, delay=5):
@@ -2315,8 +2361,7 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # ======================
-# ======================
-# SIDEBAR - navegação
+# SIDEBAR - navegação e informações do usuário
 # ======================
 with st.sidebar:
     st.markdown(f"""
@@ -2351,6 +2396,45 @@ with st.sidebar:
     with col_btn:
         if st.button("🚪", help="Sair do sistema", key="btn_logout", use_container_width=True):
             fazer_logout()
+    
+    # ===== BOTÃO PARA LIMPAR CACHE E RECARREGAR =====
+    st.markdown("---")
+    
+    # Exibir horário da última atualização
+    if "ultima_atualizacao_cache" not in st.session_state:
+        st.session_state.ultima_atualizacao_cache = datetime.now()
+    
+    st.caption(f"🔄 Última atualização: {st.session_state.ultima_atualizacao_cache.strftime('%H:%M:%S')}")
+    
+    # Botão de limpar cache
+    if st.button("🔄 Limpar Cache e Recarregar", use_container_width=True, type="primary"):
+        with st.spinner("🧹 Limpando cache e recarregando dados..."):
+            sucesso, mensagem = limpar_cache_e_recarregar()
+            if sucesso:
+                st.session_state.ultima_atualizacao_cache = datetime.now()
+                st.success(mensagem)
+                time.sleep(0.5)
+                st.rerun()
+            else:
+                st.error(mensagem)
+    
+    # Botão adicional para recarregar apenas os dados (sem limpar cache completo)
+    if st.button("📊 Recarregar Dados Apenas", use_container_width=True):
+        with st.spinner("🔄 Recarregando dados..."):
+            st.cache_data.clear()
+            st.session_state.ultima_atualizacao_cache = datetime.now()
+            st.success("✅ Dados recarregados!")
+            time.sleep(0.3)
+            st.rerun()
+    
+    # ===== INFORMAÇÕES DO SISTEMA =====
+    st.markdown("---")
+    st.caption(f"""
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 8px; color: {THEME['text_muted']}; text-align: center;">
+        TRS Dashboard v2.0<br>
+        {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
+    </div>
+    """, unsafe_allow_html=True)
 
 # ==================================================================================================
 # VERIFICAÇÃO DE LOGIN - Protege todo o sistema
