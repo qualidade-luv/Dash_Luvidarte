@@ -3116,7 +3116,7 @@ if aba_selecionada == 'PRENSADOS':
         render_section_header("Estratificação de Defeitos - Prensados", "▸")
         colunas_defeitos_prensados = [
             'BOLHA', 'PEDRA', 'TRINCA', 'RUGAS', 'CORTE TESOURA', 
-            'DOBRA', 'SUJEIRA', 'QUEBRA', 'ARREADO', 'VIDRO GRUDADO',
+            'DOBRA', 'FARINHA', 'QUEBRA', 'ARREADO', 'VIDRO GRUDADO',
             'CONTRA-PEÇA', 'FALHAS', 'CHUPADO', 'ÓLEO TESOURA', 
             'CROMO', 'MACHO', 'BARRO', 'EMPENO', 'OUTROS'
         ]
