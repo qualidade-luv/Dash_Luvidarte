@@ -9741,37 +9741,25 @@ elif aba_selecionada == 'PRÊMIO PRENSADOS':
     def gerar_pdf_premio(df_dados, titulo_extra=""):
         """Gera PDF do relatório em memória e retorna os bytes"""
         from io import BytesIO
-        
-        # Usar a função local de conversão
-        def time_to_decimal_pdf(time_val):
-            from datetime import time as dt_time
-            
-            if pd.isna(time_val):
-                return 0.0
-            if isinstance(time_val, dt_time):
-                return time_val.hour + time_val.minute/60 + time_val.second/3600
-            if isinstance(time_val, datetime):
-                return time_val.hour + time_val.minute/60 + time_val.second/3600
-            if isinstance(time_val, pd.Timestamp):
-                return time_val.hour + time_val.minute/60 + time_val.second/3600
-            if isinstance(time_val, str):
-                try:
-                    for fmt in ["%H:%M:%S", "%H:%M", "%H:%M:%S.%f"]:
-                        try:
-                            t = datetime.strptime(time_val, fmt)
-                            return t.hour + t.minute/60 + t.second/3600
-                        except:
-                            continue
-                    return float(time_val)
-                except:
-                    return 0.0
-            try:
-                return float(time_val)
-            except:
-                return 0.0
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.units import cm
+        from reportlab.lib import colors
+        from reportlab.lib.enums import TA_CENTER, TA_LEFT
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
         
         buffer = BytesIO()
-        doc = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=1*cm, rightMargin=1*cm)
+        
+        # Criar documento com parâmetros corretos
+        doc = SimpleDocTemplate(
+            buffer,
+            pagesize=A4,
+            leftMargin=2*cm,
+            rightMargin=2*cm,
+            topMargin=2*cm,
+            bottomMargin=2*cm
+        )
+        
         story = []
         
         styles = getSampleStyleSheet()
