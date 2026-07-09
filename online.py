@@ -575,7 +575,8 @@ ABAS = {
     'REQUISIÇÃO MANUTENÇÃO': 'RM',
     'FECHAMENTO TURNO': 'FT',
     'MANUTENÇÃO PREVENTIVA': 'MP',
-    'MAPEAMENTO DE HABILIDADES': 'MP'
+    'MAPEAMENTO DE HABILIDADES': 'MP',
+    'PRÊMIO PRENSADOS': 'PP'
 }
 
 CAMINHO_PDF_AR = r"\\srv-luvidarte\dados\DOC\Engenharia_Luvidarte\SGQ - LUVIDARTE - ALTERADAS\0-AVISO DE REJEIÇÃO\1-PDF"
@@ -9600,8 +9601,456 @@ elif aba_selecionada == 'MAPEAMENTO DE HABILIDADES':
         MAPEAMENTO DE HABILIDADES · {get_horario_brasilia()}
     </div>
     """, unsafe_allow_html=True)
+
+# ==================================================================================================
+# PRÊMIO PRENSADOS - SOMENTE NÍVEL 0
+# ==================================================================================================
+elif aba_selecionada == 'PRÊMIO PRENSADOS':
+    # ===== VERIFICAÇÃO DE ACESSO - APENAS NÍVEL 0 =====
+    nivel_usuario = st.session_state.get('nivel', '')
     
-    # ==================================================================================================
+    if nivel_usuario != '0':
+        st.error("⛔ **ACESSO NEGADO**")
+        st.warning(f"""
+        Esta seção é restrita a usuários com **Nível 0** (Administradores).
+        
+        **Seu nível atual:** `{nivel_usuario if nivel_usuario else 'Não definido'}`
+        
+        Para acessar esta funcionalidade, entre em contato com um administrador do sistema.
+        """)
+        if st.button("🔙 Voltar para página inicial"):
+            st.rerun()
+        st.stop()
+    
+    # ===== SE PASSOU NA VERIFICAÇÃO, EXECUTA O MÓDULO =====
+    render_page_header("PRÊMIO PRENSADOS", f"Relatório de Prêmio · Atualizado {get_horario_brasilia()}", THEME['accent_lime'])
+    
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, {THEME['bg_card']} 0%, {THEME['bg_card2']} 100%); 
+                padding: 15px 20px; border-radius: 10px; 
+                border-left: 4px solid {THEME['accent_lime']}; margin: 10px 0 20px 0;">
+        <span style="font-size: 18px; margin-right: 10px;">📊</span>
+        <span style="font-family: 'Rajdhani', sans-serif; font-size: 16px; font-weight: bold; color: {THEME['accent_lime']};">
+            GERADOR DE RELATÓRIO DE PRÊMIO
+        </span>
+        <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: {THEME['text_muted']}; margin-left: 15px;">
+            Apenas registros com TRS > 100%
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # ======================
+    # FILTROS NA INTERFACE
+    # ======================
+    col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+    
+    with col_f1:
+        data_ini = st.date_input(
+            "📅 Data Inicial",
+            value=datetime.now().date() - timedelta(days=30),
+            key="premio_data_ini"
+        )
+    
+    with col_f2:
+        data_fim = st.date_input(
+            "📅 Data Final",
+            value=datetime.now().date(),
+            key="premio_data_fim"
+        )
+    
+    with col_f3:
+        turno_premio = st.selectbox(
+            "🕐 Turno",
+            options=["(Todos)", "M", "T", "N"],
+            key="premio_turno"
+        )
+    
+    with col_f4:
+        prensa_tipo_premio = st.selectbox(
+            "🏭 Tipo de Prensa",
+            options=["(Todos)", "Semi-Automática", "Automática"],
+            key="premio_prensa"
+        )
+    
+    # ======================
+    # REFERÊNCIA E OPÇÕES
+    # ======================
+    col_r1, col_r2 = st.columns([2, 1])
+    
+    with col_r1:
+        referencia_premio = st.text_input(
+            "🔍 Referência (parte do código)",
+            placeholder="Digite parte da referência para filtrar...",
+            key="premio_referencia"
+        )
+    
+    with col_r2:
+        st.markdown("<br>", unsafe_allow_html=True)
+        gerar_por_mes_premio = st.checkbox(
+            "📆 Separar por mês",
+            value=False,
+            key="premio_separar_mes"
+        )
+    
+    # ======================
+    # BOTÃO GERAR RELATÓRIO
+    # ======================
+    col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
+    with col_btn2:
+        gerar_relatorio_btn = st.button(
+            "📊 GERAR RELATÓRIO",
+            type="primary",
+            use_container_width=True,
+            key="btn_gerar_premio"
+        )
+    
+    # ======================
+    # FUNÇÃO PARA GERAR RELATÓRIO EM MEMÓRIA (PDF)
+    # ======================
+    def gerar_pdf_premio(df_dados, titulo_extra=""):
+        """Gera PDF do relatório em memória e retorna os bytes"""
+        from io import BytesIO
+        
+        buffer = BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=1*cm, rightMargin=1*cm)
+        story = []
+        
+        styles = getSampleStyleSheet()
+        style_title = ParagraphStyle(
+            "title", parent=styles["Heading1"], alignment=TA_CENTER, fontSize=14, spaceAfter=20
+        )
+        style_subtitle = ParagraphStyle(
+            "subtitle", parent=styles["Heading2"], alignment=TA_LEFT, fontSize=12, spaceAfter=10, spaceBefore=15
+        )
+        
+        # TÍTULO
+        titulo = "Relatório de Prêmio - TRS > 100%"
+        if titulo_extra:
+            titulo += f" - {titulo_extra}"
+        story.append(Paragraph(titulo, style_title))
+        story.append(Spacer(1, 0.3 * cm))
+        
+        # FILTROS
+        info_filtros = []
+        if prensa_tipo_premio != "(Todos)":
+            info_filtros.append(f"Tipo de Prensa: {prensa_tipo_premio}")
+            if "Automática" in prensa_tipo_premio:
+                info_filtros.append("(BOQUETA = 2)")
+            elif "Semi" in prensa_tipo_premio:
+                info_filtros.append("(BOQUETA = 1)")
+        if turno_premio != "(Todos)":
+            info_filtros.append(f"Turno: {turno_premio}")
+        if referencia_premio:
+            info_filtros.append(f"Referência: {referencia_premio}")
+        if data_ini:
+            info_filtros.append(f"Data inicial: {data_ini.strftime('%d/%m/%Y')}")
+        if data_fim:
+            info_filtros.append(f"Data final: {data_fim.strftime('%d/%m/%Y')}")
+        info_filtros.append("✅ Apenas registros com TRS > 100%")
+        
+        if info_filtros:
+            story.append(Paragraph("Filtros aplicados: " + " | ".join(info_filtros), styles["Normal"]))
+            story.append(Spacer(1, 0.3 * cm))
+        
+        # ===== FUNÇÃO PARA GERAR TABELA =====
+        def criar_tabela(df_tabela, titulo_mes=""):
+            if df_tabela.empty:
+                return None
+            
+            # Calcular TRS
+            df_calc = df_tabela.copy()
+            df_calc["TRS_%"] = 0.0
+            mask_meta_positiva = df_calc["META"] > 0
+            df_calc.loc[mask_meta_positiva, "TRS_%"] = (df_calc.loc[mask_meta_positiva, "APROVADO"] / df_calc.loc[mask_meta_positiva, "META"] * 100).round(2)
+            df_calc["TRS_EXCESSO"] = 0.0
+            df_calc.loc[mask_meta_positiva, "TRS_EXCESSO"] = (df_calc.loc[mask_meta_positiva, "TRS_%"] - 100).round(2)
+            df_calc.loc[df_calc["TRS_EXCESSO"] < 0, "TRS_EXCESSO"] = 0
+            df_calc["PRÊMIO"] = df_calc["APROVADO"] - df_calc["META"]
+            df_calc["HORAS_PROGRAMADAS"] = df_calc["HORAS_TOTAIS_DEC"] + df_calc["ACERTOS_DEC"] + df_calc["MANUT_DEC"] + 0.25
+            
+            df_filtrado = df_calc[df_calc["TRS_%"] > 100]
+            
+            if df_filtrado.empty:
+                return None
+            
+            dados_tabela = [
+                ["DATA", "TURNO", "REFERÊNCIA", "META\n(TRS 100%)", "APROVADO", "TRS %\n(Excesso)", "HORAS\nTRABALHADAS", "HORAS\nPROGRAMADAS"]
+            ]
+            
+            for _, row in df_filtrado.iterrows():
+                horas_totais = row['HORAS_TOTAIS_DEC']
+                horas_programadas = row['HORAS_PROGRAMADAS']
+                horas_totais_str = f"{int(horas_totais):02d}:{int((horas_totais % 1) * 60):02d}"
+                horas_programadas_str = f"{int(horas_programadas):02d}:{int((horas_programadas % 1) * 60):02d}"
+                
+                dados_tabela.append([
+                    row["DATA"].strftime("%d/%m/%Y"),
+                    row["TURNO"],
+                    row["REFERÊNCIA"],
+                    f"{row['META']:,.0f}",
+                    f"{row['APROVADO']:,.0f}",
+                    f"{row['TRS_EXCESSO']:.2f}%",
+                    horas_totais_str,
+                    horas_programadas_str
+                ])
+            
+            # Totais
+            total_meta = df_filtrado['META'].sum()
+            total_aprovado = df_filtrado['APROVADO'].sum()
+            total_media_excesso = df_filtrado['TRS_EXCESSO'].mean()
+            total_horas_trabalhadas = df_filtrado['HORAS_TOTAIS_DEC'].sum()
+            total_horas_programadas = df_filtrado['HORAS_PROGRAMADAS'].sum()
+            
+            total_horas_trab_str = f"{int(total_horas_trabalhadas):02d}:{int((total_horas_trabalhadas % 1) * 60):02d}"
+            total_horas_prog_str = f"{int(total_horas_programadas):02d}:{int((total_horas_programadas % 1) * 60):02d}"
+            
+            linha_total = [
+                "TOTAL MÊS" if titulo_mes else "TOTAL",
+                "",
+                "",
+                f"{total_meta:,.0f}",
+                f"{total_aprovado:,.0f}",
+                f"{total_media_excesso:.2f}%",
+                total_horas_trab_str,
+                total_horas_prog_str
+            ]
+            dados_tabela.append(linha_total)
+            
+            tabela = Table(dados_tabela, hAlign="LEFT", colWidths=[70, 40, 100, 70, 70, 60, 70, 70])
+            estilo = TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.grey),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+                ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ])
+            
+            for i, row in enumerate(df_filtrado.itertuples(), start=1):
+                if row.PRÊMIO > 0:
+                    estilo.add("TEXTCOLOR", (-3, i), (-3, i), colors.green)
+                if row.TRS_EXCESSO > 0:
+                    estilo.add("TEXTCOLOR", (-4, i), (-4, i), colors.green)
+            
+            estilo.add("BACKGROUND", (0, -1), (-1, -1), colors.lightgrey)
+            estilo.add("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold")
+            tabela.setStyle(estilo)
+            
+            return tabela, df_filtrado
+        
+        # ===== GERAR RELATÓRIO =====
+        if gerar_por_mes_premio:
+            # Separar por mês
+            meses_disponiveis = sorted(df_dados["MES_ANO"].unique())
+            
+            total_registros = 0
+            total_meta_geral = 0
+            total_aprovado_geral = 0
+            total_horas_trab_geral = 0
+            total_horas_prog_geral = 0
+            total_excesso_geral = 0
+            qtd_meses_com_dados = 0
+            
+            for mes_str in meses_disponiveis:
+                df_mes = df_dados[df_dados["MES_ANO"] == mes_str].copy()
+                resultado = criar_tabela(df_mes, mes_str)
+                
+                if resultado:
+                    tabela, df_filtrado = resultado
+                    story.append(Paragraph(f"MÊS: {mes_str}", style_subtitle))
+                    story.append(tabela)
+                    story.append(Spacer(1, 0.5 * cm))
+                    
+                    total_registros += len(df_filtrado)
+                    total_meta_geral += df_filtrado['META'].sum()
+                    total_aprovado_geral += df_filtrado['APROVADO'].sum()
+                    total_horas_trab_geral += df_filtrado['HORAS_TOTAIS_DEC'].sum()
+                    total_horas_prog_geral += df_filtrado['HORAS_PROGRAMADAS'].sum()
+                    total_excesso_geral += df_filtrado['TRS_EXCESSO'].mean()
+                    qtd_meses_com_dados += 1
+            
+            # Resumo geral
+            if qtd_meses_com_dados > 0:
+                story.append(Spacer(1, 0.5 * cm))
+                story.append(Paragraph("="*50, styles["Normal"]))
+                story.append(Spacer(1, 0.2 * cm))
+                story.append(Paragraph("RESUMO GERAL DO PERÍODO", style_subtitle))
+                story.append(Spacer(1, 0.2 * cm))
+                
+                total_excesso_medio = total_excesso_geral / qtd_meses_com_dados if qtd_meses_com_dados > 0 else 0
+                total_horas_trab_str = f"{int(total_horas_trab_geral):02d}:{int((total_horas_trab_geral % 1) * 60):02d}"
+                total_horas_prog_str = f"{int(total_horas_prog_geral):02d}:{int((total_horas_prog_geral % 1) * 60):02d}"
+                
+                dados_resumo = [
+                    ["DATA", "TURNO", "REFERÊNCIA", "META\n(TRS 100%)", "APROVADO", "TRS %\n(Excesso)", "HORAS\nTRABALHADAS", "HORAS\nPROGRAMADAS"],
+                    ["TOTAL GERAL", "", "", f"{total_meta_geral:,.0f}", f"{total_aprovado_geral:,.0f}", f"{total_excesso_medio:.2f}%", total_horas_trab_str, total_horas_prog_str]
+                ]
+                
+                tabela_resumo = Table(dados_resumo, hAlign="LEFT", colWidths=[70, 40, 100, 70, 70, 60, 70, 70])
+                tabela_resumo.setStyle(TableStyle([
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.blue),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                    ("BACKGROUND", (0, 1), (-1, 1), colors.lightgrey),
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+                    ("FONTSIZE", (0, 0), (-1, -1), 9),
+                    ("FONTNAME", (0, 1), (-1, 1), "Helvetica-Bold"),
+                ]))
+                story.append(tabela_resumo)
+        else:
+            # Relatório consolidado
+            resultado = criar_tabela(df_dados)
+            if resultado:
+                tabela, df_filtrado = resultado
+                story.append(tabela)
+        
+        doc.build(story)
+        buffer.seek(0)
+        return buffer.getvalue()
+    
+    # ======================
+    # PROCESSAR DADOS E GERAR RELATÓRIO
+    # ======================
+    if gerar_relatorio_btn:
+        with st.spinner("🔄 Carregando dados e processando relatório..."):
+            # Carregar dados
+            df_base = carregar_dados_prensados()
+            
+            if df_base.empty:
+                st.error("❌ Não foi possível carregar os dados da planilha.")
+                st.stop()
+            
+            # Aplicar filtros
+            df_filtrado = df_base.copy()
+            
+            # Filtro de data
+            if data_ini:
+                df_filtrado = df_filtrado[df_filtrado["DATA"] >= pd.to_datetime(data_ini)]
+            if data_fim:
+                df_filtrado = df_filtrado[df_filtrado["DATA"] <= pd.to_datetime(data_fim)]
+            
+            # Filtro de turno
+            if turno_premio != "(Todos)" and "TURNO" in df_filtrado.columns:
+                df_filtrado = df_filtrado[df_filtrado["TURNO"] == turno_premio]
+            
+            # Filtro de referência
+            if referencia_premio and "REFERÊNCIA" in df_filtrado.columns:
+                df_filtrado = df_filtrado[df_filtrado["REFERÊNCIA"].fillna('').str.lower().str.contains(referencia_premio.lower())]
+            
+            # Filtro de tipo de prensa
+            if prensa_tipo_premio != "(Todos)" and "BOQUETA" in df_filtrado.columns:
+                if "Semi" in prensa_tipo_premio:
+                    df_filtrado = df_filtrado[df_filtrado["BOQUETA"] == 1]
+                elif "Auto" in prensa_tipo_premio:
+                    df_filtrado = df_filtrado[df_filtrado["BOQUETA"] == 2]
+            
+            # Verificar se há dados
+            if df_filtrado.empty:
+                st.warning("⚠️ Nenhum dado encontrado com os filtros selecionados.")
+                st.stop()
+            
+            # Preparar dados para o relatório
+            df_relatorio = df_filtrado.copy()
+            
+            # Renomear colunas para compatibilidade
+            if "APROVADO FINAL" in df_relatorio.columns:
+                df_relatorio["APROVADO"] = df_relatorio["APROVADO FINAL"]
+            
+            # Garantir colunas necessárias
+            colunas_necessarias = ["DATA", "TURNO", "REFERÊNCIA", "TRS 100%", "APROVADO", "HORAS TOTAIS", "ACERTOS", "MANUT."]
+            for col in colunas_necessarias:
+                if col not in df_relatorio.columns:
+                    st.error(f"❌ Coluna '{col}' não encontrada na planilha!")
+                    st.stop()
+            
+            # Renomear para o formato esperado
+            df_relatorio = df_relatorio.rename(columns={"TRS 100%": "META"})
+            
+            # Converter DATA para datetime se não for
+            if not pd.api.types.is_datetime64_any_dtype(df_relatorio["DATA"]):
+                df_relatorio["DATA"] = pd.to_datetime(df_relatorio["DATA"])
+            
+            # Criar coluna de mês/ano
+            df_relatorio["MES_ANO"] = df_relatorio["DATA"].dt.strftime("%m/%Y")
+            
+            # Converter horas
+            df_relatorio["HORAS_TOTAIS_DEC"] = df_relatorio["HORAS TOTAIS"].apply(time_to_decimal)
+            df_relatorio["ACERTOS_DEC"] = df_relatorio["ACERTOS"].apply(time_to_decimal)
+            df_relatorio["MANUT_DEC"] = df_relatorio["MANUT."].apply(time_to_decimal)
+            
+            # Gerar PDF em memória
+            titulo_extra = f"{data_ini.strftime('%d/%m/%Y')} a {data_fim.strftime('%d/%m/%Y')}"
+            pdf_bytes = gerar_pdf_premio(df_relatorio, titulo_extra)
+            
+            if pdf_bytes:
+                st.success(f"✅ Relatório gerado com sucesso! {len(df_relatorio)} registros processados.")
+                
+                # Mostrar preview dos dados
+                with st.expander("📋 Preview dos dados processados", expanded=True):
+                    st.dataframe(df_relatorio[["DATA", "TURNO", "REFERÊNCIA", "META", "APROVADO", "HORAS TOTAIS", "ACERTOS", "MANUT."]].head(10), use_container_width=True)
+                    st.caption(f"Total: {len(df_relatorio)} registros")
+                
+                # Botão de download
+                nome_arquivo = f"Premio_TRS_100_{datetime.now().strftime('%Y-%m-%d')}.pdf"
+                
+                col_dl1, col_dl2, col_dl3 = st.columns([1, 2, 1])
+                with col_dl2:
+                    st.download_button(
+                        label="📥 BAIXAR RELATÓRIO PDF",
+                        data=pdf_bytes,
+                        file_name=nome_arquivo,
+                        mime="application/pdf",
+                        use_container_width=True,
+                        type="primary"
+                    )
+            else:
+                st.error("❌ Erro ao gerar o relatório PDF.")
+    
+    # ======================
+    # INFORMAÇÕES ADICIONAIS
+    # ======================
+    with st.expander("ℹ️ Informações sobre o Relatório", expanded=False):
+        st.markdown("""
+        **📊 O que é este relatório?**
+        
+        Este relatório gera um documento PDF com os registros de produção que **ultrapassaram 100% de TRS**.
+        
+        **📋 Colunas do relatório:**
+        - **DATA**: Data da produção
+        - **TURNO**: Turno de produção (M, T, N)
+        - **REFERÊNCIA**: Código da referência produzida
+        - **META (TRS 100%)**: Meta de produção para TRS 100%
+        - **APROVADO**: Quantidade aprovada
+        - **TRS % (Excesso)**: Percentual que excedeu 100% (ex: 23.87% significa TRS 123.87%)
+        - **HORAS TRABALHADAS**: Horas efetivamente trabalhadas
+        - **HORAS PROGRAMADAS**: Horas totais + acertos + manutenção + 15 min
+        
+        **🎯 Filtros disponíveis:**
+        - Período (Data Inicial e Final)
+        - Turno
+        - Referência (busca parcial)
+        - Tipo de Prensa (Semi-Automática ou Automática)
+        
+        **📆 Opção "Separar por mês":**
+        Ao ativar esta opção, o relatório será organizado com uma seção para cada mês do período selecionado, facilitando a análise mensal.
+        
+        **🔄 Processo de geração:**
+        1. Selecione os filtros desejados
+        2. Clique em "GERAR RELATÓRIO"
+        3. Aguarde o processamento
+        4. Clique em "BAIXAR RELATÓRIO PDF" para salvar o arquivo
+        """)
+    
+    st.markdown(f"""
+    <div style="text-align:right;padding:16px 0 8px;
+        font-family:'JetBrains Mono',monospace;font-size:10px;
+        color:{THEME['text_muted']};letter-spacing:.1em;">
+        PRÊMIO PRENSADOS · {get_horario_brasilia()}
+    </div>
+    """, unsafe_allow_html=True)
+    
+# ==================================================================================================
 # RENDERIZAR FAIXA DE ROLAGEM NO RODAPÉ (aparece em todas as abas)
 # ==================================================================================================
 # Define a planilha de fechamento para a faixa de rolagem (precisa estar definida antes)
