@@ -9640,6 +9640,37 @@ elif aba_selecionada == 'PRÊMIO PRENSADOS':
     """, unsafe_allow_html=True)
     
     # ======================
+    # FUNÇÃO PARA CONVERTER TIME PARA HORAS DECIMAIS (LOCAL)
+    # ======================
+    def time_to_decimal_local(time_val):
+        """Converte time para horas decimais"""
+        from datetime import time as dt_time
+        
+        if pd.isna(time_val):
+            return 0.0
+        if isinstance(time_val, dt_time):
+            return time_val.hour + time_val.minute/60 + time_val.second/3600
+        if isinstance(time_val, datetime):
+            return time_val.hour + time_val.minute/60 + time_val.second/3600
+        if isinstance(time_val, pd.Timestamp):
+            return time_val.hour + time_val.minute/60 + time_val.second/3600
+        if isinstance(time_val, str):
+            try:
+                for fmt in ["%H:%M:%S", "%H:%M", "%H:%M:%S.%f"]:
+                    try:
+                        t = datetime.strptime(time_val, fmt)
+                        return t.hour + t.minute/60 + t.second/3600
+                    except:
+                        continue
+                return float(time_val)
+            except:
+                return 0.0
+        try:
+            return float(time_val)
+        except:
+            return 0.0
+    
+    # ======================
     # FILTROS NA INTERFACE
     # ======================
     col_f1, col_f2, col_f3, col_f4 = st.columns(4)
@@ -9710,6 +9741,34 @@ elif aba_selecionada == 'PRÊMIO PRENSADOS':
     def gerar_pdf_premio(df_dados, titulo_extra=""):
         """Gera PDF do relatório em memória e retorna os bytes"""
         from io import BytesIO
+        
+        # Usar a função local de conversão
+        def time_to_decimal_pdf(time_val):
+            from datetime import time as dt_time
+            
+            if pd.isna(time_val):
+                return 0.0
+            if isinstance(time_val, dt_time):
+                return time_val.hour + time_val.minute/60 + time_val.second/3600
+            if isinstance(time_val, datetime):
+                return time_val.hour + time_val.minute/60 + time_val.second/3600
+            if isinstance(time_val, pd.Timestamp):
+                return time_val.hour + time_val.minute/60 + time_val.second/3600
+            if isinstance(time_val, str):
+                try:
+                    for fmt in ["%H:%M:%S", "%H:%M", "%H:%M:%S.%f"]:
+                        try:
+                            t = datetime.strptime(time_val, fmt)
+                            return t.hour + t.minute/60 + t.second/3600
+                        except:
+                            continue
+                    return float(time_val)
+                except:
+                    return 0.0
+            try:
+                return float(time_val)
+            except:
+                return 0.0
         
         buffer = BytesIO()
         doc = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=1*cm, rightMargin=1*cm)
@@ -9974,10 +10033,10 @@ elif aba_selecionada == 'PRÊMIO PRENSADOS':
             # Criar coluna de mês/ano
             df_relatorio["MES_ANO"] = df_relatorio["DATA"].dt.strftime("%m/%Y")
             
-            # Converter horas
-            df_relatorio["HORAS_TOTAIS_DEC"] = df_relatorio["HORAS TOTAIS"].apply(time_to_decimal)
-            df_relatorio["ACERTOS_DEC"] = df_relatorio["ACERTOS"].apply(time_to_decimal)
-            df_relatorio["MANUT_DEC"] = df_relatorio["MANUT."].apply(time_to_decimal)
+            # Converter horas usando a função local
+            df_relatorio["HORAS_TOTAIS_DEC"] = df_relatorio["HORAS TOTAIS"].apply(time_to_decimal_local)
+            df_relatorio["ACERTOS_DEC"] = df_relatorio["ACERTOS"].apply(time_to_decimal_local)
+            df_relatorio["MANUT_DEC"] = df_relatorio["MANUT."].apply(time_to_decimal_local)
             
             # Gerar PDF em memória
             titulo_extra = f"{data_ini.strftime('%d/%m/%Y')} a {data_fim.strftime('%d/%m/%Y')}"
