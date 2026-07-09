@@ -9736,38 +9736,41 @@ elif aba_selecionada == 'PRÊMIO PRENSADOS':
         )
     
     # ======================
-    # FUNÇÃO PARA GERAR RELATÓRIO EM MEMÓRIA (PDF)
+    # FUNÇÃO PARA GERAR RELATÓRIO EM MEMÓRIA (PDF) COM COLUNAS AJUSTADAS
     # ======================
     def gerar_pdf_premio(df_dados, titulo_extra=""):
         """Gera PDF do relatório em memória e retorna os bytes"""
         from io import BytesIO
-        from reportlab.lib.pagesizes import A4
-        from reportlab.lib.units import cm
+        from reportlab.lib.pagesizes import A4, landscape
+        from reportlab.lib.units import cm, mm
         from reportlab.lib import colors
-        from reportlab.lib.enums import TA_CENTER, TA_LEFT
+        from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
         from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
         from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
         
         buffer = BytesIO()
         
-        # Criar documento com parâmetros corretos
+        # Usar orientação paisagem para caber mais colunas
         doc = SimpleDocTemplate(
             buffer,
-            pagesize=A4,
-            leftMargin=2*cm,
-            rightMargin=2*cm,
-            topMargin=2*cm,
-            bottomMargin=2*cm
+            pagesize=landscape(A4),
+            leftMargin=1.5*cm,
+            rightMargin=1.5*cm,
+            topMargin=1.5*cm,
+            bottomMargin=1.5*cm
         )
         
         story = []
         
         styles = getSampleStyleSheet()
         style_title = ParagraphStyle(
-            "title", parent=styles["Heading1"], alignment=TA_CENTER, fontSize=14, spaceAfter=20
+            "title", parent=styles["Heading1"], alignment=TA_CENTER, fontSize=12, spaceAfter=12, fontName='Helvetica-Bold'
         )
         style_subtitle = ParagraphStyle(
-            "subtitle", parent=styles["Heading2"], alignment=TA_LEFT, fontSize=12, spaceAfter=10, spaceBefore=15
+            "subtitle", parent=styles["Heading2"], alignment=TA_LEFT, fontSize=10, spaceAfter=8, spaceBefore=10, fontName='Helvetica-Bold'
+        )
+        style_filter = ParagraphStyle(
+            "filter", parent=styles["Normal"], fontSize=8, alignment=TA_LEFT, spaceAfter=8
         )
         
         # TÍTULO
@@ -9775,7 +9778,7 @@ elif aba_selecionada == 'PRÊMIO PRENSADOS':
         if titulo_extra:
             titulo += f" - {titulo_extra}"
         story.append(Paragraph(titulo, style_title))
-        story.append(Spacer(1, 0.3 * cm))
+        story.append(Spacer(1, 0.2 * cm))
         
         # FILTROS
         info_filtros = []
@@ -9796,10 +9799,10 @@ elif aba_selecionada == 'PRÊMIO PRENSADOS':
         info_filtros.append("✅ Apenas registros com TRS > 100%")
         
         if info_filtros:
-            story.append(Paragraph("Filtros aplicados: " + " | ".join(info_filtros), styles["Normal"]))
+            story.append(Paragraph("Filtros aplicados: " + " | ".join(info_filtros), style_filter))
             story.append(Spacer(1, 0.3 * cm))
         
-        # ===== FUNÇÃO PARA GERAR TABELA =====
+        # ===== FUNÇÃO PARA GERAR TABELA COM COLUNAS AJUSTADAS =====
         def criar_tabela(df_tabela, titulo_mes=""):
             if df_tabela.empty:
                 return None
@@ -9820,9 +9823,13 @@ elif aba_selecionada == 'PRÊMIO PRENSADOS':
             if df_filtrado.empty:
                 return None
             
-            dados_tabela = [
-                ["DATA", "TURNO", "REFERÊNCIA", "META\n(TRS 100%)", "APROVADO", "TRS %\n(Excesso)", "HORAS\nTRABALHADAS", "HORAS\nPROGRAMADAS"]
+            # Cabeçalhos com quebras de linha para caber melhor
+            headers = [
+                "DATA", "TURNO", "REFERÊNCIA", "META\n(TRS 100%)", 
+                "APROVADO", "TRS %\n(Excesso)", "HORAS\nTRABALHADAS", "HORAS\nPROGRAMADAS"
             ]
+            
+            dados_tabela = [headers]
             
             for _, row in df_filtrado.iterrows():
                 horas_totais = row['HORAS_TOTAIS_DEC']
@@ -9852,7 +9859,7 @@ elif aba_selecionada == 'PRÊMIO PRENSADOS':
             total_horas_prog_str = f"{int(total_horas_programadas):02d}:{int((total_horas_programadas % 1) * 60):02d}"
             
             linha_total = [
-                "TOTAL MÊS" if titulo_mes else "TOTAL",
+                "TOTAL",
                 "",
                 "",
                 f"{total_meta:,.0f}",
@@ -9863,24 +9870,34 @@ elif aba_selecionada == 'PRÊMIO PRENSADOS':
             ]
             dados_tabela.append(linha_total)
             
-            tabela = Table(dados_tabela, hAlign="LEFT", colWidths=[70, 40, 100, 70, 70, 60, 70, 70])
+            # Larguras das colunas ajustadas para caber na página em paisagem
+            col_widths = [55, 35, 110, 60, 60, 55, 60, 60]
+            
+            tabela = Table(dados_tabela, hAlign="LEFT", colWidths=col_widths)
             estilo = TableStyle([
                 ("BACKGROUND", (0, 0), (-1, 0), colors.grey),
                 ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
                 ("ALIGN", (0, 0), (-1, -1), "CENTER"),
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                 ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
-                ("FONTSIZE", (0, 0), (-1, -1), 8),
+                ("FONTSIZE", (0, 0), (-1, -1), 7),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
             ])
             
+            # Destacar cores
             for i, row in enumerate(df_filtrado.itertuples(), start=1):
                 if row.PRÊMIO > 0:
-                    estilo.add("TEXTCOLOR", (-3, i), (-3, i), colors.green)
+                    estilo.add("TEXTCOLOR", (5, i), (5, i), colors.green)
                 if row.TRS_EXCESSO > 0:
-                    estilo.add("TEXTCOLOR", (-4, i), (-4, i), colors.green)
+                    estilo.add("TEXTCOLOR", (5, i), (5, i), colors.green)
             
             estilo.add("BACKGROUND", (0, -1), (-1, -1), colors.lightgrey)
             estilo.add("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold")
+            estilo.add("FONTSIZE", (0, -1), (-1, -1), 8)
             tabela.setStyle(estilo)
             
             return tabela, df_filtrado
@@ -9906,7 +9923,7 @@ elif aba_selecionada == 'PRÊMIO PRENSADOS':
                     tabela, df_filtrado = resultado
                     story.append(Paragraph(f"MÊS: {mes_str}", style_subtitle))
                     story.append(tabela)
-                    story.append(Spacer(1, 0.5 * cm))
+                    story.append(Spacer(1, 0.3 * cm))
                     
                     total_registros += len(df_filtrado)
                     total_meta_geral += df_filtrado['META'].sum()
@@ -9919,7 +9936,7 @@ elif aba_selecionada == 'PRÊMIO PRENSADOS':
             # Resumo geral
             if qtd_meses_com_dados > 0:
                 story.append(Spacer(1, 0.5 * cm))
-                story.append(Paragraph("="*50, styles["Normal"]))
+                story.append(Paragraph("-" * 80, styles["Normal"]))
                 story.append(Spacer(1, 0.2 * cm))
                 story.append(Paragraph("RESUMO GERAL DO PERÍODO", style_subtitle))
                 story.append(Spacer(1, 0.2 * cm))
@@ -9933,7 +9950,8 @@ elif aba_selecionada == 'PRÊMIO PRENSADOS':
                     ["TOTAL GERAL", "", "", f"{total_meta_geral:,.0f}", f"{total_aprovado_geral:,.0f}", f"{total_excesso_medio:.2f}%", total_horas_trab_str, total_horas_prog_str]
                 ]
                 
-                tabela_resumo = Table(dados_resumo, hAlign="LEFT", colWidths=[70, 40, 100, 70, 70, 60, 70, 70])
+                col_widths_resumo = [55, 35, 110, 60, 60, 55, 60, 60]
+                tabela_resumo = Table(dados_resumo, hAlign="LEFT", colWidths=col_widths_resumo)
                 tabela_resumo.setStyle(TableStyle([
                     ("BACKGROUND", (0, 0), (-1, 0), colors.blue),
                     ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
@@ -9941,8 +9959,10 @@ elif aba_selecionada == 'PRÊMIO PRENSADOS':
                     ("ALIGN", (0, 0), (-1, -1), "CENTER"),
                     ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                     ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
-                    ("FONTSIZE", (0, 0), (-1, -1), 9),
+                    ("FONTSIZE", (0, 0), (-1, -1), 8),
                     ("FONTNAME", (0, 1), (-1, 1), "Helvetica-Bold"),
+                    ("TOPPADDING", (0, 0), (-1, -1), 4),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
                 ]))
                 story.append(tabela_resumo)
         else:
@@ -10033,10 +10053,50 @@ elif aba_selecionada == 'PRÊMIO PRENSADOS':
             if pdf_bytes:
                 st.success(f"✅ Relatório gerado com sucesso! {len(df_relatorio)} registros processados.")
                 
-                # Mostrar preview dos dados
+                # Mostrar preview dos dados com as mesmas colunas do relatório
                 with st.expander("📋 Preview dos dados processados", expanded=True):
-                    st.dataframe(df_relatorio[["DATA", "TURNO", "REFERÊNCIA", "META", "APROVADO", "HORAS TOTAIS", "ACERTOS", "MANUT."]].head(10), use_container_width=True)
-                    st.caption(f"Total: {len(df_relatorio)} registros")
+                    # Criar DataFrame de preview com as mesmas colunas do relatório
+                    df_preview = df_relatorio.copy()
+                    
+                    # Calcular métricas para o preview
+                    df_preview["TRS_%"] = 0.0
+                    mask_meta = df_preview["META"] > 0
+                    df_preview.loc[mask_meta, "TRS_%"] = (df_preview.loc[mask_meta, "APROVADO"] / df_preview.loc[mask_meta, "META"] * 100).round(2)
+                    df_preview["TRS_EXCESSO"] = 0.0
+                    df_preview.loc[mask_meta, "TRS_EXCESSO"] = (df_preview.loc[mask_meta, "TRS_%"] - 100).round(2)
+                    df_preview.loc[df_preview["TRS_EXCESSO"] < 0, "TRS_EXCESSO"] = 0
+                    df_preview["HORAS_PROGRAMADAS"] = df_preview["HORAS_TOTAIS_DEC"] + df_preview["ACERTOS_DEC"] + df_preview["MANUT_DEC"] + 0.25
+                    
+                    # Formatar horas para exibição
+                    df_preview["HORAS_TRABALHADAS_STR"] = df_preview["HORAS_TOTAIS_DEC"].apply(
+                        lambda x: f"{int(x):02d}:{int((x % 1) * 60):02d}"
+                    )
+                    df_preview["HORAS_PROGRAMADAS_STR"] = df_preview["HORAS_PROGRAMADAS"].apply(
+                        lambda x: f"{int(x):02d}:{int((x % 1) * 60):02d}"
+                    )
+                    
+                    # Selecionar colunas para preview
+                    colunas_preview = ["DATA", "TURNO", "REFERÊNCIA", "META", "APROVADO", "TRS_EXCESSO", "HORAS_TRABALHADAS_STR", "HORAS_PROGRAMADAS_STR"]
+                    df_preview_display = df_preview[colunas_preview].copy()
+                    
+                    # Renomear colunas para exibição
+                    df_preview_display.columns = ["DATA", "TURNO", "REFERÊNCIA", "META (TRS 100%)", "APROVADO", "TRS % (Excesso)", "HORAS TRABALHADAS", "HORAS PROGRAMADAS"]
+                    
+                    # Formatar a coluna TRS
+                    df_preview_display["TRS % (Excesso)"] = df_preview_display["TRS % (Excesso)"].apply(lambda x: f"{x:.2f}%" if x > 0 else "0.00%")
+                    
+                    # Formatar datas
+                    df_preview_display["DATA"] = pd.to_datetime(df_preview_display["DATA"]).dt.strftime("%d/%m/%Y")
+                    
+                    # Formatar números
+                    for col in ["META (TRS 100%)", "APROVADO"]:
+                        df_preview_display[col] = df_preview_display[col].apply(lambda x: f"{x:,.0f}".replace(",", "."))
+                    
+                    # Filtrar apenas TRS > 100% para o preview
+                    df_preview_display = df_preview_display[df_preview_display["TRS % (Excesso)"] != "0.00%"]
+                    
+                    st.dataframe(df_preview_display.head(20), use_container_width=True, hide_index=True)
+                    st.caption(f"Total: {len(df_relatorio)} registros | Exibindo apenas registros com TRS > 100%")
                 
                 # Botão de download
                 nome_arquivo = f"Premio_TRS_100_{datetime.now().strftime('%Y-%m-%d')}.pdf"
@@ -10081,12 +10141,6 @@ elif aba_selecionada == 'PRÊMIO PRENSADOS':
         
         **📆 Opção "Separar por mês":**
         Ao ativar esta opção, o relatório será organizado com uma seção para cada mês do período selecionado, facilitando a análise mensal.
-        
-        **🔄 Processo de geração:**
-        1. Selecione os filtros desejados
-        2. Clique em "GERAR RELATÓRIO"
-        3. Aguarde o processamento
-        4. Clique em "BAIXAR RELATÓRIO PDF" para salvar o arquivo
         """)
     
     st.markdown(f"""
