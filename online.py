@@ -9671,46 +9671,6 @@ elif aba_selecionada == 'PRÊMIO PRENSADOS':
             return 0.0
     
     # ======================
-    # FUNÇÃO PARA VERIFICAR SE ACERTOS É 02:45:00
-    # ======================
-    def is_acertos_245(time_val):
-        """Verifica se o valor de ACERTOS é 02:45:00"""
-        if pd.isna(time_val):
-            return False
-        
-        # Converter para string para comparação
-        time_str = str(time_val).strip()
-        
-        # Verificar se é 02:45:00 em diferentes formatos
-        formatos_245 = ["02:45:00", "2:45:00", "02:45", "2:45"]
-        for fmt in formatos_245:
-            if fmt in time_str:
-                return True
-        
-        # Verificar se é um objeto time com 2:45
-        if isinstance(time_val, dt_time):
-            if time_val.hour == 2 and time_val.minute == 45 and time_val.second == 0:
-                return True
-        
-        return False
-    
-    # ======================
-    # FUNÇÃO PARA CALCULAR HORAS TRABALHADAS COM REGRA ESPECIAL
-    # ======================
-    def calcular_horas_trabalhadas(row):
-        """
-        Calcula as horas trabalhadas.
-        Se ACERTOS = 02:45:00, retorna 5.0 horas (05:00:00)
-        Caso contrário, usa o valor de HORAS_TOTAIS_DEC
-        """
-        # Verificar se ACERTOS é 02:45:00
-        if 'ACERTOS' in row and is_acertos_245(row['ACERTOS']):
-            return 5.0  # 05:00:00 em horas decimais
-        
-        # Caso contrário, usa HORAS_TOTAIS_DEC
-        return row.get('HORAS_TOTAIS_DEC', 0.0)
-    
-    # ======================
     # FILTROS NA INTERFACE
     # ======================
     col_f1, col_f2, col_f3, col_f4 = st.columns(4)
@@ -9804,7 +9764,7 @@ elif aba_selecionada == 'PRÊMIO PRENSADOS':
         
         styles = getSampleStyleSheet()
         style_title = ParagraphStyle(
-            "title", parent=styles["Heading1"], alignment=TA_CENTER, fontSize=14, spaceAfter=12, fontName='Helvetica-Bold'
+            "title", parent=styles["Heading1"], alignment=TA_CENTER, fontSize=12, spaceAfter=12, fontName='Helvetica-Bold'
         )
         style_subtitle = ParagraphStyle(
             "subtitle", parent=styles["Heading2"], alignment=TA_LEFT, fontSize=10, spaceAfter=8, spaceBefore=10, fontName='Helvetica-Bold'
@@ -9813,8 +9773,8 @@ elif aba_selecionada == 'PRÊMIO PRENSADOS':
             "filter", parent=styles["Normal"], fontSize=8, alignment=TA_LEFT, spaceAfter=8
         )
         
-        # TÍTULO - ALTERADO PARA "Prêmio Por Produtividade Prensados"
-        titulo = "Prêmio Por Produtividade Prensados"
+        # TÍTULO
+        titulo = "Relatório de Prêmio - TRS > 100%"
         if titulo_extra:
             titulo += f" - {titulo_extra}"
         story.append(Paragraph(titulo, style_title))
@@ -9858,10 +9818,6 @@ elif aba_selecionada == 'PRÊMIO PRENSADOS':
             df_calc["PRÊMIO"] = df_calc["APROVADO"] - df_calc["META"]
             df_calc["HORAS_PROGRAMADAS"] = df_calc["HORAS_TOTAIS_DEC"] + df_calc["ACERTOS_DEC"] + df_calc["MANUT_DEC"] + 0.25
             
-            # Calcular HORAS TRABALHADAS com a regra especial
-            # Se ACERTOS = 02:45:00, HORAS TRABALHADAS = 05:00:00
-            df_calc["HORAS_TRABALHADAS_CALC"] = df_calc.apply(calcular_horas_trabalhadas, axis=1)
-            
             df_filtrado = df_calc[df_calc["TRS_%"] > 100]
             
             if df_filtrado.empty:
@@ -9876,7 +9832,7 @@ elif aba_selecionada == 'PRÊMIO PRENSADOS':
             dados_tabela = [headers]
             
             for _, row in df_filtrado.iterrows():
-                horas_totais = row['HORAS_TRABALHADAS_CALC']  # Usar o valor calculado
+                horas_totais = row['HORAS_TOTAIS_DEC']
                 horas_programadas = row['HORAS_PROGRAMADAS']
                 horas_totais_str = f"{int(horas_totais):02d}:{int((horas_totais % 1) * 60):02d}"
                 horas_programadas_str = f"{int(horas_programadas):02d}:{int((horas_programadas % 1) * 60):02d}"
@@ -9896,7 +9852,7 @@ elif aba_selecionada == 'PRÊMIO PRENSADOS':
             total_meta = df_filtrado['META'].sum()
             total_aprovado = df_filtrado['APROVADO'].sum()
             total_media_excesso = df_filtrado['TRS_EXCESSO'].mean()
-            total_horas_trabalhadas = df_filtrado['HORAS_TRABALHADAS_CALC'].sum()
+            total_horas_trabalhadas = df_filtrado['HORAS_TOTAIS_DEC'].sum()
             total_horas_programadas = df_filtrado['HORAS_PROGRAMADAS'].sum()
             
             total_horas_trab_str = f"{int(total_horas_trabalhadas):02d}:{int((total_horas_trabalhadas % 1) * 60):02d}"
@@ -9972,7 +9928,7 @@ elif aba_selecionada == 'PRÊMIO PRENSADOS':
                     total_registros += len(df_filtrado)
                     total_meta_geral += df_filtrado['META'].sum()
                     total_aprovado_geral += df_filtrado['APROVADO'].sum()
-                    total_horas_trab_geral += df_filtrado['HORAS_TRABALHADAS_CALC'].sum()
+                    total_horas_trab_geral += df_filtrado['HORAS_TOTAIS_DEC'].sum()
                     total_horas_prog_geral += df_filtrado['HORAS_PROGRAMADAS'].sum()
                     total_excesso_geral += df_filtrado['TRS_EXCESSO'].mean()
                     qtd_meses_com_dados += 1
@@ -10111,11 +10067,8 @@ elif aba_selecionada == 'PRÊMIO PRENSADOS':
                     df_preview.loc[df_preview["TRS_EXCESSO"] < 0, "TRS_EXCESSO"] = 0
                     df_preview["HORAS_PROGRAMADAS"] = df_preview["HORAS_TOTAIS_DEC"] + df_preview["ACERTOS_DEC"] + df_preview["MANUT_DEC"] + 0.25
                     
-                    # Calcular HORAS TRABALHADAS com a regra especial
-                    df_preview["HORAS_TRABALHADAS_CALC"] = df_preview.apply(calcular_horas_trabalhadas, axis=1)
-                    
                     # Formatar horas para exibição
-                    df_preview["HORAS_TRABALHADAS_STR"] = df_preview["HORAS_TRABALHADAS_CALC"].apply(
+                    df_preview["HORAS_TRABALHADAS_STR"] = df_preview["HORAS_TOTAIS_DEC"].apply(
                         lambda x: f"{int(x):02d}:{int((x % 1) * 60):02d}"
                     )
                     df_preview["HORAS_PROGRAMADAS_STR"] = df_preview["HORAS_PROGRAMADAS"].apply(
@@ -10146,7 +10099,7 @@ elif aba_selecionada == 'PRÊMIO PRENSADOS':
                     st.caption(f"Total: {len(df_relatorio)} registros | Exibindo apenas registros com TRS > 100%")
                 
                 # Botão de download
-                nome_arquivo = f"Premio_Produtividade_Prensados_{datetime.now().strftime('%Y-%m-%d')}.pdf"
+                nome_arquivo = f"Premio_TRS_100_{datetime.now().strftime('%Y-%m-%d')}.pdf"
                 
                 col_dl1, col_dl2, col_dl3 = st.columns([1, 2, 1])
                 with col_dl2:
@@ -10177,7 +10130,7 @@ elif aba_selecionada == 'PRÊMIO PRENSADOS':
         - **META (TRS 100%)**: Meta de produção para TRS 100%
         - **APROVADO**: Quantidade aprovada
         - **TRS % (Excesso)**: Percentual que excedeu 100% (ex: 23.87% significa TRS 123.87%)
-        - **HORAS TRABALHADAS**: Horas efetivamente trabalhadas (se ACERTOS = 02:45:00, considera 05:00:00)
+        - **HORAS TRABALHADAS**: Horas efetivamente trabalhadas
         - **HORAS PROGRAMADAS**: Horas totais + acertos + manutenção + 15 min
         
         **🎯 Filtros disponíveis:**
