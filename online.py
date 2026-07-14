@@ -1900,12 +1900,12 @@ def gerar_pdf_ar(registro: RegistroAR) -> Optional[bytes]:
         from reportlab.lib.pagesizes import A4
         from reportlab.lib import colors
         from reportlab.lib.units import cm
-        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
         from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
         
         buffer = io.BytesIO()
         
-        # ===== CONFIGURAR DOCUMENTO PARA UMA PÁGINA =====
+        # ===== CONFIGURAR DOCUMENTO =====
         doc = SimpleDocTemplate(
             buffer, 
             pagesize=A4,
@@ -1929,6 +1929,13 @@ def gerar_pdf_ar(registro: RegistroAR) -> Optional[bytes]:
         data_fim_str = registro.data_finalizacao.strftime("%d/%m/%Y") if registro.data_finalizacao else ""
         
         # ===== TABELA DE CABEÇALHO COM DEFEITO IDENTIFICADO =====
+        # Verificar se tem defeito e garantir que é uma string válida
+        tem_defeito = False
+        defeito_texto = ""
+        if registro.defeito_biblioteca and str(registro.defeito_biblioteca).strip():
+            tem_defeito = True
+            defeito_texto = str(registro.defeito_biblioteca).strip()
+        
         # Preparar dados da tabela
         dados_tabela = [
             ["Nº Controle:", str(registro.numero) if registro.numero else "", "Data:", data_str],
@@ -1939,11 +1946,13 @@ def gerar_pdf_ar(registro: RegistroAR) -> Optional[bytes]:
             ["Situação:", registro.decisao, "Data Finalização:", data_fim_str]
         ]
         
-        # Se tiver defeito da biblioteca, adicionar na tabela
-        if registro.defeito_biblioteca and registro.defeito_biblioteca.strip():
-            dados_tabela.append(["Defeito Identificado:", registro.defeito_biblioteca, "", ""])
+        # Se tiver defeito, adicionar a linha com o valor
+        if tem_defeito:
+            dados_tabela.append(["Defeito Identificado:", defeito_texto, "", ""])
         
-        tabela_cabecalho = Table(dados_tabela, colWidths=[3.5*cm, 5.5*cm, 3.5*cm, 5.5*cm])
+        # Definir larguras das colunas
+        col_widths = [3.5*cm, 5.5*cm, 3.5*cm, 5.5*cm]
+        tabela_cabecalho = Table(dados_tabela, colWidths=col_widths)
         
         # Construir estilo da tabela
         estilo_tabela = [
@@ -1957,13 +1966,19 @@ def gerar_pdf_ar(registro: RegistroAR) -> Optional[bytes]:
             ("SPAN", (2,4), (3,4)),
         ]
         
-        # Se tiver defeito, adicionar estilos específicos
-        if registro.defeito_biblioteca and registro.defeito_biblioteca.strip():
+        # Se tiver defeito, adicionar estilos específicos para a linha de defeito
+        if tem_defeito:
+            # Mesclar colunas da linha de defeito
             estilo_tabela.append(("SPAN", (0,6), (1,6)))
             estilo_tabela.append(("SPAN", (2,6), (3,6)))
+            # Cor de fundo amarelo claro
             estilo_tabela.append(("BACKGROUND", (0,6), (-1,6), colors.HexColor('#FFF9C4')))
+            # Texto em negrito
             estilo_tabela.append(("FONTNAME", (0,6), (-1,6), "Helvetica-Bold"))
+            # Texto em vermelho
             estilo_tabela.append(("TEXTCOLOR", (0,6), (-1,6), colors.HexColor('#D32F2F')))
+            # Tamanho da fonte um pouco maior para destacar
+            estilo_tabela.append(("FONTSIZE", (0,6), (-1,6), 10))
         
         tabela_cabecalho.setStyle(TableStyle(estilo_tabela))
         elementos.append(tabela_cabecalho)
@@ -1974,13 +1989,12 @@ def gerar_pdf_ar(registro: RegistroAR) -> Optional[bytes]:
         elementos.append(Paragraph(registro.descricao or "-", style_grande))
         elementos.append(Spacer(1, 8))
         
-        # ===== SUGESTÃO PARA SOLUCIONAR PROBLEMA (COM FORMATAÇÃO DE *) =====
-        if registro.sugestao_biblioteca and registro.sugestao_biblioteca.strip():
+        # ===== SUGESTÃO PARA SOLUCIONAR PROBLEMA =====
+        if registro.sugestao_biblioteca and str(registro.sugestao_biblioteca).strip():
             elementos.append(Paragraph("<b>SUGESTÃO PARA SOLUCIONAR PROBLEMA:</b>", style_titulo_secao))
             
-            # Processar a sugestão: substituir * por quebra de linha e bullet
-            sugestao_texto = registro.sugestao_biblioteca
-            # Dividir por * e criar parágrafos com bullets
+            # Processar a sugestão: dividir por * e criar bullets
+            sugestao_texto = str(registro.sugestao_biblioteca)
             partes = sugestao_texto.split('*')
             for parte in partes:
                 parte_limpa = parte.strip()
@@ -1991,9 +2005,9 @@ def gerar_pdf_ar(registro: RegistroAR) -> Optional[bytes]:
             elementos.append(Spacer(1, 6))
         
         # ===== DIRECIONAMENTO AO INSPETOR =====
-        if registro.direcionamento_biblioteca and registro.direcionamento_biblioteca.strip():
+        if registro.direcionamento_biblioteca and str(registro.direcionamento_biblioteca).strip():
             elementos.append(Paragraph("<b>DIRECIONAMENTO AO INSPETOR:</b>", style_titulo_secao))
-            elementos.append(Paragraph(registro.direcionamento_biblioteca, style_grande))
+            elementos.append(Paragraph(str(registro.direcionamento_biblioteca), style_grande))
             elementos.append(Spacer(1, 8))
         
         # ===== DISPOSIÇÃO / AÇÕES TOMADAS =====
