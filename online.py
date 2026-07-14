@@ -1920,6 +1920,7 @@ def gerar_pdf_ar(registro: RegistroAR) -> Optional[bytes]:
         style_grande = ParagraphStyle('style_grande', parent=styleN, fontSize=11, leading=14)
         style_titulo_secao = ParagraphStyle('style_titulo_secao', parent=styleN, fontSize=11, spaceAfter=4, fontName='Helvetica-Bold')
         style_sugestao = ParagraphStyle('style_sugestao', parent=styleN, fontSize=10, leading=12, spaceAfter=3)
+        style_descricao = ParagraphStyle('style_descricao', parent=styleN, fontSize=11, leading=14, spaceAfter=8)
         
         # ===== TÍTULO =====
         elementos.append(Paragraph("<b>AVISO DE REJEIÇÃO</b>", ParagraphStyle(name='Titulo', parent=styleN, fontSize=14, alignment=1, spaceAfter=8)))
@@ -1928,15 +1929,7 @@ def gerar_pdf_ar(registro: RegistroAR) -> Optional[bytes]:
         data_str = registro.data.strftime("%d/%m/%Y") if registro.data else ""
         data_fim_str = registro.data_finalizacao.strftime("%d/%m/%Y") if registro.data_finalizacao else ""
         
-        # ===== TABELA DE CABEÇALHO COM DEFEITO IDENTIFICADO =====
-        # Verificar se tem defeito e garantir que é uma string válida
-        tem_defeito = False
-        defeito_texto = ""
-        if registro.defeito_biblioteca and str(registro.defeito_biblioteca).strip():
-            tem_defeito = True
-            defeito_texto = str(registro.defeito_biblioteca).strip()
-        
-        # Preparar dados da tabela
+        # ===== TABELA DE CABEÇALHO (SEM O DEFEITO) =====
         dados_tabela = [
             ["Nº Controle:", str(registro.numero) if registro.numero else "", "Data:", data_str],
             ["Hora:", registro.hora, "Turno:", registro.turno],
@@ -1946,15 +1939,8 @@ def gerar_pdf_ar(registro: RegistroAR) -> Optional[bytes]:
             ["Situação:", registro.decisao, "Data Finalização:", data_fim_str]
         ]
         
-        # Se tiver defeito, adicionar a linha com o valor
-        if tem_defeito:
-            dados_tabela.append(["Defeito Identificado:", defeito_texto, "", ""])
+        tabela_cabecalho = Table(dados_tabela, colWidths=[3.5*cm, 5.5*cm, 3.5*cm, 5.5*cm])
         
-        # Definir larguras das colunas
-        col_widths = [3.5*cm, 5.5*cm, 3.5*cm, 5.5*cm]
-        tabela_cabecalho = Table(dados_tabela, colWidths=col_widths)
-        
-        # Construir estilo da tabela
         estilo_tabela = [
             ("GRID", (0,0), (-1,-1), 0.5, colors.black),
             ("BACKGROUND", (0,0), (-1,0), colors.lightgrey),
@@ -1966,27 +1952,34 @@ def gerar_pdf_ar(registro: RegistroAR) -> Optional[bytes]:
             ("SPAN", (2,4), (3,4)),
         ]
         
-        # Se tiver defeito, adicionar estilos específicos para a linha de defeito
-        if tem_defeito:
-            # Mesclar colunas da linha de defeito
-            estilo_tabela.append(("SPAN", (0,6), (1,6)))
-            estilo_tabela.append(("SPAN", (2,6), (3,6)))
-            # Cor de fundo amarelo claro
-            estilo_tabela.append(("BACKGROUND", (0,6), (-1,6), colors.HexColor('#FFF9C4')))
-            # Texto em negrito
-            estilo_tabela.append(("FONTNAME", (0,6), (-1,6), "Helvetica-Bold"))
-            # Texto em vermelho
-            estilo_tabela.append(("TEXTCOLOR", (0,6), (-1,6), colors.HexColor('#D32F2F')))
-            # Tamanho da fonte um pouco maior para destacar
-            estilo_tabela.append(("FONTSIZE", (0,6), (-1,6), 10))
-        
         tabela_cabecalho.setStyle(TableStyle(estilo_tabela))
         elementos.append(tabela_cabecalho)
         elementos.append(Spacer(1, 12))
         
-        # ===== DESCRIÇÃO DO PROBLEMA =====
+        # ===== DESCRIÇÃO DO PROBLEMA COM DEFEITO CONCATENADO =====
         elementos.append(Paragraph("<b>DESCRIÇÃO DO PROBLEMA:</b>", style_titulo_secao))
-        elementos.append(Paragraph(registro.descricao or "-", style_grande))
+        
+        # Construir a descrição completa
+        texto_descricao = ""
+        
+        # Se tiver defeito da biblioteca, adicionar em negrito
+        if registro.defeito_biblioteca and str(registro.defeito_biblioteca).strip():
+            texto_descricao += f"<b>DEFEITO IDENTIFICADO: {str(registro.defeito_biblioteca).strip()}</b>"
+            
+            # Se também tiver descrição, adicionar um separador
+            if registro.descricao and registro.descricao.strip():
+                texto_descricao += "<br/><br/>"
+        
+        # Adicionar a descrição do usuário
+        if registro.descricao and registro.descricao.strip():
+            texto_descricao += str(registro.descricao).strip()
+        
+        # Se não tiver nada, mostrar "-"
+        if not texto_descricao:
+            texto_descricao = "-"
+        
+        # Adicionar ao PDF
+        elementos.append(Paragraph(texto_descricao, style_descricao))
         elementos.append(Spacer(1, 8))
         
         # ===== SUGESTÃO PARA SOLUCIONAR PROBLEMA =====
