@@ -1687,8 +1687,53 @@ def carregar_dados_tempera():
         return pd.DataFrame()
 
 # ======================
-# FUNÇÕES DO SISTEMA AR (AVISO DE REJEIÇÃO)
 # ======================
+# FUNÇÕES DO SISTEMA AR (AVISO DE REJEIÇÃO) - COM BIBLIOTECA DE DEFEITOS
+# ======================
+
+# ======================
+# BIBLIOTECA DE DEFEITOS CONHECIDOS
+# ======================
+ID_PLANILHA_BIBLIOTECA = '1YbtwIajV3WpQB-fz3CqaZ69UNDPgcYyzjJw5Pyy1JGU'
+ABA_BIBLIOTECA = 'BIBLIOTECA'
+
+@st.cache_data(ttl=3600)  # Cache de 1 hora
+def carregar_biblioteca_defeitos():
+    """
+    Carrega a biblioteca de defeitos conhecidos do Google Sheets
+    Retorna um dicionário com defeito -> {sugestao, direcionamento}
+    """
+    try:
+        client = get_gspread_client()
+        if client is None:
+            return {}
+        
+        spreadsheet = client.open_by_key(ID_PLANILHA_BIBLIOTECA)
+        sheet = spreadsheet.worksheet(ABA_BIBLIOTECA)
+        todos_dados = sheet.get_all_values()
+        
+        if len(todos_dados) < 2:
+            return {}
+        
+        biblioteca = {}
+        for row in todos_dados[1:]:  # Pula cabeçalho
+            if len(row) >= 3:
+                defeito = row[0].strip() if row[0] else ""
+                sugestao = row[1].strip() if len(row) > 1 and row[1] else ""
+                direcionamento = row[2].strip() if len(row) > 2 and row[2] else ""
+                
+                if defeito:
+                    biblioteca[defeito] = {
+                        'sugestao': sugestao,
+                        'direcionamento': direcionamento
+                    }
+        
+        return biblioteca
+        
+    except Exception as e:
+        print(f"Erro ao carregar biblioteca de defeitos: {e}")
+        return {}
+
 @dataclass
 class RegistroAR:
     numero: Optional[int] = None
@@ -1703,6 +1748,10 @@ class RegistroAR:
     disposicao: str = ""
     data_finalizacao: Optional[datetime] = None
     turno: str = ""
+    # NOVOS CAMPOS PARA BIBLIOTECA
+    defeito_biblioteca: str = ""
+    sugestao_biblioteca: str = ""
+    direcionamento_biblioteca: str = ""
 
 def sanitize_filename_ar(filename: str) -> str:
     filename = unicodedata.normalize("NFKD", filename).encode("ASCII", "ignore").decode("ASCII")
@@ -1761,6 +1810,10 @@ def carregar_registros_ar_sem_cache() -> List[RegistroAR]:
                 registro.disposicao = row[9] if len(row) > 9 else ""
                 registro.data_finalizacao = converter_data_br(row[10]) if len(row) > 10 else None
                 registro.turno = row[11] if len(row) > 11 else ""
+                # NOVOS CAMPOS
+                registro.defeito_biblioteca = row[12] if len(row) > 12 else ""
+                registro.sugestao_biblioteca = row[13] if len(row) > 13 else ""
+                registro.direcionamento_biblioteca = row[14] if len(row) > 14 else ""
                 registros.append(registro)
             except:
                 continue
@@ -1795,11 +1848,22 @@ def salvar_registro_ar(registro: RegistroAR, eh_alteracao: bool = False) -> bool
             return False
         sheet = client.open_by_key(ID_PLANILHA_AR).worksheet(ABA_AR)
         dados = [
-            str(registro.numero), registro.data.strftime("%d/%m/%Y") if registro.data else "",
-            registro.hora, registro.codigo, registro.emissor, registro.referencia,
-            registro.decisao, registro.descricao, registro.status, registro.disposicao,
+            str(registro.numero), 
+            registro.data.strftime("%d/%m/%Y") if registro.data else "",
+            registro.hora, 
+            registro.codigo, 
+            registro.emissor, 
+            registro.referencia,
+            registro.decisao, 
+            registro.descricao, 
+            registro.status, 
+            registro.disposicao,
             registro.data_finalizacao.strftime("%d/%m/%Y") if registro.data_finalizacao else "",
-            registro.turno
+            registro.turno,
+            # NOVOS CAMPOS
+            registro.defeito_biblioteca,
+            registro.sugestao_biblioteca,
+            registro.direcionamento_biblioteca
         ]
         if eh_alteracao:
             cell = sheet.find(str(registro.numero), in_column=1)
@@ -1845,6 +1909,7 @@ def gerar_pdf_ar(registro: RegistroAR) -> Optional[bytes]:
         styles = getSampleStyleSheet()
         styleN = styles["Normal"]
         style_grande = ParagraphStyle('style_grande', parent=styleN, fontSize=12, leading=16)
+        style_titulo_secao = ParagraphStyle('style_titulo_secao', parent=styleN, fontSize=12, spaceAfter=6, fontName='Helvetica-Bold')
         
         elementos.append(Paragraph("<b>AVISO DE REJEIÇÃO</b>", ParagraphStyle(name='Titulo', parent=styleN, fontSize=16, alignment=1, spaceAfter=12)))
         elementos.append(Paragraph("<b>CQ-018 REV004 - Luvidarte</b>", ParagraphStyle(name='Subtitulo', parent=styleN, fontSize=12, alignment=1, spaceAfter=24)))
@@ -1874,16 +1939,42 @@ def gerar_pdf_ar(registro: RegistroAR) -> Optional[bytes]:
         elementos.append(tabela_cabecalho)
         elementos.append(Spacer(1, 24))
         
-        elementos.append(Paragraph("<b>DESCRIÇÃO DO PROBLEMA:</b>", ParagraphStyle(name='SubtituloSecao', parent=styleN, fontSize=12, spaceAfter=6)))
+        # ===== DESCRIÇÃO DO PROBLEMA =====
+        elementos.append(Paragraph("<b>DESCRIÇÃO DO PROBLEMA:</b>", style_titulo_secao))
         elementos.append(Paragraph(registro.descricao or "-", style_grande))
-        elementos.append(Spacer(1, 24))
+        elementos.append(Spacer(1, 12))
         
-        elementos.append(Paragraph("<b>DISPOSIÇÃO / AÇÕES TOMADAS:</b>", ParagraphStyle(name='SubtituloSecao', parent=styleN, fontSize=12, spaceAfter=6)))
+        # ===== NOVOS BLOCOS DA BIBLIOTECA =====
+        # SUGESTÃO PARA SOLUCIONAR PROBLEMA
+        if registro.sugestao_biblioteca:
+            elementos.append(Paragraph("<b>SUGESTÃO PARA SOLUCIONAR PROBLEMA:</b>", style_titulo_secao))
+            elementos.append(Paragraph(registro.sugestao_biblioteca, style_grande))
+            elementos.append(Spacer(1, 12))
+        
+        # DIRECIONAMENTO AO INSPETOR
+        if registro.direcionamento_biblioteca:
+            elementos.append(Paragraph("<b>DIRECIONAMENTO AO INSPETOR:</b>", style_titulo_secao))
+            elementos.append(Paragraph(registro.direcionamento_biblioteca, style_grande))
+            elementos.append(Spacer(1, 12))
+        
+        # DEFEITO DA BIBLIOTECA (opcional - mostra qual defeito foi selecionado)
+        if registro.defeito_biblioteca:
+            elementos.append(Paragraph(f"<b>Defeito identificado na biblioteca:</b> {registro.defeito_biblioteca}", 
+                                       ParagraphStyle(name='DefeitoBib', parent=styleN, fontSize=10, textColor=colors.gray)))
+            elementos.append(Spacer(1, 8))
+        # ===== FIM DOS NOVOS BLOCOS =====
+        
+        # ===== DISPOSIÇÃO / AÇÕES TOMADAS =====
+        elementos.append(Paragraph("<b>DISPOSIÇÃO / AÇÕES TOMADAS:</b>", style_titulo_secao))
         if registro.disposicao and registro.disposicao.strip():
             elementos.append(Paragraph(registro.disposicao, style_grande))
             elementos.append(Spacer(1, 12))
+        else:
+            elementos.append(Paragraph("-", style_grande))
+            elementos.append(Spacer(1, 12))
         
-        elementos.append(Paragraph("<b>ASSINATURAS:</b>", ParagraphStyle(name='SubtituloSecao', parent=styleN, fontSize=12, spaceAfter=6)))
+        # ===== ASSINATURAS =====
+        elementos.append(Paragraph("<b>ASSINATURAS:</b>", style_titulo_secao))
         
         tabela_assinatura = Table([
             ["Responsável:", "________________________________________"],
@@ -1910,6 +2001,7 @@ def gerar_pdf_ar(registro: RegistroAR) -> Optional[bytes]:
         buffer.seek(0)
         return buffer.getvalue()
     except Exception as e:
+        print(f"Erro ao gerar PDF do AR: {e}")
         return None
 
 def enviar_email_ar(destinatarios, assunto, corpo, anexo_bytes=None, nome_anexo=None):
@@ -1927,7 +2019,8 @@ def enviar_email_ar(destinatarios, assunto, corpo, anexo_bytes=None, nome_anexo=
             server.login(EMAIL_CONFIG_AR["usuario"], EMAIL_CONFIG_AR["senha"])
             server.send_message(msg)
         return True
-    except:
+    except Exception as e:
+        print(f"Erro ao enviar e-mail do AR: {e}")
         return False
 
 # ======================
@@ -5041,11 +5134,18 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                             st.write(f"**Hora:** {reg.hora}")
                             st.write(f"**Turno:** {reg.turno}")
                             st.write(f"**Código:** {reg.codigo}")
+                            # Exibir informações da biblioteca se houver
+                            if reg.defeito_biblioteca:
+                                st.write(f"**📚 Defeito Biblioteca:** {reg.defeito_biblioteca}")
                         with col_d2:
                             st.write(f"**Emissor:** {reg.emissor}")
                             st.write(f"**Referência:** {reg.referencia[:50]}...")
                             st.write(f"**Decisão:** {reg.decisao}")
                             st.write(f"**Status:** {reg.status}")
+                            if reg.sugestao_biblioteca:
+                                st.write(f"**💡 Sugestão:** {reg.sugestao_biblioteca[:50]}...")
+                            if reg.direcionamento_biblioteca:
+                                st.write(f"**🎯 Direcionamento:** {reg.direcionamento_biblioteca[:50]}...")
                 st.markdown("---")
                 st.subheader("📋 Confirmações")
                 
@@ -5067,7 +5167,35 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                     if st.session_state.ar_confirmar_email:
                         with st.spinner("Enviando e-mail..."):
                             assunto = f"Aviso de Rejeição - AR {st.session_state.ar_ultimo_registro.numero if st.session_state.ar_ultimo_registro else ''} - {datetime.now().strftime('%d/%m/%Y')}"
-                            corpo = f"""Prezados,\n\nSegue em anexo o Aviso de Rejeição.\n\nNúmero: {st.session_state.ar_ultimo_registro.numero if st.session_state.ar_ultimo_registro else ''}\nData: {datetime.now().strftime('%d/%m/%Y')}\nReferência: {st.session_state.ar_ultimo_registro.referencia if st.session_state.ar_ultimo_registro else ''}\n\nAtenciosamente,\nSistema de Gestão da Qualidade - Luvidarte"""
+                            
+                            # Construir corpo do e-mail com informações da biblioteca
+                            corpo = f"""Prezados,
+                            
+Segue em anexo o Aviso de Rejeição.
+
+Número: {st.session_state.ar_ultimo_registro.numero if st.session_state.ar_ultimo_registro else ''}
+Data: {datetime.now().strftime('%d/%m/%Y')}
+Referência: {st.session_state.ar_ultimo_registro.referencia if st.session_state.ar_ultimo_registro else ''}
+"""
+                            # Adicionar informações da biblioteca se houver
+                            if st.session_state.ar_ultimo_registro and st.session_state.ar_ultimo_registro.defeito_biblioteca:
+                                corpo += f"""
+Defeito identificado: {st.session_state.ar_ultimo_registro.defeito_biblioteca}
+"""
+                            if st.session_state.ar_ultimo_registro and st.session_state.ar_ultimo_registro.sugestao_biblioteca:
+                                corpo += f"""
+Sugestão: {st.session_state.ar_ultimo_registro.sugestao_biblioteca}
+"""
+                            if st.session_state.ar_ultimo_registro and st.session_state.ar_ultimo_registro.direcionamento_biblioteca:
+                                corpo += f"""
+Direcionamento: {st.session_state.ar_ultimo_registro.direcionamento_biblioteca}
+"""
+                            
+                            corpo += """
+                            
+Atenciosamente,
+Sistema de Gestão da Qualidade - Luvidarte"""
+                            
                             if enviar_email_ar(EMAIL_CONFIG_AR["destinatarios"], assunto, corpo, st.session_state.ar_pdf_bytes, st.session_state.ar_pdf_nome):
                                 st.success("📧 E-mail enviado com sucesso!")
                             else:
@@ -5129,19 +5257,57 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                     with col2:
                         codigo = st.text_input("Código*")
                         emissor = st.text_input("Emissor*")
-                        referencia = st.text_area("Referência*", height=100)
+                        referencia = st.text_area("Referência*", height=80)
                         decisao = st.selectbox("Decisão*", OPCOES_DECISAO_AR_MOD)
                     with col3:
                         status = st.selectbox("Status*", OPCOES_STATUS_AR)
-                        descricao = st.text_area("Descrição do Problema*", height=150)
-                        disposicao = st.text_area("Disposição", height=100)
+                        descricao = st.text_area("Descrição do Problema*", height=120)
+                        disposicao = st.text_area("Disposição", height=80)
                         data_finalizacao = st.date_input("Data de Finalização", datetime.now())
+                    
+                    # ===== BIBLIOTECA DE DEFEITOS CONHECIDOS =====
+                    st.markdown("---")
+                    st.markdown("### 📚 Biblioteca de Defeitos Conhecidos")
+                    st.caption("Selecione um defeito da biblioteca para obter sugestões e direcionamentos (opcional)")
+                    
+                    # Carregar biblioteca
+                    biblioteca_defeitos = carregar_biblioteca_defeitos()
+                    opcoes_defeitos = [""] + sorted(list(biblioteca_defeitos.keys()))
+                    
+                    defeito_selecionado = st.selectbox(
+                        "🔍 Defeito",
+                        options=opcoes_defeitos,
+                        key="ar_defeito_biblioteca",
+                        help="Selecione um defeito conhecido da biblioteca"
+                    )
+                    
+                    # Mostrar informações da biblioteca se um defeito foi selecionado
+                    sugestao_bib = ""
+                    direcionamento_bib = ""
+                    defeito_bib = ""
+                    
+                    if defeito_selecionado and defeito_selecionado in biblioteca_defeitos:
+                        info = biblioteca_defeitos[defeito_selecionado]
+                        defeito_bib = defeito_selecionado
+                        sugestao_bib = info.get('sugestao', '')
+                        direcionamento_bib = info.get('direcionamento', '')
+                        
+                        if sugestao_bib:
+                            st.info(f"💡 **Sugestão:** {sugestao_bib}")
+                        if direcionamento_bib:
+                            st.info(f"🎯 **Direcionamento:** {direcionamento_bib}")
+                    
+                    st.markdown("---")
+                    
                     submitted = st.form_submit_button("💾 SALVAR REGISTRO", type="primary", use_container_width=True)
+                    
                     if submitted:
                         if not codigo or not emissor or not referencia or not descricao:
                             st.error("❌ Preencha todos os campos obrigatórios (*)")
                         else:
                             agora_brasilia = get_horario_brasilia_ar()
+                            
+                            # Criar registro com os dados da biblioteca
                             registro = RegistroAR(
                                 numero=numero, 
                                 data=agora_brasilia.date(), 
@@ -5154,11 +5320,19 @@ elif aba_selecionada == 'AVISO DE REJEIÇÃO':
                                 status=status, 
                                 disposicao=disposicao, 
                                 data_finalizacao=data_finalizacao, 
-                                turno=turno
+                                turno=turno,
+                                # Campos da biblioteca
+                                defeito_biblioteca=defeito_bib,
+                                sugestao_biblioteca=sugestao_bib,
+                                direcionamento_biblioteca=direcionamento_bib
                             )
+                            
                             if salvar_registro_ar(registro, eh_alteracao=False):
                                 st.success(f"✅ Registro {numero} salvo com sucesso!")
                                 st.info(f"📅 Data: {agora_brasilia.strftime('%d/%m/%Y')} | ⏰ Hora: {agora_brasilia.strftime('%H:%M:%S')} (Horário de Brasília)")
+                                
+                                if defeito_bib:
+                                    st.info(f"📚 Defeito da biblioteca: {defeito_bib}")
                                 
                                 pdf_bytes = gerar_pdf_ar(registro)
                                 if pdf_bytes:
