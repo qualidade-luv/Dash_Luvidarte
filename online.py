@@ -1900,31 +1900,52 @@ def gerar_pdf_ar(registro: RegistroAR) -> Optional[bytes]:
         from reportlab.lib.pagesizes import A4
         from reportlab.lib import colors
         from reportlab.lib.units import cm
-        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
         from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
         
         buffer = io.BytesIO()
-        doc = SimpleDocTemplate(buffer, pagesize=A4)
+        
+        # ===== CONFIGURAR DOCUMENTO PARA UMA PÁGINA =====
+        # Usar margens reduzidas para caber em uma página
+        doc = SimpleDocTemplate(
+            buffer, 
+            pagesize=A4,
+            topMargin=1.5*cm,
+            bottomMargin=1.5*cm,
+            leftMargin=1.5*cm,
+            rightMargin=1.5*cm
+        )
         elementos = []
         styles = getSampleStyleSheet()
         styleN = styles["Normal"]
-        style_grande = ParagraphStyle('style_grande', parent=styleN, fontSize=12, leading=16)
-        style_titulo_secao = ParagraphStyle('style_titulo_secao', parent=styleN, fontSize=12, spaceAfter=6, fontName='Helvetica-Bold')
+        style_grande = ParagraphStyle('style_grande', parent=styleN, fontSize=11, leading=14)
+        style_titulo_secao = ParagraphStyle('style_titulo_secao', parent=styleN, fontSize=11, spaceAfter=4, fontName='Helvetica-Bold')
+        style_sugestao = ParagraphStyle('style_sugestao', parent=styleN, fontSize=10, leading=12, spaceAfter=3)
         
-        elementos.append(Paragraph("<b>AVISO DE REJEIÇÃO</b>", ParagraphStyle(name='Titulo', parent=styleN, fontSize=16, alignment=1, spaceAfter=12)))
-        elementos.append(Paragraph("<b>CQ-018 REV004 - Luvidarte</b>", ParagraphStyle(name='Subtitulo', parent=styleN, fontSize=12, alignment=1, spaceAfter=24)))
+        # ===== TÍTULO =====
+        elementos.append(Paragraph("<b>AVISO DE REJEIÇÃO</b>", ParagraphStyle(name='Titulo', parent=styleN, fontSize=14, alignment=1, spaceAfter=8)))
+        elementos.append(Paragraph("<b>CQ-018 REV004 - Luvidarte</b>", ParagraphStyle(name='Subtitulo', parent=styleN, fontSize=11, alignment=1, spaceAfter=12)))
         
         data_str = registro.data.strftime("%d/%m/%Y") if registro.data else ""
         data_fim_str = registro.data_finalizacao.strftime("%d/%m/%Y") if registro.data_finalizacao else ""
         
-        tabela_cabecalho = Table([
+        # ===== TABELA DE CABEÇALHO COM DEFEITO IDENTIFICADO =====
+        # Preparar dados da tabela
+        dados_tabela = [
             ["Nº Controle:", registro.numero, "Data:", data_str],
             ["Hora:", registro.hora, "Turno:", registro.turno],
             ["Código:", registro.codigo, "Status:", registro.status],
             ["Emissor:", registro.emissor, "", ""],
             ["Referência:", registro.referencia, "", ""],
             ["Situação:", registro.decisao, "Data Finalização:", data_fim_str]
-        ], colWidths=[4*cm, 6*cm, 4*cm, 6*cm])
+        ]
+        
+        # Se tiver defeito da biblioteca, adicionar na tabela
+        if registro.defeito_biblioteca:
+            # Adicionar uma linha extra com o defeito identificado
+            dados_tabela.append(["Defeito Identificado:", registro.defeito_biblioteca, "", ""])
+        
+        tabela_cabecalho = Table(dados_tabela, colWidths=[3.5*cm, 5.5*cm, 3.5*cm, 5.5*cm])
         
         tabela_cabecalho.setStyle(TableStyle([
             ("GRID", (0,0), (-1,-1), 0.5, colors.black),
@@ -1932,46 +1953,55 @@ def gerar_pdf_ar(registro: RegistroAR) -> Optional[bytes]:
             ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
             ("ALIGN", (0,0), (-1,-1), "LEFT"),
             ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
-            ("PADDING", (0,0), (-1,-1), 6),
+            ("PADDING", (0,0), (-1,-1), 5),
             ("SPAN", (2,3), (3,3)),
             ("SPAN", (2,4), (3,4)),
+            # Se tiver defeito, mesclar colunas da linha de defeito
+            ("SPAN", (0,6), (1,6)) if registro.defeito_biblioteca else None,
+            ("SPAN", (2,6), (3,6)) if registro.defeito_biblioteca else None,
+            # Destacar a linha do defeito em amarelo claro
+            ("BACKGROUND", (0,6), (-1,6), colors.HexColor('#FFF9C4')) if registro.defeito_biblioteca else None,
+            ("FONTNAME", (0,6), (-1,6), "Helvetica-Bold") if registro.defeito_biblioteca else None,
+            ("TEXTCOLOR", (0,6), (-1,6), colors.HexColor('#D32F2F')) if registro.defeito_biblioteca else None,
         ]))
         elementos.append(tabela_cabecalho)
-        elementos.append(Spacer(1, 24))
+        elementos.append(Spacer(1, 12))
         
         # ===== DESCRIÇÃO DO PROBLEMA =====
         elementos.append(Paragraph("<b>DESCRIÇÃO DO PROBLEMA:</b>", style_titulo_secao))
         elementos.append(Paragraph(registro.descricao or "-", style_grande))
-        elementos.append(Spacer(1, 12))
+        elementos.append(Spacer(1, 8))
         
-        # ===== NOVOS BLOCOS DA BIBLIOTECA =====
-        # SUGESTÃO PARA SOLUCIONAR PROBLEMA
+        # ===== SUGESTÃO PARA SOLUCIONAR PROBLEMA (COM FORMATAÇÃO DE *) =====
         if registro.sugestao_biblioteca:
             elementos.append(Paragraph("<b>SUGESTÃO PARA SOLUCIONAR PROBLEMA:</b>", style_titulo_secao))
-            elementos.append(Paragraph(registro.sugestao_biblioteca, style_grande))
-            elementos.append(Spacer(1, 12))
+            
+            # Processar a sugestão: substituir * por quebra de linha e bullet
+            sugestao_texto = registro.sugestao_biblioteca
+            # Dividir por * e criar parágrafos com bullets
+            partes = sugestao_texto.split('*')
+            for i, parte in enumerate(partes):
+                parte_limpa = parte.strip()
+                if parte_limpa:
+                    # Adicionar bullet e formatar
+                    texto_formatado = f"• {parte_limpa}"
+                    elementos.append(Paragraph(texto_formatado, style_sugestao))
+            
+            elementos.append(Spacer(1, 6))
         
-        # DIRECIONAMENTO AO INSPETOR
+        # ===== DIRECIONAMENTO AO INSPETOR =====
         if registro.direcionamento_biblioteca:
             elementos.append(Paragraph("<b>DIRECIONAMENTO AO INSPETOR:</b>", style_titulo_secao))
             elementos.append(Paragraph(registro.direcionamento_biblioteca, style_grande))
-            elementos.append(Spacer(1, 12))
-        
-        # DEFEITO DA BIBLIOTECA (opcional - mostra qual defeito foi selecionado)
-        if registro.defeito_biblioteca:
-            elementos.append(Paragraph(f"<b>Defeito identificado na biblioteca:</b> {registro.defeito_biblioteca}", 
-                                       ParagraphStyle(name='DefeitoBib', parent=styleN, fontSize=10, textColor=colors.gray)))
             elementos.append(Spacer(1, 8))
-        # ===== FIM DOS NOVOS BLOCOS =====
         
         # ===== DISPOSIÇÃO / AÇÕES TOMADAS =====
         elementos.append(Paragraph("<b>DISPOSIÇÃO / AÇÕES TOMADAS:</b>", style_titulo_secao))
         if registro.disposicao and registro.disposicao.strip():
             elementos.append(Paragraph(registro.disposicao, style_grande))
-            elementos.append(Spacer(1, 12))
         else:
             elementos.append(Paragraph("-", style_grande))
-            elementos.append(Spacer(1, 12))
+        elementos.append(Spacer(1, 8))
         
         # ===== ASSINATURAS =====
         elementos.append(Paragraph("<b>ASSINATURAS:</b>", style_titulo_secao))
@@ -1982,26 +2012,29 @@ def gerar_pdf_ar(registro: RegistroAR) -> Optional[bytes]:
             ["Visto:", "________________________________________"],
             ["Cargo:", "________________________________________"],
             ["Data:", "________________________________________"]
-        ], colWidths=[4*cm, 14*cm])
+        ], colWidths=[4*cm, 13*cm])
         
         tabela_assinatura.setStyle(TableStyle([
             ("GRID", (0,0), (-1,-1), 0.5, colors.lightgrey),
             ("ALIGN", (0,0), (0,-1), "LEFT"),
             ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
-            ("PADDING", (0,0), (-1,-1), 10),
+            ("PADDING", (0,0), (-1,-1), 6),
             ("BACKGROUND", (0,0), (0,-1), colors.lightgrey),
         ]))
         elementos.append(tabela_assinatura)
         
-        elementos.append(Spacer(1, 36))
-        elementos.append(Paragraph(f"Documento gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}", ParagraphStyle(name='Rodape', parent=styleN, fontSize=8, alignment=2)))
-        elementos.append(Paragraph("* Espaços em branco devem ser preenchidos manualmente após impressão", ParagraphStyle(name='RodapeInstrucao', parent=styleN, fontSize=8, alignment=2, textColor=colors.gray)))
+        # ===== RODAPÉ =====
+        elementos.append(Spacer(1, 12))
+        elementos.append(Paragraph(f"Documento gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}", ParagraphStyle(name='Rodape', parent=styleN, fontSize=7, alignment=2)))
+        elementos.append(Paragraph("* Espaços em branco devem ser preenchidos manualmente após impressão", ParagraphStyle(name='RodapeInstrucao', parent=styleN, fontSize=7, alignment=2, textColor=colors.gray)))
         
+        # ===== CONSTRUIR PDF =====
         doc.build(elementos)
         buffer.seek(0)
         return buffer.getvalue()
     except Exception as e:
         print(f"Erro ao gerar PDF do AR: {e}")
+        traceback.print_exc()
         return None
 
 def enviar_email_ar(destinatarios, assunto, corpo, anexo_bytes=None, nome_anexo=None):
