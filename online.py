@@ -2840,7 +2840,6 @@ if aba_selecionada == 'PRENSADOS':
     if 'HORAS_TOTAIS_MIN' in df.columns:
         horas_trabalhadas_produtivas = df['HORAS_TOTAIS_MIN'].sum()
     else:
-        # Fallback: procurar coluna que contenha 'HORAS TOTAIS' no nome
         for col in df.columns:
             col_upper = str(col).upper()
             if 'HORAS TOTAIS' in col_upper or 'HORA TOTAL' in col_upper:
@@ -2848,19 +2847,16 @@ if aba_selecionada == 'PRENSADOS':
                 horas_trabalhadas_produtivas = df['HORAS_TOTAIS_MIN'].sum()
                 break
 
-    # 2. ERROS DE PROCESSO = soma da coluna ACERTOS (ignorando valores 2:45)
+    # 2. ERROS DE PROCESSO = soma da coluna ACERTOS (ignorando 02:45:00)
     total_acertos = 0
     if 'ACERTOS_MIN' in df.columns:
-        # Aplica a regra: ignorar quando valor for 2:45 (165 minutos)
         def filtrar_acertos(val):
-            # Se for 165 minutos (2:45), retorna 0
-            if val == 165:
+            if val == 165:  # 02:45:00 = 165 minutos
                 return 0
             return val
         
         total_acertos = df['ACERTOS_MIN'].apply(filtrar_acertos).sum()
     else:
-        # Fallback: procurar coluna que contenha 'ACERTO' no nome
         for col in df.columns:
             col_upper = str(col).upper()
             if 'ACERTO' in col_upper and 'MIN' not in col_upper:
@@ -2873,7 +2869,6 @@ if aba_selecionada == 'PRENSADOS':
     if 'MANUT_MIN' in df.columns:
         total_manut = df['MANUT_MIN'].sum()
     else:
-        # Fallback: procurar coluna que contenha 'MANUT' no nome
         for col in df.columns:
             col_upper = str(col).upper()
             if 'MANUT' in col_upper and 'MIN' not in col_upper:
@@ -2890,7 +2885,7 @@ if aba_selecionada == 'PRENSADOS':
         render_kpi_card(
             "Horas Trabalhadas Produtivas", 
             minutos_para_horas_str(horas_trabalhadas_produtivas), 
-            THEME['accent_lime']  # COR VERDE
+            THEME['accent_lime']
         )
     with p2: 
         render_kpi_card(
@@ -2913,9 +2908,10 @@ if aba_selecionada == 'PRENSADOS':
             df_manual_p = df[df['BOQUETA'] == 1]
             df_auto_p = df[df['BOQUETA'] == 2]
             
-            # Aplicar filtro de 2:45 também para Manual e Automática
             def filtrar_acertos_maquina(series):
-                return series.apply(lambda x: 0 if x == 165 else x).sum() if len(series) > 0 else 0
+                if len(series) == 0:
+                    return 0
+                return series.apply(lambda x: 0 if x == 165 else x).sum()
             
             acertos_m = filtrar_acertos_maquina(df_manual_p['ACERTOS_MIN']) if 'ACERTOS_MIN' in df_manual_p.columns else 0
             manut_m = df_manual_p['MANUT_MIN'].sum() if 'MANUT_MIN' in df_manual_p.columns else 0
@@ -2954,11 +2950,9 @@ if aba_selecionada == 'PRENSADOS':
 
     with col2:
         # GRÁFICO DE PIZZA - Usando a SOMA DOS 3 CARDS como 100%
-        # Total = Horas Trabalhadas Produtivas + Erros Processo + Manutenção
         total_geral = horas_trabalhadas_produtivas + total_acertos + total_manut
         
         if total_geral > 0:
-            # Calcular percentuais baseados no total geral (soma dos 3 cards)
             perc_produtivo = (horas_trabalhadas_produtivas / total_geral * 100)
             perc_erros = (total_acertos / total_geral * 100)
             perc_manut = (total_manut / total_geral * 100)
@@ -2967,7 +2961,6 @@ if aba_selecionada == 'PRENSADOS':
             vals_p = [perc_produtivo, perc_erros, perc_manut]
             cores_p = [THEME['accent_lime'], THEME['accent_yellow'], THEME['accent_red']]
             
-            # Filtrar apenas valores > 0 para mostrar no gráfico
             dados_pizza = [(l, v, c) for l, v, c in zip(labels_p, vals_p, cores_p) if v > 0]
             
             if dados_pizza:
@@ -2993,7 +2986,6 @@ if aba_selecionada == 'PRENSADOS':
                         autotext.set_fontweight('bold')
                         autotext.set_fontsize(10)
 
-                # Título do gráfico com o total correto
                 ax.set_title(
                     f"Distribuição do Tempo\nTotal: {minutos_para_horas_str(total_geral)}",
                     fontsize=13, fontweight='bold', color=THEME['text_primary'], pad=14
@@ -3007,23 +2999,173 @@ if aba_selecionada == 'PRENSADOS':
         else:
             st.info("Sem dados de tempo para exibir")
 
-       # ==================================================================
+    # ==================================================================
+    # NOVOS GRÁFICOS: MANUAL E AUTOMÁTICA - MÊS A MÊS
+    # ==================================================================
+    st.markdown("<hr>", unsafe_allow_html=True)
+    render_section_header("📊 Evolução Mensal de Erros e Manutenção por Tipo de Prensa", "▸")
+
+    # Função para filtrar acertos (ignorar 02:45:00)
+    def filtrar_acertos_para_grafico(valor):
+        """Retorna 0 se o valor for 02:45:00 (165 minutos), senão retorna o valor original"""
+        if valor == 165:
+            return 0
+        return valor
+
+    # Verificar se temos dados para ambos os tipos
+    if 'BOQUETA' in df.columns and 'ACERTOS_MIN' in df.columns and 'MANUT_MIN' in df.columns:
+        # Criar coluna de mês/ano
+        df['MES_ANO'] = df['DATA'].dt.to_period('M').astype(str)
+        
+        # Separar dados por tipo de prensa
+        df_manual = df[df['BOQUETA'] == 1].copy()
+        df_auto = df[df['BOQUETA'] == 2].copy()
+        
+        # ==== GRÁFICO MANUAL ====
+        st.markdown(f"""
+        <div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.1em;
+            color:{THEME['accent_cyan']};margin:10px 0 5px;font-weight:bold;">
+            🔧 SEMI-AUTOMÁTICA (MANUAL)
+        </div>
+        """, unsafe_allow_html=True)
+        
+        if not df_manual.empty:
+            # Agrupar por mês
+            agg_manual = df_manual.groupby('MES_ANO').agg({
+                'ACERTOS_MIN': lambda x: x.apply(filtrar_acertos_para_grafico).sum(),
+                'MANUT_MIN': 'sum'
+            }).reset_index()
+            
+            # Ordenar por mês
+            agg_manual = agg_manual.sort_values('MES_ANO')
+            
+            if not agg_manual.empty:
+                fig, ax = plt.subplots(figsize=(12, 5), facecolor=THEME['bg_card'])
+                apply_chart_style(ax, fig, "Manual - Erros de Processo vs Manutenção", ylabel="Minutos")
+                
+                x = np.arange(len(agg_manual))
+                width = 0.35
+                
+                bars1 = ax.bar(x - width/2, agg_manual['ACERTOS_MIN'], width, 
+                              label='Erros Processo', color=THEME['accent_yellow'], 
+                              alpha=0.85, edgecolor='white', linewidth=1.5)
+                bars2 = ax.bar(x + width/2, agg_manual['MANUT_MIN'], width, 
+                              label='Manutenção', color=THEME['accent_red'], 
+                              alpha=0.85, edgecolor='white', linewidth=1.5)
+                
+                # Adicionar valores nas barras
+                for bars in [bars1, bars2]:
+                    for bar in bars:
+                        height = bar.get_height()
+                        if height > 0:
+                            ax.text(bar.get_x() + bar.get_width()/2., height + 3,
+                                   minutos_para_horas_str(int(height)),
+                                   ha='center', va='bottom', fontsize=8, fontweight='bold')
+                
+                ax.set_xticks(x)
+                ax.set_xticklabels(agg_manual['MES_ANO'], fontsize=10, fontweight='bold')
+                ax.legend(loc='upper left', fontsize=10)
+                
+                # Ajustar limites
+                max_valor = max(agg_manual['ACERTOS_MIN'].max(), agg_manual['MANUT_MIN'].max())
+                if max_valor > 0:
+                    ax.set_ylim(0, max_valor * 1.2)
+                
+                fig.tight_layout()
+                st.pyplot(fig)
+                plt.close(fig)
+                
+                # Mostrar total do período
+                total_acertos_m = agg_manual['ACERTOS_MIN'].sum()
+                total_manut_m = agg_manual['MANUT_MIN'].sum()
+                st.caption(f"📊 Total Manual: Erros Processo: {minutos_para_horas_str(int(total_acertos_m))} | Manutenção: {minutos_para_horas_str(int(total_manut_m))}")
+            else:
+                st.info("📭 Sem dados mensais para Prensa Manual")
+        else:
+            st.info("📭 Nenhum dado disponível para Prensa Manual")
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        # ==== GRÁFICO AUTOMÁTICA ====
+        st.markdown(f"""
+        <div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.1em;
+            color:{THEME['accent_purple']};margin:10px 0 5px;font-weight:bold;">
+            🤖 AUTOMÁTICA
+        </div>
+        """, unsafe_allow_html=True)
+        
+        if not df_auto.empty:
+            # Agrupar por mês
+            agg_auto = df_auto.groupby('MES_ANO').agg({
+                'ACERTOS_MIN': lambda x: x.apply(filtrar_acertos_para_grafico).sum(),
+                'MANUT_MIN': 'sum'
+            }).reset_index()
+            
+            # Ordenar por mês
+            agg_auto = agg_auto.sort_values('MES_ANO')
+            
+            if not agg_auto.empty:
+                fig, ax = plt.subplots(figsize=(12, 5), facecolor=THEME['bg_card'])
+                apply_chart_style(ax, fig, "Automática - Erros de Processo vs Manutenção", ylabel="Minutos")
+                
+                x = np.arange(len(agg_auto))
+                width = 0.35
+                
+                bars1 = ax.bar(x - width/2, agg_auto['ACERTOS_MIN'], width, 
+                              label='Erros Processo', color=THEME['accent_yellow'], 
+                              alpha=0.85, edgecolor='white', linewidth=1.5)
+                bars2 = ax.bar(x + width/2, agg_auto['MANUT_MIN'], width, 
+                              label='Manutenção', color=THEME['accent_red'], 
+                              alpha=0.85, edgecolor='white', linewidth=1.5)
+                
+                # Adicionar valores nas barras
+                for bars in [bars1, bars2]:
+                    for bar in bars:
+                        height = bar.get_height()
+                        if height > 0:
+                            ax.text(bar.get_x() + bar.get_width()/2., height + 3,
+                                   minutos_para_horas_str(int(height)),
+                                   ha='center', va='bottom', fontsize=8, fontweight='bold')
+                
+                ax.set_xticks(x)
+                ax.set_xticklabels(agg_auto['MES_ANO'], fontsize=10, fontweight='bold')
+                ax.legend(loc='upper left', fontsize=10)
+                
+                # Ajustar limites
+                max_valor = max(agg_auto['ACERTOS_MIN'].max(), agg_auto['MANUT_MIN'].max())
+                if max_valor > 0:
+                    ax.set_ylim(0, max_valor * 1.2)
+                
+                fig.tight_layout()
+                st.pyplot(fig)
+                plt.close(fig)
+                
+                # Mostrar total do período
+                total_acertos_a = agg_auto['ACERTOS_MIN'].sum()
+                total_manut_a = agg_auto['MANUT_MIN'].sum()
+                st.caption(f"📊 Total Automática: Erros Processo: {minutos_para_horas_str(int(total_acertos_a))} | Manutenção: {minutos_para_horas_str(int(total_manut_a))}")
+            else:
+                st.info("📭 Sem dados mensais para Prensa Automática")
+        else:
+            st.info("📭 Nenhum dado disponível para Prensa Automática")
+
+    else:
+        st.warning("⚠️ Dados insuficientes para gerar os gráficos mensais. Verifique as colunas 'BOQUETA', 'ACERTOS_MIN' e 'MANUT_MIN'.")
+
+    # ==================================================================
     # GRÁFICO DE COLUNAS POR TURNO (Horas Trabalhadas, Erros, Manutenção) + TRS (linha)
     # ==================================================================
     if not df.empty and 'TURNO' in df.columns:
         render_section_header("Tempo de Parada x Produtividade (TRS)", "▸")
         
-        # Mapeamento de turnos
         mapeamento_turnos = {
             'M': {'nome': 'Manhã', 'lider': 'Felipe'},
             'T': {'nome': 'Tarde', 'lider': 'Ubaldo'},
             'N': {'nome': 'Noite', 'lider': 'Carlos'}
         }
         
-        # Ordem dos turnos: M, T, N
         ordem_turnos = ['M', 'T', 'N']
         
-        # Calcular dados por turno
         turno_data = []
         
         for turno in ordem_turnos:
@@ -3041,7 +3183,6 @@ if aba_selecionada == 'PRENSADOS':
                 })
                 continue
             
-            # Calcular horas trabalhadas no turno
             horas_turno = 0
             if 'HORAS_TOTAIS_MIN' in df_turno.columns:
                 horas_turno = df_turno['HORAS_TOTAIS_MIN'].sum()
@@ -3052,7 +3193,6 @@ if aba_selecionada == 'PRENSADOS':
                         horas_turno = df_turno[col].apply(converter_tempo_para_minutos).sum()
                         break
             
-            # Calcular erros no turno (ignorando 2:45)
             erros_turno = 0
             if 'ACERTOS_MIN' in df_turno.columns:
                 def filtrar_acertos_turno(val):
@@ -3061,13 +3201,10 @@ if aba_selecionada == 'PRENSADOS':
                     return val
                 erros_turno = df_turno['ACERTOS_MIN'].apply(filtrar_acertos_turno).sum()
             
-            # Calcular manutenção no turno
             manut_turno = 0
             if 'MANUT_MIN' in df_turno.columns:
                 manut_turno = df_turno['MANUT_MIN'].sum()
             
-            # ===== CALCULAR TRS CORRETO (usando a mesma fórmula da seção TRS por Turno) =====
-            # TRS 1ª Escolha = (APROVADO / TRS 100% * 100)
             total_aprovado = df_turno['APROVADO'].sum() if 'APROVADO' in df_turno.columns else 0
             total_meta = df_turno['TRS 100%'].sum() if 'TRS 100%' in df_turno.columns else 1
             trs_correto = (total_aprovado / total_meta * 100) if total_meta > 0 else 0
@@ -3085,11 +3222,9 @@ if aba_selecionada == 'PRENSADOS':
         if turno_data:
             df_turno_graf = pd.DataFrame(turno_data)
             
-            # Criar figura com dois eixos Y (barras no esquerdo, linha TRS no direito)
             fig, ax1 = plt.subplots(figsize=(14, 7), facecolor=THEME['bg_card'])
             fig.patch.set_facecolor(THEME['bg_card'])
             
-            # ====================== EIXO ESQUERDO (BARRAS) ======================
             ax1.set_xlabel("Turno", fontsize=12, fontweight='bold')
             ax1.set_ylabel("Minutos", fontsize=12, fontweight='bold', color=THEME['text_primary'])
             ax1.tick_params(axis='y', labelcolor=THEME['text_primary'])
@@ -3097,7 +3232,6 @@ if aba_selecionada == 'PRENSADOS':
             ax1.grid(True, alpha=0.3, color=THEME['grid'], linewidth=0.8, linestyle='--')
             ax1.set_axisbelow(True)
             
-            # Barras agrupadas
             x = np.arange(len(df_turno_graf))
             width = 0.25
             
@@ -3111,7 +3245,6 @@ if aba_selecionada == 'PRENSADOS':
                            label='Manutenção', color=THEME['accent_red'], alpha=0.85, 
                            edgecolor='white', linewidth=1.5)
             
-            # Adicionar valores nas barras
             for bars in [bars1, bars2, bars3]:
                 for bar in bars:
                     height = bar.get_height()
@@ -3121,15 +3254,12 @@ if aba_selecionada == 'PRENSADOS':
                                 ha='center', va='bottom', fontsize=8, rotation=0, 
                                 color=THEME['text_primary'], fontweight='bold')
             
-            # Ajustar limite do eixo Y esquerdo
             max_valor = max(df_turno_graf[['Horas Trabalhadas', 'Erros Processo', 'Manutenção']].max())
             ax1.set_ylim(0, max_valor * 1.2 if max_valor > 0 else 100)
             
-            # ====================== EIXO DIREITO (LINHA TRS) ======================
             ax2 = ax1.twinx()
             ax2.set_ylabel("TRS 1ª Escolha (%)", fontsize=12, fontweight='bold', color=THEME['accent_purple'])
             
-            # Plotar linha do TRS (usando o TRS correto)
             trs_values = df_turno_graf['TRS'].values
             line = ax2.plot(x, trs_values, marker='o', markersize=10, linewidth=2.5, 
                            color=THEME['accent_purple'], label='TRS 1ª Escolha (%)',
@@ -3137,7 +3267,6 @@ if aba_selecionada == 'PRENSADOS':
                            markeredgecolor=THEME['accent_purple'], 
                            markeredgewidth=2)
             
-            # Adicionar valores do TRS acima dos pontos
             for i, (x_pos, trs_val) in enumerate(zip(x, trs_values)):
                 if trs_val > 0:
                     ax2.annotate(f'{trs_val:.1f}%', 
@@ -3150,26 +3279,21 @@ if aba_selecionada == 'PRENSADOS':
                                 color=THEME['accent_purple'],
                                 bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.8, edgecolor=THEME['accent_purple']))
             
-            # Configurar eixo Y direito
             ax2.tick_params(axis='y', labelcolor=THEME['accent_purple'])
             ax2.set_ylim(0, 105)
             
-            # ====================== CONFIGURAÇÃO DO EIXO X ======================
             rotulos_x = [f"{row['Turno']} ({row['TurnoNome']})\n{row['Lider']}" for _, row in df_turno_graf.iterrows()]
             ax1.set_xticks(x)
             ax1.set_xticklabels(rotulos_x, fontsize=11, fontweight='bold')
             
-            # ====================== LEGENDAS ======================
             lines1, labels1 = ax1.get_legend_handles_labels()
             lines2, labels2 = ax2.get_legend_handles_labels()
             ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left', fontsize=10, 
                       framealpha=0.15, facecolor=THEME['bg_card'], edgecolor=THEME['border_bright'])
             
-            # ====================== TÍTULO ======================
             ax1.set_title("Tempo de Parada x Produtividade (TRS)", 
                          fontsize=16, fontweight='bold', color=THEME['text_primary'], pad=20)
             
-            # Remover bordas superiores e direita do ax1
             ax1.spines['top'].set_visible(False)
             ax2.spines['top'].set_visible(False)
             ax1.spines['right'].set_visible(False)
@@ -3178,7 +3302,6 @@ if aba_selecionada == 'PRENSADOS':
             st.pyplot(fig)
             plt.close(fig)
             
-            # Tabela resumo por turno
             with st.expander("📊 Ver tabela detalhada por Turno"):
                 df_tabela_turno = df_turno_graf.copy()
                 for col in ['Horas Trabalhadas', 'Erros Processo', 'Manutenção']:
@@ -3198,7 +3321,7 @@ if aba_selecionada == 'PRENSADOS':
                 df_tabela_turno['TRS 1ª Escolha (%)'] = df_tabela_turno['TRS 1ª Escolha (%)'].apply(lambda x: f"{x:.1f}%")
                 st.dataframe(df_tabela_turno, use_container_width=True, hide_index=True)
         else:
-            st.info("Sem dados de turno para exibir")    
+            st.info("Sem dados de turno para exibir")            
             
     st.markdown("<hr>", unsafe_allow_html=True)
 
@@ -3246,7 +3369,7 @@ if aba_selecionada == 'PRENSADOS':
             st.pyplot(fig)
             plt.close(fig)
 
-    # Defeitos de Prensados - CORRIGIDO com cabeçalhos reais
+    # Defeitos de Prensados
     if mostrar_defeitos:
         render_section_header("Estratificação de Defeitos - Prensados", "▸")
         colunas_defeitos_prensados = [
@@ -3263,7 +3386,6 @@ if aba_selecionada == 'PRENSADOS':
                     defeitos_existentes.append(col)
                     break
         
-        # Fallback para busca case-insensitive sem exigir correspondência exata
         if not defeitos_existentes:
             for col in df.columns:
                 col_upper = col.upper()
@@ -3273,7 +3395,6 @@ if aba_selecionada == 'PRENSADOS':
                         break
         
         if defeitos_existentes:
-            # Remove duplicatas mantendo ordem
             defeitos_existentes = list(dict.fromkeys(defeitos_existentes))
             
             df_def = df[defeitos_existentes].apply(pd.to_numeric, errors='coerce').fillna(0)
@@ -3281,22 +3402,19 @@ if aba_selecionada == 'PRENSADOS':
             df_def_sum = df_def_sum[df_def_sum > 0]
             
             if not df_def_sum.empty:
-                # Ajusta altura do gráfico baseado na quantidade de defeitos
                 altura_grafico = max(4, len(df_def_sum) * 0.35)
                 
                 fig, ax = plt.subplots(figsize=(12, altura_grafico), facecolor=THEME['bg_card'])
                 apply_chart_style(ax, fig, "Defeitos — Somatório", ylabel="Quantidade")
                 
-                # Gráfico de barras horizontal (melhor para muitos defeitos)
                 bars = ax.barh(range(len(df_def_sum)), df_def_sum.values,
                               color=THEME['accent_red'], alpha=0.8,
                               edgecolor=THEME['bg_card'], linewidth=1.2)
                 
                 ax.set_yticks(range(len(df_def_sum)))
                 ax.set_yticklabels(df_def_sum.index, fontsize=9, color=THEME['text_muted'])
-                ax.invert_yaxis()  # Maior quantidade no topo
+                ax.invert_yaxis()
                 
-                # Adicionar valores nas barras
                 max_valor = df_def_sum.max() if len(df_def_sum) > 0 else 1
                 for bar, val in zip(bars, df_def_sum.values):
                     if val > 0:
@@ -3313,7 +3431,6 @@ if aba_selecionada == 'PRENSADOS':
                 total_def = df_def_sum.sum()
                 st.caption(f"**Total de defeitos:** {int(total_def):,}".replace(",","."))
                 
-                # Tabela detalhada com percentuais
                 with st.expander("📊 Ver tabela detalhada de defeitos"):
                     tabela_defeitos = pd.DataFrame({
                         'Defeito': df_def_sum.index,
@@ -3323,7 +3440,6 @@ if aba_selecionada == 'PRENSADOS':
                     tabela_defeitos['% do Total'] = tabela_defeitos['% do Total'].astype(str) + '%'
                     st.dataframe(tabela_defeitos, use_container_width=True, hide_index=True)
                     
-                    # Gráfico de pizza dos principais defeitos (top 5)
                     if len(df_def_sum) > 1:
                         st.markdown("**📈 Top 5 Defeitos**")
                         top5 = df_def_sum.head(5)
