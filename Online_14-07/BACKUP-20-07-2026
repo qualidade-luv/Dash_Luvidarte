@@ -5712,15 +5712,8 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
     OPCOES_SETORES2_RM = ["Elétrica", "Mecânica", "Informática", "Ferramentaria", "Manutenção Geral"]
     OPCOES_STATUS_RM = ["ABERTO", "EM ANDAMENTO", "FINALIZADO", "CANCELADO"]
     
-    # Criar diretórios RM
-    #CAMINHO_PDF_RM = r"\\srv-luvidarte\dados\DOC\Engenharia_Luvidarte\SGQ - LUVIDARTE - ALTERADAS\1-REQUISIÇÃO DE MANUTENÇÃO\1-PDF"
-    #CAMINHO_PDF_RELATORIO_RM = r"\\srv-luvidarte\dados\DOC\Engenharia_Luvidarte\SGQ - LUVIDARTE - ALTERADAS\1-REQUISIÇÃO DE MANUTENÇÃO\2-PDF"
-    #os.makedirs(CAMINHO_PDF_RM, exist_ok=True)
-    #os.makedirs(CAMINHO_PDF_RELATORIO_RM, exist_ok=True)
-    
     # ====================== CONFIGURAÇÕES DE E-MAIL - LENDO DO SECRETS ======================
     try:
-        # Configurações de e-mail para RM
         EMAIL_CONFIG_RM = {
             "usuario": st.secrets["smtp_rm"]["usuario"],
             "senha": st.secrets["smtp_rm"]["senha"],
@@ -5728,7 +5721,6 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
             "smtp_port": int(st.secrets["smtp_rm"]["smtp_port"])
         }
         
-        # Mapeamento de setores para emails
         EMAILS_SETORES_RM = {
             "Elétrica": st.secrets["emails_rm"]["eletrica"],
             "Mecânica": st.secrets["emails_rm"]["mecanica"],
@@ -5741,7 +5733,6 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
         EMAIL_QUALIDADE_RM = st.secrets["emails_rm"]["qualidade"]
         
     except Exception as e:
-        # Fallback para valores hardcoded (caso secrets não esteja disponível)
         st.warning(f"Usando configurações de e-mail hardcoded. Erro ao ler secrets: {e}")
         EMAIL_CONFIG_RM = {
             "usuario": "erp@luvidarte.com.br",
@@ -5758,7 +5749,6 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
             "default": "engenharia@luvidarte.com.br"
         }
         EMAIL_QUALIDADE_RM = "qualidade@luvidarte.com.br"
-    # ========================================================================================
     
     @dataclass
     class RegistroRM:
@@ -5803,7 +5793,7 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
                 <tr><td><b>ID:</b></td><td>{registro.id}</td>
                 <tr><td><b>Equipamento:</b></td><td colspan="3">{registro.equipamento}</td></tr>
                 <tr><td><b>Data:</b></td><td>{data_str}</td><tr><td><b>Hora:</b></td><td>{registro.hora}</td></tr>
-                                <tr><td><b>Emissor:</b></td><td colspan="3">{registro.emissor}</td>
+                <tr><td><b>Emissor:</b></td><td colspan="3">{registro.emissor}</td>
                 <tr>
                 <tr><td colspan="6"><b>📋 PROBLEMA:</b></td>
                 <tr>
@@ -5934,6 +5924,8 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
                             incluir = False
                         if filtros.get('status') and filtros['status'] != registro.status:
                             incluir = False
+                        if filtros.get('setor2') and filtros['setor2'].upper() != registro.setor2.upper():
+                            incluir = False
                     else:
                         incluir = True
                     
@@ -5970,7 +5962,6 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
                     sheet.append_row(dados)
             else:
                 sheet.insert_row(dados, index=2)
-                # Enviar email na criação
                 pdf_bytes = gerar_pdf_rm(registro)
                 if pdf_bytes:
                     nome_pdf = sanitize_filename_ar(f"RM_{registro.id}_{registro.equipamento[:30]}") + ".pdf"
@@ -6142,6 +6133,7 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
         if 'rm_registro_editando' not in st.session_state:
             st.session_state.rm_registro_editando = None
         
+        # ====================== NOVA REQUISIÇÃO ======================
         if menu_rm == "📝 Nova Requisição":
             st.subheader("Nova Requisição de Manutenção")
             st.info("⚠️ Data e hora serão preenchidas automaticamente no salvamento (Horário de Brasília)")
@@ -6236,51 +6228,72 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
                                     st.session_state.rm_ultimo_registro = registro
                                     st.rerun()
         
+        # ====================== VISUALIZAR REQUISIÇÕES ======================
         elif menu_rm == "📊 Visualizar Requisições":
             st.subheader("Lista de Requisições de Manutenção")
             with st.spinner("Carregando registros..."):
                 registros = carregar_registros_rm()
             
             if registros:
+                # Obter lista única de setores destino para o filtro
+                setores_destino_disponiveis = sorted(set([r.setor2 for r in registros if r.setor2]))
+                opcoes_setores_destino = ["Todos"] + setores_destino_disponiveis
+                
                 col_f1, col_f2, col_f3 = st.columns(3)
                 with col_f1:
                     filtro_status = st.selectbox("Status", ["Todos"] + OPCOES_STATUS_RM)
                 with col_f2:
                     filtro_caracter = st.selectbox("Caráter", ["Todos"] + OPCOES_CARATER_RM)
                 with col_f3:
-                    filtro_id = st.number_input("ID", min_value=0, step=1, value=0)
+                    filtro_setor_destino = st.selectbox("Setor Destino", opcoes_setores_destino)
                 
+                # Aplicar filtros
                 dados_filtrados = registros
                 if filtro_status != "Todos":
                     dados_filtrados = [r for r in dados_filtrados if r.status == filtro_status]
                 if filtro_caracter != "Todos":
                     dados_filtrados = [r for r in dados_filtrados if r.caracter == filtro_caracter]
-                if filtro_id > 0:
-                    dados_filtrados = [r for r in dados_filtrados if r.id == filtro_id]
+                if filtro_setor_destino != "Todos":
+                    dados_filtrados = [r for r in dados_filtrados if r.setor2 == filtro_setor_destino]
                 
+                # ===== CARDS COM VALORES FILTRADOS =====
                 col_e1, col_e2, col_e3, col_e4 = st.columns(4)
                 with col_e1:
-                    st.metric("Total", len(registros))
+                    st.metric("📋 Total", len(dados_filtrados))
                 with col_e2:
-                    abertos = len([r for r in registros if r.status == "ABERTO"])
-                    st.metric("Em Aberto", abertos)
+                    abertos = len([r for r in dados_filtrados if r.status == "ABERTO"])
+                    st.metric("🟡 Em Aberto", abertos)
                 with col_e3:
-                    criticos = len([r for r in registros if "1 -" in r.caracter])
-                    st.metric("Nível 1 (Crítico)", criticos)
+                    criticos = len([r for r in dados_filtrados if "1 -" in r.caracter])
+                    st.metric("🚨 Nível 1 (Crítico)", criticos)
                 with col_e4:
-                    finalizados = len([r for r in registros if r.status == "FINALIZADO"])
-                    st.metric("Finalizados", finalizados)
+                    finalizados = len([r for r in dados_filtrados if r.status == "FINALIZADO"])
+                    st.metric("✅ Finalizados", finalizados)
                 
+                # Exibir contagem de registros filtrados
+                if len(dados_filtrados) < len(registros):
+                    st.caption(f"🔍 Exibindo {len(dados_filtrados)} de {len(registros)} registros (filtros aplicados)")
+                
+                # Tabela de dados
                 dados_tabela = []
                 for reg in dados_filtrados[:100]:
                     emoji = "🚨" if "1 -" in reg.caracter else "⚠️" if "2 -" in reg.caracter else "📊" if "3 -" in reg.caracter else "🔧"
+                    if reg.status == "FINALIZADO":
+                        status_display = "✅ FINALIZADO"
+                    elif reg.status == "ABERTO":
+                        status_display = "🟡 ABERTO"
+                    elif reg.status == "EM ANDAMENTO":
+                        status_display = "🔄 EM ANDAMENTO"
+                    else:
+                        status_display = f"⛔ {reg.status}"
+                    
                     dados_tabela.append({
                         "ID": reg.id,
                         "Data": reg.data.strftime("%d/%m/%Y") if reg.data else "-",
                         "Equipamento": reg.equipamento[:30] + "..." if len(reg.equipamento) > 30 else reg.equipamento,
                         "Caráter": f"{emoji} {reg.caracter}",
                         "Setor Destino": reg.setor2,
-                        "Status": reg.status,
+                        "Status": status_display,
                         "Emissor": reg.emissor
                     })
                 df = pd.DataFrame(dados_tabela)
@@ -6288,6 +6301,7 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
             else:
                 st.info("📭 Nenhuma requisição encontrada")
         
+        # ====================== BUSCAR/EDITAR/EXCLUIR ======================
         elif menu_rm == "🔍 Buscar/Editar/Excluir":
             st.subheader("Buscar, Editar ou Excluir Requisição")
             
@@ -6430,6 +6444,7 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
                         - **Engenharia**: `engenharia@luvidarte.com.br`
                         """)
         
+        # ====================== DASHBOARD RM ======================
         elif menu_rm == "📈 Dashboard RM":
             st.subheader("Dashboard de Manutenção")
             with st.spinner("Carregando dados..."):
