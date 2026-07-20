@@ -10543,7 +10543,7 @@ elif aba_selecionada == 'PRÊMIO PRENSADOS':
     </div>
     """, unsafe_allow_html=True)
 # ==================================================================================================
-# FERRAMENTARIA - GERENCIAMENTO DE MOLDES (VERSÃO CORRIGIDA)
+# FERRAMENTARIA - GERENCIAMENTO DE MOLDES (COM DIAGNÓSTICO)
 # ==================================================================================================
 elif aba_selecionada == 'FERRAMENTARIA':
     render_page_header("🛠️ FERRAMENTARIA", 
@@ -10551,58 +10551,92 @@ elif aba_selecionada == 'FERRAMENTARIA':
                        THEME['accent_cyan'])
     
     # ======================
-    # CONFIGURAÇÃO DA PLANILHA - ✅ CORRIGIDO
+    # CONFIGURAÇÃO DA PLANILHA
     # ======================
-    # Use SOMENTE o ID, não a URL completa
     ID_PLANILHA_FERRAMENTARIA = '12xXYNhrGwIP4PMvcdLSMFaMIM-CcLPYyvFBD0I7Gigb'
     ABA_FERRAMENTARIA = 'MOLDES'
     
     # ======================
-    # VERIFICAÇÃO RÁPIDA DA CONEXÃO
+    # BOTÃO PARA DIAGNÓSTICO MANUAL
     # ======================
-    with st.spinner("🔍 Verificando conexão com a planilha..."):
-        try:
-            client = get_gspread_client()
-            if client is None:
-                st.error("""
-                ❌ **Erro de Conexão com o Google Sheets**
-                
-                Verifique:
-                1. O arquivo de credenciais JSON está no local correto
-                2. O service account tem permissão de acesso
-                3. A planilha está compartilhada corretamente
-                """)
-                st.stop()
+    with st.expander("🔧 Diagnóstico de Conexão", expanded=True):
+        st.markdown("""
+        **Informações da Planilha:**
+        - **ID:** `12xXYNhrGwIP4PMvcdLSMFaMIM-CcLPYyvFBD0I7Gigb`
+        - **Aba:** `MOLDES`
+        - **Service Account:** `script-atualizacao@dashboard-gerencial-492613.iam.gserviceaccount.com`
+        """)
+        
+        if st.button("🔍 TESTAR CONEXÃO", type="primary"):
+            st.markdown("---")
+            st.markdown("### 📊 Resultado do Diagnóstico")
             
-            # Testar acesso à planilha
+            # Teste 1: Cliente
+            st.markdown("**1️⃣ Cliente GSPread**")
             try:
-                spreadsheet = client.open_by_key(ID_PLANILHA_FERRAMENTARIA)
-                st.success("✅ Conexão com a planilha FERRAMENTARIA estabelecida!")
+                client = get_gspread_client()
+                if client:
+                    st.success("✅ Cliente conectado!")
+                else:
+                    st.error("❌ Cliente NÃO conectado")
             except Exception as e:
-                st.error(f"""
-                ❌ **Erro ao acessar a planilha FERRAMENTARIA**
+                st.error(f"❌ Erro: {e}")
+            
+            # Teste 2: Listar planilhas acessíveis
+            st.markdown("**2️⃣ Planilhas acessíveis**")
+            try:
+                if client:
+                    sheets = client.openall()
+                    st.write(f"📊 {len(sheets)} planilhas encontradas")
+                    for s in sheets[:5]:  # Mostrar apenas as 5 primeiras
+                        st.write(f"   - {s.title} (ID: {s.id})")
+            except Exception as e:
+                st.error(f"❌ Erro ao listar: {e}")
+            
+            # Teste 3: Acessar planilha específica
+            st.markdown("**3️⃣ Acessando planilha FERRAMENTARIA**")
+            try:
+                if client:
+                    spreadsheet = client.open_by_key(ID_PLANILHA_FERRAMENTARIA)
+                    st.success(f"✅ Planilha encontrada: {spreadsheet.title}")
+                    
+                    # Teste 4: Listar abas
+                    st.markdown("**4️⃣ Abas disponíveis**")
+                    worksheets = spreadsheet.worksheets()
+                    for ws in worksheets:
+                        st.write(f"   - {ws.title}")
+                    
+                    # Teste 5: Ler dados
+                    st.markdown("**5️⃣ Lendo dados da aba MOLDES**")
+                    try:
+                        sheet = spreadsheet.worksheet(ABA_FERRAMENTARIA)
+                        data = sheet.get_all_values()
+                        st.success(f"✅ {len(data)} linhas lidas")
+                        if data:
+                            st.write(f"**Cabeçalho:** {data[0]}")
+                            if len(data) > 1:
+                                st.write(f"**Primeira linha:** {data[1]}")
+                    except Exception as e:
+                        st.error(f"❌ Erro ao ler aba: {e}")
+                        
+            except Exception as e:
+                st.error(f"❌ Erro: {e}")
+                st.info("""
+                **Possíveis causas:**
+                1. O ID da planilha está incorreto
+                2. A planilha não está compartilhada com o service account
+                3. O e-mail do service account está com erro de digitação
                 
-                **Erro:** {str(e)}
-                
-                **Verifique se:**
-                1. O ID da planilha está correto: `{ID_PLANILHA_FERRAMENTARIA}`
-                2. A planilha está compartilhada com: `script-atualizacao@dashboard-gerencial-492613.iam.gserviceaccount.com`
-                3. A permissão é de **Editor**
-                
-                **📋 Como compartilhar:**
-                1. Abra a planilha no Google Sheets
-                2. Clique em "Compartilhar"
-                3. Adicione o e-mail acima
-                4. Selecione "Editor" como permissão
+                **E-mail correto:** `script-atualizacao@dashboard-gerencial-492613.iam.gserviceaccount.com`
                 """)
-                st.stop()
-                
-        except Exception as e:
-            st.error(f"❌ Erro ao conectar: {str(e)}")
-            st.stop()
+            
+            st.markdown("---")
+            st.info("💡 Se o teste falhar, verifique o compartilhamento da planilha.")
+    
+    st.markdown("---")
     
     # ======================
-    # DATACLASS PARA FERRAMENTAL
+    # DATACLASS
     # ======================
     @dataclass
     class Ferramental:
@@ -10624,7 +10658,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
     @retry_on_quota()
     @st.cache_data(ttl=300)
     def carregar_ferramentais(filtros: Dict[str, Any] = None) -> List[Ferramental]:
-        """Carrega todos os ferramentais da planilha"""
         registros = []
         
         try:
@@ -10650,15 +10683,13 @@ elif aba_selecionada == 'FERRAMENTARIA':
             if len(todos_dados) < 2:
                 return registros
             
-            # Mapeamento de colunas baseado na sua planilha
-            # Sua planilha tem: ID | PCP | CLIENTE | DESCRIÇÃO | DATA_INICIAL | AVALIAÇÃO_INICIAL | DESENHO | GABARITO | PLANO_CONTROLE | PLANO_DE_AÇÃO | MANUTENÇÃO | MANUTENÇÕES
             for idx, row in enumerate(todos_dados[1:], start=2):
-                if len(row) < 5:  # Pelo menos ID, PCP, CLIENTE, DESCRIÇÃO, DATA_INICIAL
+                if len(row) < 5:
                     continue
                 
                 try:
                     registro = Ferramental()
-                    registro.id = row[0].strip() if len(row) > 0 and row[0] else f"FER-{idx:03d}"
+                    registro.id = row[0].strip() if row[0] else f"FER-{idx:03d}"
                     registro.pcp = row[1].strip() if len(row) > 1 and row[1] else ""
                     registro.cliente = row[2].strip() if len(row) > 2 and row[2] else ""
                     registro.descricao = row[3].strip() if len(row) > 3 and row[3] else ""
@@ -10672,10 +10703,8 @@ elif aba_selecionada == 'FERRAMENTARIA':
                     
                     registros.append(registro)
                 except Exception as e:
-                    print(f"Erro ao processar linha {idx}: {e}")
                     continue
             
-            # Aplicar filtros se existirem
             if filtros and registros:
                 registros_filtrados = []
                 for r in registros:
@@ -10693,11 +10722,11 @@ elif aba_selecionada == 'FERRAMENTARIA':
             return registros
             
         except Exception as e:
-            st.error(f"❌ Erro ao carregar ferramentais: {str(e)}")
+            st.error(f"❌ Erro ao carregar: {str(e)}")
             return registros
     
     # ======================
-    # FUNÇÃO PARA SALVAR FERRAMENTAL
+    # FUNÇÃO SALVAR
     # ======================
     def salvar_ferramental(registro: Ferramental) -> tuple:
         try:
@@ -10709,16 +10738,9 @@ elif aba_selecionada == 'FERRAMENTARIA':
             sheet = spreadsheet.worksheet(ABA_FERRAMENTARIA)
             
             dados = [
-                registro.id,
-                registro.pcp,
-                registro.cliente,
-                registro.descricao,
-                registro.data_inicial,
-                registro.avaliacao_inicial,
-                registro.desenho,
-                registro.gabarito,
-                registro.plano_controle,
-                registro.plano_acao,
+                registro.id, registro.pcp, registro.cliente, registro.descricao,
+                registro.data_inicial, registro.avaliacao_inicial, registro.desenho,
+                registro.gabarito, registro.plano_controle, registro.plano_acao,
                 registro.manutencao
             ]
             
@@ -10729,7 +10751,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
             return False, f"❌ Erro ao salvar: {e}"
     
     # ======================
-    # FUNÇÃO PARA RENDERIZAR LINK
+    # FUNÇÃO RENDERIZAR LINK
     # ======================
     def renderizar_link_botao(link: str, label: str, icon: str, cor: str = None):
         if not link or link.strip() == "":
@@ -10775,7 +10797,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
             """, unsafe_allow_html=True)
     
     # ======================
-    # FUNÇÃO PARA RENDERIZAR DETALHES
+    # FUNÇÃO RENDERIZAR DETALHES
     # ======================
     def renderizar_detalhes_ferramental(registro: Ferramental):
         st.markdown(f"""
@@ -10930,7 +10952,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
         if st.button("➕ NOVO FERRAMENTAL", type="primary", use_container_width=True):
             st.session_state.mostrar_formulario_novo = True
     
-    # ===== TABELA DE FERRAMENTAIS =====
+    # ===== TABELA =====
     if ferramentais_filtrados:
         dados_tabela = []
         for f in ferramentais_filtrados:
@@ -10966,7 +10988,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
             
             st.divider()
         
-        # ===== DETALHES DO SELECIONADO =====
+        # ===== DETALHES =====
         if 'ferramental_selecionado' in st.session_state:
             ferramental_selecionado = next(
                 (f for f in ferramentais_filtrados if f.id == st.session_state.ferramental_selecionado), 
@@ -11074,16 +11096,4 @@ elif aba_selecionada == 'FERRAMENTARIA':
 if 'ID_PLANILHA_FECHAMENTO' not in dir():
     ID_PLANILHA_FECHAMENTO = '1_HkKTRCSg24wDJ47v5wSd-UPBkbalLd6plV9IvlTY64'
 
-renderizar_faixa_rolagem()
-
-# ==================================================================================================
-# RENDERIZAR FAIXA DE ROLAGEM NO RODAPÉ (aparece em todas as abas)
-# ==================================================================================================
-# Define a planilha de fechamento para a faixa de rolagem (precisa estar definida antes)
-# A planilha ID_PLANILHA_FECHAMENTO já está definida na seção de FECHAMENTO TURNO
-# Caso o usuário não acesse o FECHAMENTO TURNO antes, definimos um valor padrão
-if 'ID_PLANILHA_FECHAMENTO' not in dir():
-    ID_PLANILHA_FECHAMENTO = '1_HkKTRCSg24wDJ47v5wSd-UPBkbalLd6plV9IvlTY64'
-
-# Renderiza a faixa de rolagem
 renderizar_faixa_rolagem()
