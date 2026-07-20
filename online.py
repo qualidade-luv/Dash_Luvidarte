@@ -10543,7 +10543,7 @@ elif aba_selecionada == 'PRÊMIO PRENSADOS':
     </div>
     """, unsafe_allow_html=True)
 # ==================================================================================================
-# FERRAMENTARIA - GERENCIAMENTO DE MOLDES (COM LEITURA DINÂMICA DE PASTAS)
+# FERRAMENTARIA - VERSÃO COM CACHE E SEM OPENALL
 # ==================================================================================================
 elif aba_selecionada == 'FERRAMENTARIA':
     render_page_header("🛠️ FERRAMENTARIA", 
@@ -10557,7 +10557,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
     ABA_FERRAMENTARIA = 'MOLDES'
     
     # ======================
-    # BOTÃO PARA DIAGNÓSTICO
+    # BOTÃO PARA DIAGNÓSTICO (SEM OPENALL)
     # ======================
     with st.expander("🔧 Diagnóstico de Conexão", expanded=False):
         st.markdown("""
@@ -10567,10 +10567,12 @@ elif aba_selecionada == 'FERRAMENTARIA':
         - **Service Account:** `script-atualizacao@dashboard-gerencial-492613.iam.gserviceaccount.com`
         """)
         
-        if st.button("🔍 TESTAR CONEXÃO", type="primary"):
+        if st.button("🔍 TESTAR CONEXÃO (SEM OPENALL)", type="primary"):
             st.markdown("---")
             st.markdown("### 📊 Resultado do Diagnóstico")
             
+            # Teste 1: Cliente
+            st.markdown("**1️⃣ Cliente GSPread**")
             try:
                 client = get_gspread_client()
                 if client:
@@ -10582,29 +10584,70 @@ elif aba_selecionada == 'FERRAMENTARIA':
                 st.error(f"❌ Erro: {e}")
                 st.stop()
             
+            # Teste 2: Acessar planilha específica (sem listar todas)
+            st.markdown("**2️⃣ Acessando planilha FERRAMENTARIA**")
             try:
                 spreadsheet = client.open_by_key(ID_PLANILHA_FERRAMENTARIA)
                 st.success(f"✅ Planilha encontrada: **{spreadsheet.title}**")
                 
+                # Teste 3: Listar abas
+                st.markdown("**3️⃣ Abas disponíveis**")
                 worksheets = spreadsheet.worksheets()
-                st.markdown("**Abas disponíveis:**")
                 for ws in worksheets:
                     st.write(f"   - **{ws.title}**")
                 
-                aba_encontrada = any(ws.title == ABA_FERRAMENTARIA for ws in worksheets)
+                # Teste 4: Verificar aba MOLDES
+                st.markdown("**4️⃣ Verificando aba MOLDES**")
+                aba_encontrada = False
+                for ws in worksheets:
+                    if ws.title == ABA_FERRAMENTARIA:
+                        aba_encontrada = True
+                        break
+                
                 if aba_encontrada:
                     st.success(f"✅ Aba '{ABA_FERRAMENTARIA}' encontrada!")
-                    sheet = spreadsheet.worksheet(ABA_FERRAMENTARIA)
-                    data = sheet.get_all_values()
-                    st.success(f"✅ {len(data)} linhas lidas")
-                    if data:
-                        st.write(f"**Cabeçalho:** {data[0]}")
+                    
+                    # Teste 5: Ler dados
+                    st.markdown("**5️⃣ Lendo dados da aba MOLDES**")
+                    try:
+                        sheet = spreadsheet.worksheet(ABA_FERRAMENTARIA)
+                        data = sheet.get_all_values()
+                        st.success(f"✅ {len(data)} linhas lidas")
+                        if data:
+                            st.write(f"**Cabeçalho:** {data[0]}")
+                            if len(data) > 1:
+                                st.write(f"**Primeira linha:** {data[1]}")
+                            else:
+                                st.info("📭 A planilha está vazia. Cadastre o primeiro ferramental!")
+                        else:
+                            st.info("📭 A planilha está vazia.")
+                    except Exception as e:
+                        st.error(f"❌ Erro ao ler dados: {e}")
                 else:
                     st.warning(f"⚠️ Aba '{ABA_FERRAMENTARIA}' NÃO encontrada!")
+                    st.info("💡 As abas disponíveis são: " + ", ".join([ws.title for ws in worksheets]))
+                    
+                    # Tentar criar a aba
+                    if st.button("➕ CRIAR ABA MOLDES"):
+                        try:
+                            sheet = spreadsheet.add_worksheet(title=ABA_FERRAMENTARIA, rows=1000, cols=20)
+                            cabecalho = ["ID", "PCP", "CLIENTE", "DESCRIÇÃO", "DATA_INICIAL", 
+                                        "AVALIAÇÃO_INICIAL", "DESENHO", "GABARITO", 
+                                        "PLANO_CONTROLE", "PLANO_DE_AÇÃO", "MANUTENÇÃO"]
+                            sheet.append_row(cabecalho)
+                            st.success("✅ Aba 'MOLDES' criada com sucesso!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Erro ao criar aba: {e}")
                         
             except Exception as e:
                 st.error(f"❌ Erro: {e}")
                 st.info("""
+                **Possíveis causas:**
+                1. O ID da planilha está incorreto
+                2. A planilha não está compartilhada com o service account
+                3. O e-mail do service account está com erro de digitação
+                
                 **E-mail correto:** `script-atualizacao@dashboard-gerencial-492613.iam.gserviceaccount.com`
                 """)
             
@@ -10614,7 +10657,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
     st.markdown("---")
     
     # ======================
-    # BOTÃO DE RECARREGAMENTO
+    # ADICIONAR BOTÃO DE RECARREGAMENTO RÁPIDO
     # ======================
     col1, col2 = st.columns([3, 1])
     with col2:
@@ -10640,85 +10683,10 @@ elif aba_selecionada == 'FERRAMENTARIA':
         manutencao: str = ""
     
     # ======================
-    # FUNÇÃO PARA LISTAR PASTAS DO SERVIDOR
-    # ======================
-    def listar_pastas_servidor(caminho_base: str) -> Dict[str, List[Dict]]:
-        """
-        Lista as subpastas de ENTRADA e SAÍDA de um caminho base.
-        Retorna um dicionário com as listas de pastas.
-        """
-        resultado = {
-            "entrada": [],
-            "saida": []
-        }
-        
-        if not caminho_base or not caminho_base.strip():
-            return resultado
-        
-        try:
-            # Normalizar caminho
-            caminho_base = caminho_base.strip()
-            
-            # Verificar se o caminho existe
-            if not os.path.exists(caminho_base):
-                return resultado
-            
-            # Listar pastas de ENTRADA
-            caminho_entrada = os.path.join(caminho_base, "ENTRADA")
-            if os.path.exists(caminho_entrada) and os.path.isdir(caminho_entrada):
-                for item in os.listdir(caminho_entrada):
-                    caminho_item = os.path.join(caminho_entrada, item)
-                    if os.path.isdir(caminho_item):
-                        # Tentar extrair data do nome da pasta
-                        data = ""
-                        # Procurar padrão de data no nome (DD/MM/AAAA ou DD-MM-AAAA)
-                        import re
-                        match = re.search(r'(\d{2})[-/](\d{2})[-/](\d{4})', item)
-                        if match:
-                            data = f"{match.group(1)}/{match.group(2)}/{match.group(3)}"
-                        
-                        resultado["entrada"].append({
-                            "nome": item,
-                            "data": data,
-                            "caminho": caminho_item
-                        })
-            
-            # Listar pastas de SAÍDA
-            caminho_saida = os.path.join(caminho_base, "SAÍDA")
-            if os.path.exists(caminho_saida) and os.path.isdir(caminho_saida):
-                for item in os.listdir(caminho_saida):
-                    caminho_item = os.path.join(caminho_saida, item)
-                    if os.path.isdir(caminho_item):
-                        data = ""
-                        import re
-                        match = re.search(r'(\d{2})[-/](\d{2})[-/](\d{4})', item)
-                        if match:
-                            data = f"{match.group(1)}/{match.group(2)}/{match.group(3)}"
-                        
-                        resultado["saida"].append({
-                            "nome": item,
-                            "data": data,
-                            "caminho": caminho_item
-                        })
-            
-            # Ordenar por data (mais recente primeiro)
-            for tipo in ["entrada", "saida"]:
-                resultado[tipo] = sorted(
-                    resultado[tipo], 
-                    key=lambda x: x.get("data", ""), 
-                    reverse=True
-                )
-            
-        except Exception as e:
-            print(f"Erro ao listar pastas: {e}")
-        
-        return resultado
-    
-    # ======================
-    # FUNÇÕES DE CARREGAMENTO
+    # FUNÇÕES DE CARREGAMENTO (COM CACHE)
     # ======================
     @retry_on_quota()
-    @st.cache_data(ttl=600)
+    @st.cache_data(ttl=600)  # Aumentado para 10 minutos
     def carregar_ferramentais(filtros: Dict[str, Any] = None) -> List[Ferramental]:
         """Carrega todos os ferramentais da planilha com cache"""
         registros = []
@@ -10733,6 +10701,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
             try:
                 sheet = spreadsheet.worksheet(ABA_FERRAMENTARIA)
             except Exception as e:
+                # Se a aba não existir, tentar criar
                 try:
                     sheet = spreadsheet.add_worksheet(title=ABA_FERRAMENTARIA, rows=1000, cols=20)
                     cabecalho = ["ID", "PCP", "CLIENTE", "DESCRIÇÃO", "DATA_INICIAL", 
@@ -10787,6 +10756,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
             return registros
             
         except Exception as e:
+            # Não mostrar erro se for quota, apenas retornar vazio
             if "429" in str(e) or "Quota exceeded" in str(e):
                 return registros
             st.error(f"❌ Erro ao carregar: {str(e)}")
@@ -10818,10 +10788,9 @@ elif aba_selecionada == 'FERRAMENTARIA':
             return False, f"❌ Erro ao salvar: {e}"
     
     # ======================
-    # FUNÇÃO RENDERIZAR LINK (ABRE EM NOVA ABA)
+    # FUNÇÃO RENDERIZAR LINK
     # ======================
     def renderizar_link_botao(link: str, label: str, icon: str, cor: str = None):
-        """Renderiza um link como botão visual que abre em nova aba"""
         if not link or link.strip() == "":
             st.markdown(f"""
             <div style="background: #f8f9fa; padding: 10px; border-radius: 8px; 
@@ -10836,12 +10805,11 @@ elif aba_selecionada == 'FERRAMENTARIA':
         
         if link.startswith('http'):
             st.markdown(f"""
-            <a href="{link}" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">
+            <a href="{link}" target="_blank" style="text-decoration: none;">
                 <div style="background: white; padding: 10px 15px; border-radius: 8px; 
                             border: 1px solid {cor}; border-left: 4px solid {cor};
                             transition: all 0.2s ease; display: flex; align-items: center; gap: 10px;
-                            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-                            cursor: pointer;">
+                            box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
                     <span style="font-size: 20px;">{icon}</span>
                     <div style="flex: 1;">
                         <div style="font-weight: 600; font-size: 14px; color: #333;">{label}</div>
@@ -10853,262 +10821,22 @@ elif aba_selecionada == 'FERRAMENTARIA':
             """, unsafe_allow_html=True)
         else:
             st.markdown(f"""
-            <a href="{link}" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">
-                <div style="background: #f0f7ff; padding: 10px 15px; border-radius: 8px; 
-                            border: 1px solid {cor}; border-left: 4px solid {cor};
-                            display: flex; align-items: center; gap: 10px;
-                            cursor: pointer;">
-                    <span style="font-size: 20px;">{icon}</span>
-                    <div style="flex: 1;">
-                        <div style="font-weight: 600; font-size: 14px; color: #333;">{label}</div>
-                        <div style="font-size: 11px; color: #666; word-break: break-all;">📁 {link}</div>
-                    </div>
-                    <span style="font-size: 18px; color: {cor};">↗</span>
+            <div style="background: #f0f7ff; padding: 10px 15px; border-radius: 8px; 
+                        border: 1px solid {cor}; border-left: 4px solid {cor};
+                        display: flex; align-items: center; gap: 10px;">
+                <span style="font-size: 20px;">{icon}</span>
+                <div style="flex: 1;">
+                    <div style="font-weight: 600; font-size: 14px; color: #333;">{label}</div>
+                    <div style="font-size: 11px; color: #666; word-break: break-all;">📁 {link}</div>
                 </div>
-            </a>
+                <span style="font-size: 14px; color: #666;">📂</span>
+            </div>
             """, unsafe_allow_html=True)
-    
-    # ======================
-    # FUNÇÃO RENDERIZAR MANUTENÇÃO COM LEITURA DINÂMICA
-    # ======================
-    def renderizar_manutencao_com_subpastas(link_manutencao: str, nome_ferramental: str):
-        """Renderiza a estrutura de pastas de manutenção com leitura dinâmica do servidor"""
-        
-        st.markdown("""
-        <style>
-        .manutencao-container {
-            background: #f8f9fc;
-            border-radius: 10px;
-            padding: 15px;
-            border: 1px solid #e0e0e0;
-            margin: 10px 0;
-        }
-        .manutencao-titulo {
-            font-weight: 600;
-            font-size: 15px;
-            color: #333;
-            margin-bottom: 12px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            flex-wrap: wrap;
-        }
-        .manutencao-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 15px;
-        }
-        .manutencao-col {
-            background: white;
-            border-radius: 8px;
-            padding: 12px;
-            border: 1px solid #e0e0e0;
-            min-height: 150px;
-        }
-        .manutencao-col.entrada {
-            border-left: 4px solid #28a745;
-        }
-        .manutencao-col.saida {
-            border-left: 4px solid #dc3545;
-        }
-        .manutencao-col-titulo {
-            font-weight: 600;
-            font-size: 13px;
-            margin-bottom: 10px;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-        .manutencao-col.entrada .manutencao-col-titulo {
-            color: #28a745;
-        }
-        .manutencao-col.saida .manutencao-col-titulo {
-            color: #dc3545;
-        }
-        .subpasta-item {
-            background: #f0f2f5;
-            padding: 8px 12px;
-            border-radius: 6px;
-            margin: 4px 0;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 12px;
-            transition: all 0.2s ease;
-            cursor: pointer;
-        }
-        .subpasta-item:hover {
-            background: #e8ecf1;
-            transform: translateX(3px);
-        }
-        .subpasta-item .icone {
-            font-size: 16px;
-        }
-        .subpasta-item .nome {
-            flex: 1;
-            color: #333;
-            font-weight: 500;
-            word-break: break-word;
-        }
-        .subpasta-item .data {
-            font-size: 10px;
-            color: #999;
-            white-space: nowrap;
-        }
-        .subpasta-item .qtd {
-            font-size: 10px;
-            color: #666;
-            background: #e0e0e0;
-            padding: 1px 8px;
-            border-radius: 10px;
-        }
-        .subpasta-item .link {
-            color: #0078D4;
-            text-decoration: none;
-            font-size: 14px;
-            margin-left: auto;
-        }
-        .subpasta-item .link:hover {
-            text-decoration: underline;
-        }
-        .sem-pastas {
-            color: #999;
-            font-size: 12px;
-            text-align: center;
-            padding: 20px 10px;
-            background: #f8f9fa;
-            border-radius: 6px;
-        }
-        .pasta-raiz-btn {
-            margin-top: 12px;
-            text-align: center;
-        }
-        .pasta-raiz-btn a {
-            text-decoration: none;
-        }
-        .pasta-raiz-btn div {
-            background: #e8ecf1;
-            padding: 8px 16px;
-            border-radius: 6px;
-            display: inline-block;
-            font-size: 12px;
-            color: #333;
-            transition: all 0.2s ease;
-        }
-        .pasta-raiz-btn div:hover {
-            background: #d5d9e0;
-            transform: scale(1.02);
-        }
-        .contador-pastas {
-            font-size: 11px;
-            color: #999;
-            margin-left: 6px;
-            font-weight: normal;
-        }
-        @media (max-width: 768px) {
-            .manutencao-grid {
-                grid-template-columns: 1fr;
-            }
-        }
-        </style>
-        """, unsafe_allow_html=True)
-        
-        st.markdown('<div class="manutencao-container">', unsafe_allow_html=True)
-        
-        # Título
-        st.markdown(f"""
-        <div class="manutencao-titulo">
-            🔧 Manutenções - {nome_ferramental}
-            <span style="font-size: 11px; color: #999; font-weight: normal;">
-                ({link_manutencao if link_manutencao else 'Sem pasta configurada'})
-            </span>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        if not link_manutencao or link_manutencao.strip() == "":
-            st.info("📭 Nenhuma pasta de manutenção configurada.")
-            st.markdown('</div>', unsafe_allow_html=True)
-            return
-        
-        # ===== LER PASTAS DO SERVIDOR DINAMICAMENTE =====
-        with st.spinner(f"📂 Lendo pastas de {link_manutencao}..."):
-            pastas = listar_pastas_servidor(link_manutencao)
-        
-        st.markdown('<div class="manutencao-grid">', unsafe_allow_html=True)
-        
-        # ===== COLUNA ENTRADA =====
-        qtd_entrada = len(pastas["entrada"])
-        st.markdown(f"""
-        <div class="manutencao-col entrada">
-            <div class="manutencao-col-titulo">
-                📥 ENTRADA
-                <span class="contador-pastas">({qtd_entrada} pastas)</span>
-            </div>
-        """, unsafe_allow_html=True)
-        
-        if pastas["entrada"]:
-            for pasta in pastas["entrada"]:
-                st.markdown(f"""
-                <a href="{pasta['caminho']}" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">
-                    <div class="subpasta-item">
-                        <span class="icone">📂</span>
-                        <span class="nome">{pasta['nome']}</span>
-                        <span class="data">{pasta['data'] if pasta['data'] else ''}</span>
-                        <span class="link">↗</span>
-                    </div>
-                </a>
-                """, unsafe_allow_html=True)
-        else:
-            st.markdown('<div class="sem-pastas">📭 Nenhuma subpasta encontrada</div>', unsafe_allow_html=True)
-        
-        st.markdown('</div>', unsafe_allow_html=True)  # Fecha coluna ENTRADA
-        
-        # ===== COLUNA SAÍDA =====
-        qtd_saida = len(pastas["saida"])
-        st.markdown(f"""
-        <div class="manutencao-col saida">
-            <div class="manutencao-col-titulo">
-                📤 SAÍDA
-                <span class="contador-pastas">({qtd_saida} pastas)</span>
-            </div>
-        """, unsafe_allow_html=True)
-        
-        if pastas["saida"]:
-            for pasta in pastas["saida"]:
-                st.markdown(f"""
-                <a href="{pasta['caminho']}" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">
-                    <div class="subpasta-item">
-                        <span class="icone">📂</span>
-                        <span class="nome">{pasta['nome']}</span>
-                        <span class="data">{pasta['data'] if pasta['data'] else ''}</span>
-                        <span class="link">↗</span>
-                    </div>
-                </a>
-                """, unsafe_allow_html=True)
-        else:
-            st.markdown('<div class="sem-pastas">📭 Nenhuma subpasta encontrada</div>', unsafe_allow_html=True)
-        
-        st.markdown('</div>', unsafe_allow_html=True)  # Fecha coluna SAÍDA
-        
-        st.markdown('</div>', unsafe_allow_html=True)  # Fecha grid
-        
-        # ===== BOTÃO PARA ABRIR PASTA RAIZ =====
-        st.markdown(f"""
-        <div class="pasta-raiz-btn">
-            <a href="{link_manutencao}" target="_blank" rel="noopener noreferrer">
-                <div>📂 Abrir pasta raiz: {link_manutencao}</div>
-            </a>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        st.markdown('</div>', unsafe_allow_html=True)  # Fecha container
     
     # ======================
     # FUNÇÃO RENDERIZAR DETALHES
     # ======================
     def renderizar_detalhes_ferramental(registro: Ferramental):
-        """Renderiza a visualização detalhada de um ferramental"""
-        
         st.markdown(f"""
         <div style="background: {THEME['bg_card']}; border-radius: 12px; 
                     padding: 20px; border: 1px solid {THEME['border_bright']};
@@ -11131,7 +10859,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
             </div>
         """, unsafe_allow_html=True)
         
-        # ===== DOCUMENTAÇÃO =====
         st.markdown("""
         <div style="font-weight: 600; font-size: 14px; margin: 15px 0 10px 0; color: #333;">
             📄 Documentação do Ferramental
@@ -11154,8 +10881,39 @@ elif aba_selecionada == 'FERRAMENTARIA':
         
         st.markdown("---")
         
-        # ===== MANUTENÇÕES COM SUBPASTAS =====
-        renderizar_manutencao_com_subpastas(registro.manutencao, registro.descricao or 'Ferramental')
+        st.markdown(f"""
+        <div style="font-weight: 600; font-size: 14px; margin: 15px 0 10px 0; color: #333;">
+            🔧 Manutenções - {registro.descricao or 'Ferramental'}
+        </div>
+        """, unsafe_allow_html=True)
+        
+        if not registro.manutencao or registro.manutencao.strip() == "":
+            st.info("📭 Nenhuma pasta de manutenção configurada.")
+        else:
+            col_m1, col_m2 = st.columns(2)
+            with col_m1:
+                st.markdown("""
+                <div style="font-weight: 600; color: #28a745; font-size: 13px; margin-bottom: 8px;">
+                    📥 ENTRADA
+                </div>
+                """, unsafe_allow_html=True)
+                st.markdown(f"""
+                <div style="background: #f0f7f0; padding: 10px; border-radius: 8px; border: 1px solid #28a745;">
+                    📁 {registro.manutencao}/ENTRADA/
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col_m2:
+                st.markdown("""
+                <div style="font-weight: 600; color: #dc3545; font-size: 13px; margin-bottom: 8px;">
+                    📤 SAÍDA
+                </div>
+                """, unsafe_allow_html=True)
+                st.markdown(f"""
+                <div style="background: #fdf0f0; padding: 10px; border-radius: 8px; border: 1px solid #dc3545;">
+                    📁 {registro.manutencao}/SAÍDA/
+                </div>
+                """, unsafe_allow_html=True)
         
         st.markdown('</div>', unsafe_allow_html=True)
     
