@@ -10543,7 +10543,7 @@ elif aba_selecionada == 'PRÊMIO PRENSADOS':
     </div>
     """, unsafe_allow_html=True)
 # ==================================================================================================
-# FERRAMENTARIA - GERENCIAMENTO DE MOLDES (COM DIAGNÓSTICO)
+# FERRAMENTARIA - VERSÃO COM CACHE E SEM OPENALL
 # ==================================================================================================
 elif aba_selecionada == 'FERRAMENTARIA':
     render_page_header("🛠️ FERRAMENTARIA", 
@@ -10557,9 +10557,9 @@ elif aba_selecionada == 'FERRAMENTARIA':
     ABA_FERRAMENTARIA = 'MOLDES'
     
     # ======================
-    # BOTÃO PARA DIAGNÓSTICO MANUAL
+    # BOTÃO PARA DIAGNÓSTICO (SEM OPENALL)
     # ======================
-    with st.expander("🔧 Diagnóstico de Conexão", expanded=True):
+    with st.expander("🔧 Diagnóstico de Conexão", expanded=False):
         st.markdown("""
         **Informações da Planilha:**
         - **ID:** `12xXYNhrGwIP4PMvcdLSMFaMIM-CcLPYyvFBD0I7Gigb`
@@ -10567,7 +10567,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
         - **Service Account:** `script-atualizacao@dashboard-gerencial-492613.iam.gserviceaccount.com`
         """)
         
-        if st.button("🔍 TESTAR CONEXÃO", type="primary"):
+        if st.button("🔍 TESTAR CONEXÃO (SEM OPENALL)", type="primary"):
             st.markdown("---")
             st.markdown("### 📊 Resultado do Diagnóstico")
             
@@ -10579,32 +10579,33 @@ elif aba_selecionada == 'FERRAMENTARIA':
                     st.success("✅ Cliente conectado!")
                 else:
                     st.error("❌ Cliente NÃO conectado")
+                    st.stop()
             except Exception as e:
                 st.error(f"❌ Erro: {e}")
+                st.stop()
             
-            # Teste 2: Listar planilhas acessíveis
-            st.markdown("**2️⃣ Planilhas acessíveis**")
+            # Teste 2: Acessar planilha específica (sem listar todas)
+            st.markdown("**2️⃣ Acessando planilha FERRAMENTARIA**")
             try:
-                if client:
-                    sheets = client.openall()
-                    st.write(f"📊 {len(sheets)} planilhas encontradas")
-                    for s in sheets[:5]:  # Mostrar apenas as 5 primeiras
-                        st.write(f"   - {s.title} (ID: {s.id})")
-            except Exception as e:
-                st.error(f"❌ Erro ao listar: {e}")
-            
-            # Teste 3: Acessar planilha específica
-            st.markdown("**3️⃣ Acessando planilha FERRAMENTARIA**")
-            try:
-                if client:
-                    spreadsheet = client.open_by_key(ID_PLANILHA_FERRAMENTARIA)
-                    st.success(f"✅ Planilha encontrada: {spreadsheet.title}")
-                    
-                    # Teste 4: Listar abas
-                    st.markdown("**4️⃣ Abas disponíveis**")
-                    worksheets = spreadsheet.worksheets()
-                    for ws in worksheets:
-                        st.write(f"   - {ws.title}")
+                spreadsheet = client.open_by_key(ID_PLANILHA_FERRAMENTARIA)
+                st.success(f"✅ Planilha encontrada: **{spreadsheet.title}**")
+                
+                # Teste 3: Listar abas
+                st.markdown("**3️⃣ Abas disponíveis**")
+                worksheets = spreadsheet.worksheets()
+                for ws in worksheets:
+                    st.write(f"   - **{ws.title}**")
+                
+                # Teste 4: Verificar aba MOLDES
+                st.markdown("**4️⃣ Verificando aba MOLDES**")
+                aba_encontrada = False
+                for ws in worksheets:
+                    if ws.title == ABA_FERRAMENTARIA:
+                        aba_encontrada = True
+                        break
+                
+                if aba_encontrada:
+                    st.success(f"✅ Aba '{ABA_FERRAMENTARIA}' encontrada!")
                     
                     # Teste 5: Ler dados
                     st.markdown("**5️⃣ Lendo dados da aba MOLDES**")
@@ -10616,8 +10617,28 @@ elif aba_selecionada == 'FERRAMENTARIA':
                             st.write(f"**Cabeçalho:** {data[0]}")
                             if len(data) > 1:
                                 st.write(f"**Primeira linha:** {data[1]}")
+                            else:
+                                st.info("📭 A planilha está vazia. Cadastre o primeiro ferramental!")
+                        else:
+                            st.info("📭 A planilha está vazia.")
                     except Exception as e:
-                        st.error(f"❌ Erro ao ler aba: {e}")
+                        st.error(f"❌ Erro ao ler dados: {e}")
+                else:
+                    st.warning(f"⚠️ Aba '{ABA_FERRAMENTARIA}' NÃO encontrada!")
+                    st.info("💡 As abas disponíveis são: " + ", ".join([ws.title for ws in worksheets]))
+                    
+                    # Tentar criar a aba
+                    if st.button("➕ CRIAR ABA MOLDES"):
+                        try:
+                            sheet = spreadsheet.add_worksheet(title=ABA_FERRAMENTARIA, rows=1000, cols=20)
+                            cabecalho = ["ID", "PCP", "CLIENTE", "DESCRIÇÃO", "DATA_INICIAL", 
+                                        "AVALIAÇÃO_INICIAL", "DESENHO", "GABARITO", 
+                                        "PLANO_CONTROLE", "PLANO_DE_AÇÃO", "MANUTENÇÃO"]
+                            sheet.append_row(cabecalho)
+                            st.success("✅ Aba 'MOLDES' criada com sucesso!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Erro ao criar aba: {e}")
                         
             except Exception as e:
                 st.error(f"❌ Erro: {e}")
@@ -10634,6 +10655,15 @@ elif aba_selecionada == 'FERRAMENTARIA':
             st.info("💡 Se o teste falhar, verifique o compartilhamento da planilha.")
     
     st.markdown("---")
+    
+    # ======================
+    # ADICIONAR BOTÃO DE RECARREGAMENTO RÁPIDO
+    # ======================
+    col1, col2 = st.columns([3, 1])
+    with col2:
+        if st.button("🔄 RECARREGAR DADOS", use_container_width=True):
+            st.cache_data.clear()
+            st.rerun()
     
     # ======================
     # DATACLASS
@@ -10653,11 +10683,12 @@ elif aba_selecionada == 'FERRAMENTARIA':
         manutencao: str = ""
     
     # ======================
-    # FUNÇÕES DE CARREGAMENTO
+    # FUNÇÕES DE CARREGAMENTO (COM CACHE)
     # ======================
     @retry_on_quota()
-    @st.cache_data(ttl=300)
+    @st.cache_data(ttl=600)  # Aumentado para 10 minutos
     def carregar_ferramentais(filtros: Dict[str, Any] = None) -> List[Ferramental]:
+        """Carrega todos os ferramentais da planilha com cache"""
         registros = []
         
         try:
@@ -10670,13 +10701,16 @@ elif aba_selecionada == 'FERRAMENTARIA':
             try:
                 sheet = spreadsheet.worksheet(ABA_FERRAMENTARIA)
             except Exception as e:
-                st.warning(f"⚠️ Aba '{ABA_FERRAMENTARIA}' não encontrada. Criando...")
-                sheet = spreadsheet.add_worksheet(title=ABA_FERRAMENTARIA, rows=1000, cols=20)
-                cabecalho = ["ID", "PCP", "CLIENTE", "DESCRIÇÃO", "DATA_INICIAL", 
-                            "AVALIAÇÃO_INICIAL", "DESENHO", "GABARITO", 
-                            "PLANO_CONTROLE", "PLANO_DE_AÇÃO", "MANUTENÇÃO"]
-                sheet.append_row(cabecalho)
-                return registros
+                # Se a aba não existir, tentar criar
+                try:
+                    sheet = spreadsheet.add_worksheet(title=ABA_FERRAMENTARIA, rows=1000, cols=20)
+                    cabecalho = ["ID", "PCP", "CLIENTE", "DESCRIÇÃO", "DATA_INICIAL", 
+                                "AVALIAÇÃO_INICIAL", "DESENHO", "GABARITO", 
+                                "PLANO_CONTROLE", "PLANO_DE_AÇÃO", "MANUTENÇÃO"]
+                    sheet.append_row(cabecalho)
+                    return registros
+                except:
+                    return registros
             
             todos_dados = sheet.get_all_values()
             
@@ -10722,6 +10756,9 @@ elif aba_selecionada == 'FERRAMENTARIA':
             return registros
             
         except Exception as e:
+            # Não mostrar erro se for quota, apenas retornar vazio
+            if "429" in str(e) or "Quota exceeded" in str(e):
+                return registros
             st.error(f"❌ Erro ao carregar: {str(e)}")
             return registros
     
