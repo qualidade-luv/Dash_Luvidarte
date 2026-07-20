@@ -6239,60 +6239,77 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
                                     st.rerun()
         
         elif menu_rm == "📊 Visualizar Requisições":
-            st.subheader("Lista de Requisições de Manutenção")
-            with st.spinner("Carregando registros..."):
-                registros = carregar_registros_rm()
-            
-            if registros:
-                # Obter lista única de setores destino para o filtro
-                setores_destino_disponiveis = sorted(set([r.setor2 for r in registros if r.setor2]))
-                opcoes_setores_destino = ["Todos"] + setores_destino_disponiveis
-                
-                col_f1, col_f2, col_f3 = st.columns(3)
-                with col_f1:
-                    filtro_status = st.selectbox("Status", ["Todos"] + OPCOES_STATUS_RM)
-                with col_f2:
-                    filtro_caracter = st.selectbox("Caráter", ["Todos"] + OPCOES_CARATER_RM)
-                with col_f3:
-                    filtro_setor_destino = st.selectbox("Setor Destino", opcoes_setores_destino)
-                
-                dados_filtrados = registros
-                if filtro_status != "Todos":
-                    dados_filtrados = [r for r in dados_filtrados if r.status == filtro_status]
-                if filtro_caracter != "Todos":
-                    dados_filtrados = [r for r in dados_filtrados if r.caracter == filtro_caracter]
-                if filtro_setor_destino != "Todos":
-                    dados_filtrados = [r for r in dados_filtrados if r.setor2 == filtro_setor_destino]
-                
-                col_e1, col_e2, col_e3, col_e4 = st.columns(4)
-                with col_e1:
-                    st.metric("Total", len(registros))
-                with col_e2:
-                    abertos = len([r for r in registros if r.status == "ABERTO"])
-                    st.metric("Em Aberto", abertos)
-                with col_e3:
-                    criticos = len([r for r in registros if "1 -" in r.caracter])
-                    st.metric("Nível 1 (Crítico)", criticos)
-                with col_e4:
-                    finalizados = len([r for r in registros if r.status == "FINALIZADO"])
-                    st.metric("Finalizados", finalizados)
-                
-                dados_tabela = []
-                for reg in dados_filtrados[:100]:
-                    emoji = "🚨" if "1 -" in reg.caracter else "⚠️" if "2 -" in reg.caracter else "📊" if "3 -" in reg.caracter else "🔧"
-                    dados_tabela.append({
-                        "ID": reg.id,
-                        "Data": reg.data.strftime("%d/%m/%Y") if reg.data else "-",
-                        "Equipamento": reg.equipamento[:30] + "..." if len(reg.equipamento) > 30 else reg.equipamento,
-                        "Caráter": f"{emoji} {reg.caracter}",
-                        "Setor Destino": reg.setor2,
-                        "Status": reg.status,
-                        "Emissor": reg.emissor
-                    })
-                df = pd.DataFrame(dados_tabela)
-                st.dataframe(df, use_container_width=True, height=400)
+    st.subheader("Lista de Requisições de Manutenção")
+    with st.spinner("Carregando registros..."):
+        registros = carregar_registros_rm()
+    
+    if registros:
+        # Obter lista única de setores destino para o filtro
+        setores_destino_disponiveis = sorted(set([r.setor2 for r in registros if r.setor2]))
+        opcoes_setores_destino = ["Todos"] + setores_destino_disponiveis
+        
+        col_f1, col_f2, col_f3 = st.columns(3)
+        with col_f1:
+            filtro_status = st.selectbox("Status", ["Todos"] + OPCOES_STATUS_RM)
+        with col_f2:
+            filtro_caracter = st.selectbox("Caráter", ["Todos"] + OPCOES_CARATER_RM)
+        with col_f3:
+            filtro_setor_destino = st.selectbox("Setor Destino", opcoes_setores_destino)
+        
+        # Aplicar filtros
+        dados_filtrados = registros
+        if filtro_status != "Todos":
+            dados_filtrados = [r for r in dados_filtrados if r.status == filtro_status]
+        if filtro_caracter != "Todos":
+            dados_filtrados = [r for r in dados_filtrados if r.caracter == filtro_caracter]
+        if filtro_setor_destino != "Todos":
+            dados_filtrados = [r for r in dados_filtrados if r.setor2 == filtro_setor_destino]
+        
+        # ===== CARDS COM VALORES FILTRADOS =====
+        col_e1, col_e2, col_e3, col_e4 = st.columns(4)
+        with col_e1:
+            st.metric("📋 Total", len(dados_filtrados))
+        with col_e2:
+            abertos = len([r for r in dados_filtrados if r.status == "ABERTO"])
+            st.metric("🟡 Em Aberto", abertos)
+        with col_e3:
+            criticos = len([r for r in dados_filtrados if "1 -" in r.caracter])
+            st.metric("🚨 Nível 1 (Crítico)", criticos)
+        with col_e4:
+            finalizados = len([r for r in dados_filtrados if r.status == "FINALIZADO"])
+            st.metric("✅ Finalizados", finalizados)
+        
+        # Exibir contagem de registros filtrados
+        if len(dados_filtrados) < len(registros):
+            st.caption(f"🔍 Exibindo {len(dados_filtrados)} de {len(registros)} registros (filtros aplicados)")
+        
+        # Tabela de dados
+        dados_tabela = []
+        for reg in dados_filtrados[:100]:
+            emoji = "🚨" if "1 -" in reg.caracter else "⚠️" if "2 -" in reg.caracter else "📊" if "3 -" in reg.caracter else "🔧"
+            # Definir cor do status
+            if reg.status == "FINALIZADO":
+                status_display = "✅ FINALIZADO"
+            elif reg.status == "ABERTO":
+                status_display = "🟡 ABERTO"
+            elif reg.status == "EM ANDAMENTO":
+                status_display = "🔄 EM ANDAMENTO"
             else:
-                st.info("📭 Nenhuma requisição encontrada")
+                status_display = f"⛔ {reg.status}"
+            
+            dados_tabela.append({
+                "ID": reg.id,
+                "Data": reg.data.strftime("%d/%m/%Y") if reg.data else "-",
+                "Equipamento": reg.equipamento[:30] + "..." if len(reg.equipamento) > 30 else reg.equipamento,
+                "Caráter": f"{emoji} {reg.caracter}",
+                "Setor Destino": reg.setor2,
+                "Status": status_display,
+                "Emissor": reg.emissor
+            })
+        df = pd.DataFrame(dados_tabela)
+        st.dataframe(df, use_container_width=True, height=400)
+    else:
+        st.info("📭 Nenhuma requisição encontrada")
         
         elif menu_rm == "🔍 Buscar/Editar/Excluir":
             st.subheader("Buscar, Editar ou Excluir Requisição")
