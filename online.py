@@ -10553,7 +10553,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
     # ======================
     # CONFIGURAÇÃO DA PLANILHA
     # ======================
-    ID_PLANILHA_FERRAMENTARIA = '12xXYNhrGwIP4PMvcdLSMFaMIM-CcLPYyvFBD0I7Gigb'
+    ID_PLANILHA_FERRAMENTARIA = '12xXYNhrGWP4PMvcdLSMFaMIM-CcLPYyvfBGD0I7Gibg'
     ABA_FERRAMENTARIA = 'MOLDES'
     
     # ======================
@@ -10562,7 +10562,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
     with st.expander("🔧 Diagnóstico de Conexão", expanded=False):
         st.markdown("""
         **Informações da Planilha:**
-        - **ID:** `12xXYNhrGwIP4PMvcdLSMFaMIM-CcLPYyvFBD0I7Gigb`
+        - **ID:** `12xXYNhrGWP4PMvcdLSMFaMIM-CcLPYyvfBGD0I7Gibg`
         - **Aba:** `MOLDES`
         - **Service Account:** `script-atualizacao@dashboard-gerencial-492613.iam.gserviceaccount.com`
         """)
