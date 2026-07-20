@@ -10543,7 +10543,7 @@ elif aba_selecionada == 'PRÊMIO PRENSADOS':
     </div>
     """, unsafe_allow_html=True)
 # ==================================================================================================
-# FERRAMENTARIA - GERENCIAMENTO DE MOLDES
+# FERRAMENTARIA - GERENCIAMENTO DE MOLDES (VERSÃO CORRIGIDA)
 # ==================================================================================================
 elif aba_selecionada == 'FERRAMENTARIA':
     render_page_header("🛠️ FERRAMENTARIA", 
@@ -10551,10 +10551,55 @@ elif aba_selecionada == 'FERRAMENTARIA':
                        THEME['accent_cyan'])
     
     # ======================
-    # CONFIGURAÇÃO DA PLANILHA
+    # CONFIGURAÇÃO DA PLANILHA - ✅ CORRIGIDO
     # ======================
+    # Use SOMENTE o ID, não a URL completa
     ID_PLANILHA_FERRAMENTARIA = '12xXYNhrGwIP4PMvcdLSMFaMIM-CcLPYyvFBD0I7Gigb'
     ABA_FERRAMENTARIA = 'MOLDES'
+    
+    # ======================
+    # VERIFICAÇÃO RÁPIDA DA CONEXÃO
+    # ======================
+    with st.spinner("🔍 Verificando conexão com a planilha..."):
+        try:
+            client = get_gspread_client()
+            if client is None:
+                st.error("""
+                ❌ **Erro de Conexão com o Google Sheets**
+                
+                Verifique:
+                1. O arquivo de credenciais JSON está no local correto
+                2. O service account tem permissão de acesso
+                3. A planilha está compartilhada corretamente
+                """)
+                st.stop()
+            
+            # Testar acesso à planilha
+            try:
+                spreadsheet = client.open_by_key(ID_PLANILHA_FERRAMENTARIA)
+                st.success("✅ Conexão com a planilha FERRAMENTARIA estabelecida!")
+            except Exception as e:
+                st.error(f"""
+                ❌ **Erro ao acessar a planilha FERRAMENTARIA**
+                
+                **Erro:** {str(e)}
+                
+                **Verifique se:**
+                1. O ID da planilha está correto: `{ID_PLANILHA_FERRAMENTARIA}`
+                2. A planilha está compartilhada com: `script-atualizacao@dashboard-gerencial-492613.iam.gserviceaccount.com`
+                3. A permissão é de **Editor**
+                
+                **📋 Como compartilhar:**
+                1. Abra a planilha no Google Sheets
+                2. Clique em "Compartilhar"
+                3. Adicione o e-mail acima
+                4. Selecione "Editor" como permissão
+                """)
+                st.stop()
+                
+        except Exception as e:
+            st.error(f"❌ Erro ao conectar: {str(e)}")
+            st.stop()
     
     # ======================
     # DATACLASS PARA FERRAMENTAL
@@ -10565,7 +10610,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
         pcp: str = ""
         cliente: str = ""
         descricao: str = ""
-        data_inicial: Optional[datetime] = None
+        data_inicial: str = ""
         avaliacao_inicial: str = ""
         desenho: str = ""
         gabarito: str = ""
@@ -10581,10 +10626,10 @@ elif aba_selecionada == 'FERRAMENTARIA':
     def carregar_ferramentais(filtros: Dict[str, Any] = None) -> List[Ferramental]:
         """Carrega todos os ferramentais da planilha"""
         registros = []
+        
         try:
             client = get_gspread_client()
             if client is None:
-                st.error("❌ Erro ao conectar ao Google Sheets")
                 return registros
             
             spreadsheet = client.open_by_key(ID_PLANILHA_FERRAMENTARIA)
@@ -10592,7 +10637,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
             try:
                 sheet = spreadsheet.worksheet(ABA_FERRAMENTARIA)
             except Exception as e:
-                st.warning(f"Aba '{ABA_FERRAMENTARIA}' não encontrada. Criando...")
+                st.warning(f"⚠️ Aba '{ABA_FERRAMENTARIA}' não encontrada. Criando...")
                 sheet = spreadsheet.add_worksheet(title=ABA_FERRAMENTARIA, rows=1000, cols=20)
                 cabecalho = ["ID", "PCP", "CLIENTE", "DESCRIÇÃO", "DATA_INICIAL", 
                             "AVALIAÇÃO_INICIAL", "DESENHO", "GABARITO", 
@@ -10605,31 +10650,25 @@ elif aba_selecionada == 'FERRAMENTARIA':
             if len(todos_dados) < 2:
                 return registros
             
+            # Mapeamento de colunas baseado na sua planilha
+            # Sua planilha tem: ID | PCP | CLIENTE | DESCRIÇÃO | DATA_INICIAL | AVALIAÇÃO_INICIAL | DESENHO | GABARITO | PLANO_CONTROLE | PLANO_DE_AÇÃO | MANUTENÇÃO | MANUTENÇÕES
             for idx, row in enumerate(todos_dados[1:], start=2):
-                if len(row) < 11:
+                if len(row) < 5:  # Pelo menos ID, PCP, CLIENTE, DESCRIÇÃO, DATA_INICIAL
                     continue
                 
                 try:
                     registro = Ferramental()
-                    registro.id = row[0].strip() if row[0] else f"FER-{idx:03d}"
-                    registro.pcp = row[1].strip() if len(row) > 1 else ""
-                    registro.cliente = row[2].strip() if len(row) > 2 else ""
-                    registro.descricao = row[3].strip() if len(row) > 3 else ""
-                    
-                    # Data
-                    data_str = row[4].strip() if len(row) > 4 else ""
-                    if data_str:
-                        try:
-                            registro.data_inicial = datetime.strptime(data_str, "%d/%m/%Y")
-                        except:
-                            registro.data_inicial = converter_data_br(data_str)
-                    
-                    registro.avaliacao_inicial = row[5].strip() if len(row) > 5 else ""
-                    registro.desenho = row[6].strip() if len(row) > 6 else ""
-                    registro.gabarito = row[7].strip() if len(row) > 7 else ""
-                    registro.plano_controle = row[8].strip() if len(row) > 8 else ""
-                    registro.plano_acao = row[9].strip() if len(row) > 9 else ""
-                    registro.manutencao = row[10].strip() if len(row) > 10 else ""
+                    registro.id = row[0].strip() if len(row) > 0 and row[0] else f"FER-{idx:03d}"
+                    registro.pcp = row[1].strip() if len(row) > 1 and row[1] else ""
+                    registro.cliente = row[2].strip() if len(row) > 2 and row[2] else ""
+                    registro.descricao = row[3].strip() if len(row) > 3 and row[3] else ""
+                    registro.data_inicial = row[4].strip() if len(row) > 4 and row[4] else ""
+                    registro.avaliacao_inicial = row[5].strip() if len(row) > 5 and row[5] else ""
+                    registro.desenho = row[6].strip() if len(row) > 6 and row[6] else ""
+                    registro.gabarito = row[7].strip() if len(row) > 7 and row[7] else ""
+                    registro.plano_controle = row[8].strip() if len(row) > 8 and row[8] else ""
+                    registro.plano_acao = row[9].strip() if len(row) > 9 and row[9] else ""
+                    registro.manutencao = row[10].strip() if len(row) > 10 and row[10] else ""
                     
                     registros.append(registro)
                 except Exception as e:
@@ -10637,7 +10676,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
                     continue
             
             # Aplicar filtros se existirem
-            if filtros:
+            if filtros and registros:
                 registros_filtrados = []
                 for r in registros:
                     incluir = True
@@ -10654,14 +10693,13 @@ elif aba_selecionada == 'FERRAMENTARIA':
             return registros
             
         except Exception as e:
-            st.error(f"❌ Erro ao carregar ferramentais: {e}")
+            st.error(f"❌ Erro ao carregar ferramentais: {str(e)}")
             return registros
     
     # ======================
     # FUNÇÃO PARA SALVAR FERRAMENTAL
     # ======================
     def salvar_ferramental(registro: Ferramental) -> tuple:
-        """Salva um novo ferramental na planilha"""
         try:
             client = get_gspread_client()
             if client is None:
@@ -10675,7 +10713,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
                 registro.pcp,
                 registro.cliente,
                 registro.descricao,
-                registro.data_inicial.strftime("%d/%m/%Y") if registro.data_inicial else "",
+                registro.data_inicial,
                 registro.avaliacao_inicial,
                 registro.desenho,
                 registro.gabarito,
@@ -10691,73 +10729,9 @@ elif aba_selecionada == 'FERRAMENTARIA':
             return False, f"❌ Erro ao salvar: {e}"
     
     # ======================
-    # FUNÇÃO PARA ATUALIZAR FERRAMENTAL
-    # ======================
-    def atualizar_ferramental(registro: Ferramental) -> tuple:
-        """Atualiza um ferramental existente"""
-        try:
-            client = get_gspread_client()
-            if client is None:
-                return False, "❌ Erro ao conectar ao Google Sheets"
-            
-            spreadsheet = client.open_by_key(ID_PLANILHA_FERRAMENTARIA)
-            sheet = spreadsheet.worksheet(ABA_FERRAMENTARIA)
-            
-            # Buscar pela coluna ID
-            cell = sheet.find(registro.id, in_column=1)
-            if not cell:
-                return False, f"❌ Ferramental ID {registro.id} não encontrado"
-            
-            dados = [
-                registro.id,
-                registro.pcp,
-                registro.cliente,
-                registro.descricao,
-                registro.data_inicial.strftime("%d/%m/%Y") if registro.data_inicial else "",
-                registro.avaliacao_inicial,
-                registro.desenho,
-                registro.gabarito,
-                registro.plano_controle,
-                registro.plano_acao,
-                registro.manutencao
-            ]
-            
-            for col, valor in enumerate(dados, start=1):
-                sheet.update_cell(cell.row, col, valor)
-            
-            st.cache_data.clear()
-            return True, "✅ Ferramental atualizado com sucesso!"
-        except Exception as e:
-            return False, f"❌ Erro ao atualizar: {e}"
-    
-    # ======================
-    # FUNÇÃO PARA EXCLUIR FERRAMENTAL
-    # ======================
-    def excluir_ferramental(id_ferramental: str) -> tuple:
-        """Exclui um ferramental da planilha"""
-        try:
-            client = get_gspread_client()
-            if client is None:
-                return False, "❌ Erro ao conectar ao Google Sheets"
-            
-            spreadsheet = client.open_by_key(ID_PLANILHA_FERRAMENTARIA)
-            sheet = spreadsheet.worksheet(ABA_FERRAMENTARIA)
-            
-            cell = sheet.find(id_ferramental, in_column=1)
-            if not cell:
-                return False, f"❌ Ferramental ID {id_ferramental} não encontrado"
-            
-            sheet.delete_rows(cell.row)
-            st.cache_data.clear()
-            return True, "✅ Ferramental excluído com sucesso!"
-        except Exception as e:
-            return False, f"❌ Erro ao excluir: {e}"
-    
-    # ======================
-    # FUNÇÃO PARA RENDERIZAR LINK COMO BOTÃO VISUAL
+    # FUNÇÃO PARA RENDERIZAR LINK
     # ======================
     def renderizar_link_botao(link: str, label: str, icon: str, cor: str = None):
-        """Renderiza um link como botão visual"""
         if not link or link.strip() == "":
             st.markdown(f"""
             <div style="background: #f8f9fa; padding: 10px; border-radius: 8px; 
@@ -10770,9 +10744,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
         if cor is None:
             cor = THEME['accent_cyan']
         
-        # Detectar tipo de link
         if link.startswith('http'):
-            # Link externo
             st.markdown(f"""
             <a href="{link}" target="_blank" style="text-decoration: none;">
                 <div style="background: white; padding: 10px 15px; border-radius: 8px; 
@@ -10789,7 +10761,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
             </a>
             """, unsafe_allow_html=True)
         else:
-            # Possível caminho de rede
             st.markdown(f"""
             <div style="background: #f0f7ff; padding: 10px 15px; border-radius: 8px; 
                         border: 1px solid {cor}; border-left: 4px solid {cor};
@@ -10804,153 +10775,9 @@ elif aba_selecionada == 'FERRAMENTARIA':
             """, unsafe_allow_html=True)
     
     # ======================
-    # FUNÇÃO PARA RENDERIZAR ESTRUTURA DE MANUTENÇÃO
-    # ======================
-    def renderizar_manutencao(link_manutencao: str, nome_ferramental: str):
-        """Renderiza a estrutura de pastas de manutenção"""
-        
-        st.markdown("""
-        <style>
-        .manutencao-container {
-            background: #f8f9fc;
-            border-radius: 10px;
-            padding: 15px;
-            border: 1px solid #e0e0e0;
-        }
-        .manutencao-pasta {
-            background: white;
-            border-radius: 8px;
-            padding: 12px 15px;
-            margin: 5px 0;
-            border-left: 3px solid #0078D4;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        .manutencao-pasta:hover {
-            transform: translateX(5px);
-            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-        }
-        .manutencao-pasta.entrada {
-            border-left-color: #28a745;
-        }
-        .manutencao-pasta.saida {
-            border-left-color: #dc3545;
-        }
-        .manutencao-subpasta {
-            margin-left: 30px;
-            padding: 6px 12px;
-            background: #f0f2f5;
-            border-radius: 5px;
-            margin-top: 3px;
-            font-size: 12px;
-            color: #555;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        .manutencao-imagem {
-            margin-left: 50px;
-            padding: 4px 10px;
-            background: white;
-            border-radius: 4px;
-            border: 1px solid #ddd;
-            font-size: 11px;
-            color: #333;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-        .pasta-icon {
-            font-size: 18px;
-        }
-        </style>
-        """, unsafe_allow_html=True)
-        
-        st.markdown('<div class="manutencao-container">', unsafe_allow_html=True)
-        
-        # Título
-        st.markdown(f"""
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-            <div style="font-weight: 600; font-size: 15px; color: #333;">
-                🔧 Manutenções - {nome_ferramental}
-            </div>
-            <div style="font-size: 12px; color: #666;">
-                📁 {link_manutencao if link_manutencao else 'Sem pasta configurada'}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        if not link_manutencao or link_manutencao.strip() == "":
-            st.info("📭 Nenhuma pasta de manutenção configurada.")
-            st.markdown('</div>', unsafe_allow_html=True)
-            return
-        
-        # Estrutura simulada (exemplo)
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("""
-            <div style="font-weight: 600; color: #28a745; font-size: 13px; margin-bottom: 8px;">
-                📥 ENTRADA
-            </div>
-            """, unsafe_allow_html=True)
-            
-            # Exemplo de estrutura ENTRADA
-            entradas = [
-                {"data": "01/06/2026", "descricao": "Manutenção preventiva"},
-                {"data": "15/06/2026", "descricao": "Troca de componente"},
-                {"data": "30/06/2026", "descricao": "Revisão geral"}
-            ]
-            
-            for entrada in entradas:
-                st.markdown(f"""
-                <div class="manutencao-pasta entrada">
-                    <span class="pasta-icon">📂</span>
-                    <div>
-                        <div style="font-weight: 500;">{entrada['data']}</div>
-                        <div style="font-size: 12px; color: #666;">{entrada['descricao']}</div>
-                    </div>
-                    <span style="margin-left: auto; font-size: 20px;">📄</span>
-                </div>
-                """, unsafe_allow_html=True)
-        
-        with col2:
-            st.markdown("""
-            <div style="font-weight: 600; color: #dc3545; font-size: 13px; margin-bottom: 8px;">
-                📤 SAÍDA
-            </div>
-            """, unsafe_allow_html=True)
-            
-            # Exemplo de estrutura SAÍDA
-            saidas = [
-                {"data": "02/06/2026", "descricao": "Devolução após manutenção"},
-                {"data": "16/06/2026", "descricao": "Envio para cliente"},
-                {"data": "01/07/2026", "descricao": "Retorno da manutenção"}
-            ]
-            
-            for saida in saidas:
-                st.markdown(f"""
-                <div class="manutencao-pasta saida">
-                    <span class="pasta-icon">📂</span>
-                    <div>
-                        <div style="font-weight: 500;">{saida['data']}</div>
-                        <div style="font-size: 12px; color: #666;">{saida['descricao']}</div>
-                    </div>
-                    <span style="margin-left: auto; font-size: 20px;">📄</span>
-                </div>
-                """, unsafe_allow_html=True)
-        
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    # ======================
-    # FUNÇÃO PARA RENDERIZAR DETALHES DO FERRAMENTAL
+    # FUNÇÃO PARA RENDERIZAR DETALHES
     # ======================
     def renderizar_detalhes_ferramental(registro: Ferramental):
-        """Renderiza a visualização detalhada de um ferramental"""
-        
         st.markdown(f"""
         <div style="background: {THEME['bg_card']}; border-radius: 12px; 
                     padding: 20px; border: 1px solid {THEME['border_bright']};
@@ -10960,7 +10787,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
                     <span style="font-size: 28px;">🔧</span>
                     <div>
                         <div style="font-size: 20px; font-weight: 700; color: {THEME['text_primary']};">
-                            {registro.descricao}
+                            {registro.descricao or 'Sem descrição'}
                         </div>
                         <div style="font-size: 13px; color: {THEME['text_muted']};">
                             ID: {registro.id} | PCP: {registro.pcp} | Cliente: {registro.cliente}
@@ -10968,12 +10795,11 @@ elif aba_selecionada == 'FERRAMENTARIA':
                     </div>
                 </div>
                 <div style="font-size: 13px; color: {THEME['text_muted']};">
-                    📅 {registro.data_inicial.strftime('%d/%m/%Y') if registro.data_inicial else 'N/A'}
+                    📅 {registro.data_inicial or 'N/A'}
                 </div>
             </div>
         """, unsafe_allow_html=True)
         
-        # ===== GRID DE LINKS =====
         st.markdown("""
         <div style="font-weight: 600; font-size: 14px; margin: 15px 0 10px 0; color: #333;">
             📄 Documentação do Ferramental
@@ -10996,8 +10822,39 @@ elif aba_selecionada == 'FERRAMENTARIA':
         
         st.markdown("---")
         
-        # ===== MANUTENÇÕES =====
-        renderizar_manutencao(registro.manutencao, registro.descricao)
+        st.markdown(f"""
+        <div style="font-weight: 600; font-size: 14px; margin: 15px 0 10px 0; color: #333;">
+            🔧 Manutenções - {registro.descricao or 'Ferramental'}
+        </div>
+        """, unsafe_allow_html=True)
+        
+        if not registro.manutencao or registro.manutencao.strip() == "":
+            st.info("📭 Nenhuma pasta de manutenção configurada.")
+        else:
+            col_m1, col_m2 = st.columns(2)
+            with col_m1:
+                st.markdown("""
+                <div style="font-weight: 600; color: #28a745; font-size: 13px; margin-bottom: 8px;">
+                    📥 ENTRADA
+                </div>
+                """, unsafe_allow_html=True)
+                st.markdown(f"""
+                <div style="background: #f0f7f0; padding: 10px; border-radius: 8px; border: 1px solid #28a745;">
+                    📁 {registro.manutencao}/ENTRADA/
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col_m2:
+                st.markdown("""
+                <div style="font-weight: 600; color: #dc3545; font-size: 13px; margin-bottom: 8px;">
+                    📤 SAÍDA
+                </div>
+                """, unsafe_allow_html=True)
+                st.markdown(f"""
+                <div style="background: #fdf0f0; padding: 10px; border-radius: 8px; border: 1px solid #dc3545;">
+                    📁 {registro.manutencao}/SAÍDA/
+                </div>
+                """, unsafe_allow_html=True)
         
         st.markdown('</div>', unsafe_allow_html=True)
     
@@ -11008,14 +10865,13 @@ elif aba_selecionada == 'FERRAMENTARIA':
     # ===== FILTROS =====
     st.markdown("### 🔍 Filtros")
     
-    # Carregar dados para obter opções únicas
-    with st.spinner("Carregando dados..."):
+    with st.spinner("🔄 Carregando dados da planilha..."):
         todos_ferramentais = carregar_ferramentais()
     
     if not todos_ferramentais:
         st.info("📭 Nenhum ferramental cadastrado ainda. Cadastre um novo ferramental.")
     
-    # Extrair opções únicas para filtros
+    # Extrair opções únicas
     opcoes_pcp = sorted(set([f.pcp for f in todos_ferramentais if f.pcp]))
     opcoes_cliente = sorted(set([f.cliente for f in todos_ferramentais if f.cliente]))
     
@@ -11024,19 +10880,18 @@ elif aba_selecionada == 'FERRAMENTARIA':
     with col_f1:
         filtro_pcp = st.selectbox(
             "📋 PCP",
-            options=["(Todos)"] + opcoes_pcp,
+            options=["(Todos)"] + opcoes_pcp if opcoes_pcp else ["(Todos)"],
             key="ferramentaria_filtro_pcp"
         )
     
     with col_f2:
         filtro_cliente = st.selectbox(
             "🏢 Cliente",
-            options=["(Todos)"] + opcoes_cliente,
+            options=["(Todos)"] + opcoes_cliente if opcoes_cliente else ["(Todos)"],
             key="ferramentaria_filtro_cliente"
         )
     
     with col_f3:
-        # Campo de busca com autocomplete visual
         filtro_descricao = st.text_input(
             "🔎 Descrição (digite para buscar)",
             placeholder="Digite parte da descrição...",
@@ -11059,16 +10914,17 @@ elif aba_selecionada == 'FERRAMENTARIA':
     else:
         ferramentais_filtrados = todos_ferramentais
     
-    # ===== CONTAGEM E SELEÇÃO =====
+    # ===== CONTAGEM E AÇÕES =====
     col_count, col_add = st.columns([3, 1])
     
     with col_count:
-        st.markdown(f"""
-        <div style="font-size: 14px; color: {THEME['text_muted']}; padding: 8px 0;">
-            📊 <b>{len(ferramentais_filtrados)}</b> ferramentais encontrados
-            {f' (filtrados de {len(todos_ferramentais)} totais)' if filtros else ''}
-        </div>
-        """, unsafe_allow_html=True)
+        if ferramentais_filtrados:
+            st.markdown(f"""
+            <div style="font-size: 14px; color: {THEME['text_muted']}; padding: 8px 0;">
+                📊 <b>{len(ferramentais_filtrados)}</b> ferramentais encontrados
+                {f' (filtrados de {len(todos_ferramentais)} totais)' if filtros else ''}
+            </div>
+            """, unsafe_allow_html=True)
     
     with col_add:
         if st.button("➕ NOVO FERRAMENTAL", type="primary", use_container_width=True):
@@ -11076,10 +10932,8 @@ elif aba_selecionada == 'FERRAMENTARIA':
     
     # ===== TABELA DE FERRAMENTAIS =====
     if ferramentais_filtrados:
-        # Preparar dados para a tabela
         dados_tabela = []
         for f in ferramentais_filtrados:
-            # Verificar se tem documentação
             tem_docs = any([f.avaliacao_inicial, f.desenho, f.gabarito, f.plano_controle, f.plano_acao])
             tem_manut = bool(f.manutencao)
             
@@ -11088,53 +10942,31 @@ elif aba_selecionada == 'FERRAMENTARIA':
                 "PCP": f.pcp,
                 "Cliente": f.cliente,
                 "Descrição": f.descricao[:40] + "..." if len(f.descricao) > 40 else f.descricao,
-                "Data Inicial": f.data_inicial.strftime("%d/%m/%Y") if f.data_inicial else "-",
+                "Data Inicial": f.data_inicial,
                 "📄 Docs": "✅" if tem_docs else "❌",
-                "🔧 Manut": "✅" if tem_manut else "❌",
-                "📊 Ações": "Ver Detalhes"
+                "🔧 Manut": "✅" if tem_manut else "❌"
             })
         
         df_tabela = pd.DataFrame(dados_tabela)
         
-        # Criar coluna de ações com botões
-        st.markdown("""
-        <style>
-        .ferramental-row {
-            cursor: pointer;
-            transition: background 0.2s ease;
-        }
-        .ferramental-row:hover {
-            background: #f0f7ff !important;
-        }
-        </style>
-        """, unsafe_allow_html=True)
-        
-        # Exibir tabela com seleção
         for idx, row in df_tabela.iterrows():
             cols = st.columns([1, 1.5, 1.5, 3, 1.5, 0.8, 0.8, 1.2])
             
-            with cols[0]:
-                st.write(row["ID"])
-            with cols[1]:
-                st.write(row["PCP"])
-            with cols[2]:
-                st.write(row["Cliente"])
-            with cols[3]:
-                st.write(row["Descrição"])
-            with cols[4]:
-                st.write(row["Data Inicial"])
-            with cols[5]:
-                st.write(row["📄 Docs"])
-            with cols[6]:
-                st.write(row["🔧 Manut"])
+            with cols[0]: st.write(row["ID"])
+            with cols[1]: st.write(row["PCP"])
+            with cols[2]: st.write(row["Cliente"])
+            with cols[3]: st.write(row["Descrição"])
+            with cols[4]: st.write(row["Data Inicial"])
+            with cols[5]: st.write(row["📄 Docs"])
+            with cols[6]: st.write(row["🔧 Manut"])
             with cols[7]:
-                if st.button(f"📊", key=f"btn_ver_{row['ID']}", help="Ver detalhes"):
+                if st.button(f"📊 Ver", key=f"btn_ver_{row['ID']}"):
                     st.session_state.ferramental_selecionado = row["ID"]
                     st.rerun()
             
             st.divider()
         
-        # ===== DETALHES DO FERRAMENTAL SELECIONADO =====
+        # ===== DETALHES DO SELECIONADO =====
         if 'ferramental_selecionado' in st.session_state:
             ferramental_selecionado = next(
                 (f for f in ferramentais_filtrados if f.id == st.session_state.ferramental_selecionado), 
@@ -11143,20 +10975,15 @@ elif aba_selecionada == 'FERRAMENTARIA':
             
             if ferramental_selecionado:
                 renderizar_detalhes_ferramental(ferramental_selecionado)
-                
-                # Botão para fechar detalhes
                 if st.button("❌ Fechar Detalhes", use_container_width=True):
                     del st.session_state.ferramental_selecionado
                     st.rerun()
         
-        # ===== BOTÃO PARA EXPANDIR TODOS =====
+        # ===== LISTA COMPLETA =====
         with st.expander("📋 Ver todos os ferramentais em lista completa", expanded=False):
             df_completo = pd.DataFrame([{
-                "ID": f.id,
-                "PCP": f.pcp,
-                "Cliente": f.cliente,
-                "Descrição": f.descricao,
-                "Data Inicial": f.data_inicial.strftime("%d/%m/%Y") if f.data_inicial else "-",
+                "ID": f.id, "PCP": f.pcp, "Cliente": f.cliente,
+                "Descrição": f.descricao, "Data Inicial": f.data_inicial,
                 "Avaliação Inicial": f.avaliacao_inicial[:30] + "..." if len(f.avaliacao_inicial) > 30 else f.avaliacao_inicial,
                 "Desenho": f.desenho[:30] + "..." if len(f.desenho) > 30 else f.desenho,
                 "Gabarito": f.gabarito[:30] + "..." if len(f.gabarito) > 30 else f.gabarito,
@@ -11167,7 +10994,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
             
             st.dataframe(df_completo, use_container_width=True, height=400)
             
-            # Download CSV
             csv = df_completo.to_csv(index=False, encoding='utf-8-sig')
             st.download_button(
                 label="📥 Baixar Lista (CSV)",
@@ -11178,9 +11004,10 @@ elif aba_selecionada == 'FERRAMENTARIA':
             )
     
     else:
-        st.info("📭 Nenhum ferramental encontrado com os filtros selecionados.")
+        if todos_ferramentais:
+            st.info("📭 Nenhum ferramental encontrado com os filtros selecionados.")
     
-    # ===== FORMULÁRIO PARA NOVO FERRAMENTAL =====
+    # ===== FORMULÁRIO NOVO =====
     if 'mostrar_formulario_novo' in st.session_state and st.session_state.mostrar_formulario_novo:
         st.markdown("---")
         st.markdown("### ➕ Novo Ferramental")
@@ -11193,7 +11020,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
                 novo_pcp = st.text_input("PCP*", placeholder="Ex: MOLD-01", key="novo_ferr_pcp")
                 novo_cliente = st.text_input("Cliente*", placeholder="Nome do cliente", key="novo_ferr_cliente")
                 novo_descricao = st.text_area("Descrição*", placeholder="Descrição detalhada do ferramental", key="novo_ferr_descricao", height=80)
-                nova_data = st.date_input("Data Inicial", value=datetime.now().date(), key="novo_ferr_data")
+                nova_data = st.text_input("Data Inicial", placeholder="DD/MM/AAAA", key="novo_ferr_data")
             
             with col2:
                 nova_avaliacao = st.text_input("Avaliação Inicial (link)", placeholder="https://...", key="novo_ferr_avaliacao")
@@ -11212,17 +11039,11 @@ elif aba_selecionada == 'FERRAMENTARIA':
                     st.error("❌ Preencha todos os campos obrigatórios (*)")
                 else:
                     registro = Ferramental(
-                        id=novo_id,
-                        pcp=novo_pcp,
-                        cliente=novo_cliente,
-                        descricao=novo_descricao,
-                        data_inicial=datetime.combine(nova_data, datetime.min.time()),
-                        avaliacao_inicial=nova_avaliacao,
-                        desenho=novo_desenho,
-                        gabarito=novo_gabarito,
-                        plano_controle=novo_plano_controle,
-                        plano_acao=novo_plano_acao,
-                        manutencao=nova_manutencao
+                        id=novo_id, pcp=novo_pcp, cliente=novo_cliente,
+                        descricao=novo_descricao, data_inicial=nova_data,
+                        avaliacao_inicial=nova_avaliacao, desenho=novo_desenho,
+                        gabarito=novo_gabarito, plano_controle=novo_plano_controle,
+                        plano_acao=novo_plano_acao, manutencao=nova_manutencao
                     )
                     
                     sucesso, mensagem = salvar_ferramental(registro)
@@ -11238,7 +11059,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
             st.session_state.mostrar_formulario_novo = False
             st.rerun()
     
-    # ===== RODAPÉ DO MÓDULO =====
+    # ===== RODAPÉ =====
     st.markdown(f"""
     <div style="text-align:right;padding:16px 0 8px;
         font-family:'JetBrains Mono',monospace;font-size:10px;
@@ -11248,19 +11069,11 @@ elif aba_selecionada == 'FERRAMENTARIA':
     """, unsafe_allow_html=True)
 
 # ==================================================================================================
-# RENDERIZAR FAIXA DE ROLAGEM NO RODAPÉ (aparece em todas as abas)
+# RENDERIZAR FAIXA DE ROLAGEM NO RODAPÉ
 # ==================================================================================================
-# A faixa de rolagem é renderizada UMA VEZ no final do script
-# Não importa qual aba está selecionada, a faixa aparecerá
-# ==================================================================================================
-
-# Define a planilha de fechamento para a faixa de rolagem (precisa estar definida antes)
-# A planilha ID_PLANILHA_FECHAMENTO já está definida na seção de FECHAMENTO TURNO
-# Caso o usuário não acesse o FECHAMENTO TURNO antes, definimos um valor padrão
 if 'ID_PLANILHA_FECHAMENTO' not in dir():
     ID_PLANILHA_FECHAMENTO = '1_HkKTRCSg24wDJ47v5wSd-UPBkbalLd6plV9IvlTY64'
 
-# Renderiza a faixa de rolagem
 renderizar_faixa_rolagem()
 
 # ==================================================================================================
