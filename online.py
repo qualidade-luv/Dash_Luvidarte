@@ -5934,6 +5934,8 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
                             incluir = False
                         if filtros.get('status') and filtros['status'] != registro.status:
                             incluir = False
+                        if filtros.get('setor2') and filtros['setor2'].upper() != registro.setor2.upper():
+                            incluir = False
                     else:
                         incluir = True
                     
@@ -6242,21 +6244,25 @@ elif aba_selecionada == 'REQUISIÇÃO MANUTENÇÃO':
                 registros = carregar_registros_rm()
             
             if registros:
+                # Obter lista única de setores destino para o filtro
+                setores_destino_disponiveis = sorted(set([r.setor2 for r in registros if r.setor2]))
+                opcoes_setores_destino = ["Todos"] + setores_destino_disponiveis
+                
                 col_f1, col_f2, col_f3 = st.columns(3)
                 with col_f1:
                     filtro_status = st.selectbox("Status", ["Todos"] + OPCOES_STATUS_RM)
                 with col_f2:
                     filtro_caracter = st.selectbox("Caráter", ["Todos"] + OPCOES_CARATER_RM)
                 with col_f3:
-                    filtro_id = st.number_input("ID", min_value=0, step=1, value=0)
+                    filtro_setor_destino = st.selectbox("Setor Destino", opcoes_setores_destino)
                 
                 dados_filtrados = registros
                 if filtro_status != "Todos":
                     dados_filtrados = [r for r in dados_filtrados if r.status == filtro_status]
                 if filtro_caracter != "Todos":
                     dados_filtrados = [r for r in dados_filtrados if r.caracter == filtro_caracter]
-                if filtro_id > 0:
-                    dados_filtrados = [r for r in dados_filtrados if r.id == filtro_id]
+                if filtro_setor_destino != "Todos":
+                    dados_filtrados = [r for r in dados_filtrados if r.setor2 == filtro_setor_destino]
                 
                 col_e1, col_e2, col_e3, col_e4 = st.columns(4)
                 with col_e1:
