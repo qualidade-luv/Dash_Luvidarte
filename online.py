@@ -10553,7 +10553,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
     # ======================
     # CONFIGURAÇÃO DA PLANILHA
     # ======================
-    ID_PLANILHA_FERRAMENTARIA = 'https://docs.google.com/spreadsheets/d/12xXYNhrGWP4PMvcdLSMFaMIM-CcLPYyvfBGD0I7Gibg/edit?usp=sharing'  # ⚠️ Substituir pelo ID real
+    ID_PLANILHA_FERRAMENTARIA = 'https://docs.google.com/spreadsheets/d/12xXYNhrGWP4PMvcdLSMFaMIM-CcLPYyvfBGD0I7Gibg/edit?usp=sharing'
     ABA_FERRAMENTARIA = 'MOLDES'
     
     # ======================
