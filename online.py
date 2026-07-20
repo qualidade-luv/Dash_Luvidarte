@@ -576,6 +576,7 @@ ABAS = {
     'FECHAMENTO TURNO': 'FT',
     'MANUTENÇÃO PREVENTIVA': 'MP',
     'MAPEAMENTO DE HABILIDADES': 'MP',
+    'FERRAMENTARIA': 'FM',
     'PRÊMIO PRENSADOS': 'PP'
 }
 
@@ -10541,6 +10542,671 @@ elif aba_selecionada == 'PRÊMIO PRENSADOS':
         PRÊMIO PRENSADOS · {get_horario_brasilia()}
     </div>
     """, unsafe_allow_html=True)
+
+# ==================================================================================================
+# FERRAMENTARIA - GERENCIAMENTO DE MOLDES
+# ==================================================================================================
+elif aba_selecionada == 'FERRAMENTARIA':
+    render_page_header("🛠️ FERRAMENTARIA", 
+                       f"Gerenciamento de Moldes · Atualizado {get_horario_brasilia()}", 
+                       THEME['accent_cyan'])
+    
+    # ======================
+    # CONFIGURAÇÃO DA PLANILHA
+    # ======================
+    ID_PLANILHA_FERRAMENTARIA = '1SEU_ID_AQUI'  # Substituir pelo ID real
+    ABA_FERRAMENTARIA = 'MOLDES'
+    
+    # ======================
+    # DATACLASS PARA FERRAMENTAL
+    # ======================
+    @dataclass
+    class Ferramental:
+        id: str = ""
+        pcp: str = ""
+        cliente: str = ""
+        descricao: str = ""
+        data_inicial: Optional[datetime] = None
+        avaliacao_inicial: str = ""
+        desenho: str = ""
+        gabarito: str = ""
+        plano_controle: str = ""
+        plano_acao: str = ""
+        manutencao: str = ""
+    
+    # ======================
+    # FUNÇÕES DE CARREGAMENTO
+    # ======================
+    @retry_on_quota()
+    @st.cache_data(ttl=300)
+    def carregar_ferramentais(filtros: Dict[str, Any] = None) -> List[Ferramental]:
+        """Carrega todos os ferramentais da planilha"""
+        registros = []
+        try:
+            client = get_gspread_client()
+            if client is None:
+                st.error("❌ Erro ao conectar ao Google Sheets")
+                return registros
+            
+            spreadsheet = client.open_by_key(ID_PLANILHA_FERRAMENTARIA)
+            
+            try:
+                sheet = spreadsheet.worksheet(ABA_FERRAMENTARIA)
+            except Exception as e:
+                st.warning(f"Aba '{ABA_FERRAMENTARIA}' não encontrada. Criando...")
+                sheet = spreadsheet.add_worksheet(title=ABA_FERRAMENTARIA, rows=1000, cols=20)
+                cabecalho = ["ID", "PCP", "CLIENTE", "DESCRIÇÃO", "DATA_INICIAL", 
+                            "AVALIAÇÃO_INICIAL", "DESENHO", "GABARITO", 
+                            "PLANO_CONTROLE", "PLANO_DE_AÇÃO", "MANUTENÇÃO"]
+                sheet.append_row(cabecalho)
+                return registros
+            
+            todos_dados = sheet.get_all_values()
+            
+            if len(todos_dados) < 2:
+                return registros
+            
+            for idx, row in enumerate(todos_dados[1:], start=2):
+                if len(row) < 11:
+                    continue
+                
+                try:
+                    registro = Ferramental()
+                    registro.id = row[0].strip() if row[0] else f"FER-{idx:03d}"
+                    registro.pcp = row[1].strip() if len(row) > 1 else ""
+                    registro.cliente = row[2].strip() if len(row) > 2 else ""
+                    registro.descricao = row[3].strip() if len(row) > 3 else ""
+                    
+                    # Data
+                    data_str = row[4].strip() if len(row) > 4 else ""
+                    if data_str:
+                        try:
+                            registro.data_inicial = datetime.strptime(data_str, "%d/%m/%Y")
+                        except:
+                            registro.data_inicial = converter_data_br(data_str)
+                    
+                    registro.avaliacao_inicial = row[5].strip() if len(row) > 5 else ""
+                    registro.desenho = row[6].strip() if len(row) > 6 else ""
+                    registro.gabarito = row[7].strip() if len(row) > 7 else ""
+                    registro.plano_controle = row[8].strip() if len(row) > 8 else ""
+                    registro.plano_acao = row[9].strip() if len(row) > 9 else ""
+                    registro.manutencao = row[10].strip() if len(row) > 10 else ""
+                    
+                    registros.append(registro)
+                except Exception as e:
+                    print(f"Erro ao processar linha {idx}: {e}")
+                    continue
+            
+            # Aplicar filtros se existirem
+            if filtros:
+                registros_filtrados = []
+                for r in registros:
+                    incluir = True
+                    if filtros.get('pcp') and filtros['pcp'].upper() != r.pcp.upper():
+                        incluir = False
+                    if filtros.get('cliente') and filtros['cliente'].lower() not in r.cliente.lower():
+                        incluir = False
+                    if filtros.get('descricao') and filtros['descricao'].lower() not in r.descricao.lower():
+                        incluir = False
+                    if incluir:
+                        registros_filtrados.append(r)
+                return registros_filtrados
+            
+            return registros
+            
+        except Exception as e:
+            st.error(f"❌ Erro ao carregar ferramentais: {e}")
+            return registros
+    
+    # ======================
+    # FUNÇÃO PARA SALVAR FERRAMENTAL
+    # ======================
+    def salvar_ferramental(registro: Ferramental) -> tuple:
+        """Salva um novo ferramental na planilha"""
+        try:
+            client = get_gspread_client()
+            if client is None:
+                return False, "❌ Erro ao conectar ao Google Sheets"
+            
+            spreadsheet = client.open_by_key(ID_PLANILHA_FERRAMENTARIA)
+            sheet = spreadsheet.worksheet(ABA_FERRAMENTARIA)
+            
+            dados = [
+                registro.id,
+                registro.pcp,
+                registro.cliente,
+                registro.descricao,
+                registro.data_inicial.strftime("%d/%m/%Y") if registro.data_inicial else "",
+                registro.avaliacao_inicial,
+                registro.desenho,
+                registro.gabarito,
+                registro.plano_controle,
+                registro.plano_acao,
+                registro.manutencao
+            ]
+            
+            sheet.append_row(dados)
+            st.cache_data.clear()
+            return True, "✅ Ferramental salvo com sucesso!"
+        except Exception as e:
+            return False, f"❌ Erro ao salvar: {e}"
+    
+    # ======================
+    # FUNÇÃO PARA ATUALIZAR FERRAMENTAL
+    # ======================
+    def atualizar_ferramental(registro: Ferramental) -> tuple:
+        """Atualiza um ferramental existente"""
+        try:
+            client = get_gspread_client()
+            if client is None:
+                return False, "❌ Erro ao conectar ao Google Sheets"
+            
+            spreadsheet = client.open_by_key(ID_PLANILHA_FERRAMENTARIA)
+            sheet = spreadsheet.worksheet(ABA_FERRAMENTARIA)
+            
+            # Buscar pela coluna ID
+            cell = sheet.find(registro.id, in_column=1)
+            if not cell:
+                return False, f"❌ Ferramental ID {registro.id} não encontrado"
+            
+            dados = [
+                registro.id,
+                registro.pcp,
+                registro.cliente,
+                registro.descricao,
+                registro.data_inicial.strftime("%d/%m/%Y") if registro.data_inicial else "",
+                registro.avaliacao_inicial,
+                registro.desenho,
+                registro.gabarito,
+                registro.plano_controle,
+                registro.plano_acao,
+                registro.manutencao
+            ]
+            
+            for col, valor in enumerate(dados, start=1):
+                sheet.update_cell(cell.row, col, valor)
+            
+            st.cache_data.clear()
+            return True, "✅ Ferramental atualizado com sucesso!"
+        except Exception as e:
+            return False, f"❌ Erro ao atualizar: {e}"
+    
+    # ======================
+    # FUNÇÃO PARA EXCLUIR FERRAMENTAL
+    # ======================
+    def excluir_ferramental(id_ferramental: str) -> tuple:
+        """Exclui um ferramental da planilha"""
+        try:
+            client = get_gspread_client()
+            if client is None:
+                return False, "❌ Erro ao conectar ao Google Sheets"
+            
+            spreadsheet = client.open_by_key(ID_PLANILHA_FERRAMENTARIA)
+            sheet = spreadsheet.worksheet(ABA_FERRAMENTARIA)
+            
+            cell = sheet.find(id_ferramental, in_column=1)
+            if not cell:
+                return False, f"❌ Ferramental ID {id_ferramental} não encontrado"
+            
+            sheet.delete_rows(cell.row)
+            st.cache_data.clear()
+            return True, "✅ Ferramental excluído com sucesso!"
+        except Exception as e:
+            return False, f"❌ Erro ao excluir: {e}"
+    
+    # ======================
+    # FUNÇÃO PARA RENDERIZAR LINK COMO BOTÃO VISUAL
+    # ======================
+    def renderizar_link_botao(link: str, label: str, icon: str, cor: str = None):
+        """Renderiza um link como botão visual"""
+        if not link or link.strip() == "":
+            st.markdown(f"""
+            <div style="background: #f8f9fa; padding: 10px; border-radius: 8px; 
+                        border: 1px dashed #ddd; text-align: center; color: #999;">
+                {icon} {label} <span style="font-size: 11px;">(não disponível)</span>
+            </div>
+            """, unsafe_allow_html=True)
+            return
+        
+        if cor is None:
+            cor = THEME['accent_cyan']
+        
+        # Detectar tipo de link
+        if link.startswith('http'):
+            # Link externo
+            st.markdown(f"""
+            <a href="{link}" target="_blank" style="text-decoration: none;">
+                <div style="background: white; padding: 10px 15px; border-radius: 8px; 
+                            border: 1px solid {cor}; border-left: 4px solid {cor};
+                            transition: all 0.2s ease; display: flex; align-items: center; gap: 10px;
+                            box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+                    <span style="font-size: 20px;">{icon}</span>
+                    <div style="flex: 1;">
+                        <div style="font-weight: 600; font-size: 14px; color: #333;">{label}</div>
+                        <div style="font-size: 11px; color: #666; word-break: break-all;">{link[:50]}{'...' if len(link) > 50 else ''}</div>
+                    </div>
+                    <span style="font-size: 18px; color: {cor};">↗</span>
+                </div>
+            </a>
+            """, unsafe_allow_html=True)
+        else:
+            # Possível caminho de rede
+            st.markdown(f"""
+            <div style="background: #f0f7ff; padding: 10px 15px; border-radius: 8px; 
+                        border: 1px solid {cor}; border-left: 4px solid {cor};
+                        display: flex; align-items: center; gap: 10px;">
+                <span style="font-size: 20px;">{icon}</span>
+                <div style="flex: 1;">
+                    <div style="font-weight: 600; font-size: 14px; color: #333;">{label}</div>
+                    <div style="font-size: 11px; color: #666; word-break: break-all;">📁 {link}</div>
+                </div>
+                <span style="font-size: 14px; color: #666;">📂</span>
+            </div>
+            """, unsafe_allow_html=True)
+    
+    # ======================
+    # FUNÇÃO PARA RENDERIZAR ESTRUTURA DE MANUTENÇÃO
+    # ======================
+    def renderizar_manutencao(link_manutencao: str, nome_ferramental: str):
+        """Renderiza a estrutura de pastas de manutenção"""
+        
+        st.markdown("""
+        <style>
+        .manutencao-container {
+            background: #f8f9fc;
+            border-radius: 10px;
+            padding: 15px;
+            border: 1px solid #e0e0e0;
+        }
+        .manutencao-pasta {
+            background: white;
+            border-radius: 8px;
+            padding: 12px 15px;
+            margin: 5px 0;
+            border-left: 3px solid #0078D4;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .manutencao-pasta:hover {
+            transform: translateX(5px);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+        .manutencao-pasta.entrada {
+            border-left-color: #28a745;
+        }
+        .manutencao-pasta.saida {
+            border-left-color: #dc3545;
+        }
+        .manutencao-subpasta {
+            margin-left: 30px;
+            padding: 6px 12px;
+            background: #f0f2f5;
+            border-radius: 5px;
+            margin-top: 3px;
+            font-size: 12px;
+            color: #555;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .manutencao-imagem {
+            margin-left: 50px;
+            padding: 4px 10px;
+            background: white;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            font-size: 11px;
+            color: #333;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .pasta-icon {
+            font-size: 18px;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        
+        st.markdown('<div class="manutencao-container">', unsafe_allow_html=True)
+        
+        # Título
+        st.markdown(f"""
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <div style="font-weight: 600; font-size: 15px; color: #333;">
+                🔧 Manutenções - {nome_ferramental}
+            </div>
+            <div style="font-size: 12px; color: #666;">
+                📁 {link_manutencao if link_manutencao else 'Sem pasta configurada'}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        if not link_manutencao or link_manutencao.strip() == "":
+            st.info("📭 Nenhuma pasta de manutenção configurada.")
+            st.markdown('</div>', unsafe_allow_html=True)
+            return
+        
+        # Estrutura simulada (exemplo)
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("""
+            <div style="font-weight: 600; color: #28a745; font-size: 13px; margin-bottom: 8px;">
+                📥 ENTRADA
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Exemplo de estrutura ENTRADA
+            entradas = [
+                {"data": "01/06/2026", "descricao": "Manutenção preventiva"},
+                {"data": "15/06/2026", "descricao": "Troca de componente"},
+                {"data": "30/06/2026", "descricao": "Revisão geral"}
+            ]
+            
+            for entrada in entradas:
+                st.markdown(f"""
+                <div class="manutencao-pasta entrada">
+                    <span class="pasta-icon">📂</span>
+                    <div>
+                        <div style="font-weight: 500;">{entrada['data']}</div>
+                        <div style="font-size: 12px; color: #666;">{entrada['descricao']}</div>
+                    </div>
+                    <span style="margin-left: auto; font-size: 20px;">📄</span>
+                </div>
+                """, unsafe_allow_html=True)
+        
+        with col2:
+            st.markdown("""
+            <div style="font-weight: 600; color: #dc3545; font-size: 13px; margin-bottom: 8px;">
+                📤 SAÍDA
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Exemplo de estrutura SAÍDA
+            saidas = [
+                {"data": "02/06/2026", "descricao": "Devolução após manutenção"},
+                {"data": "16/06/2026", "descricao": "Envio para cliente"},
+                {"data": "01/07/2026", "descricao": "Retorno da manutenção"}
+            ]
+            
+            for saida in saidas:
+                st.markdown(f"""
+                <div class="manutencao-pasta saida">
+                    <span class="pasta-icon">📂</span>
+                    <div>
+                        <div style="font-weight: 500;">{saida['data']}</div>
+                        <div style="font-size: 12px; color: #666;">{saida['descricao']}</div>
+                    </div>
+                    <span style="margin-left: auto; font-size: 20px;">📄</span>
+                </div>
+                """, unsafe_allow_html=True)
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    # ======================
+    # FUNÇÃO PARA RENDERIZAR DETALHES DO FERRAMENTAL
+    # ======================
+    def renderizar_detalhes_ferramental(registro: Ferramental):
+        """Renderiza a visualização detalhada de um ferramental"""
+        
+        st.markdown(f"""
+        <div style="background: {THEME['bg_card']}; border-radius: 12px; 
+                    padding: 20px; border: 1px solid {THEME['border_bright']};
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.05); margin-top: 20px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <span style="font-size: 28px;">🔧</span>
+                    <div>
+                        <div style="font-size: 20px; font-weight: 700; color: {THEME['text_primary']};">
+                            {registro.descricao}
+                        </div>
+                        <div style="font-size: 13px; color: {THEME['text_muted']};">
+                            ID: {registro.id} | PCP: {registro.pcp} | Cliente: {registro.cliente}
+                        </div>
+                    </div>
+                </div>
+                <div style="font-size: 13px; color: {THEME['text_muted']};">
+                    📅 {registro.data_inicial.strftime('%d/%m/%Y') if registro.data_inicial else 'N/A'}
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        # ===== GRID DE LINKS =====
+        st.markdown("""
+        <div style="font-weight: 600; font-size: 14px; margin: 15px 0 10px 0; color: #333;">
+            📄 Documentação do Ferramental
+        </div>
+        """, unsafe_allow_html=True)
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            renderizar_link_botao(registro.avaliacao_inicial, "Avaliação Inicial", "📋", THEME['accent_cyan'])
+            st.markdown("<br>", unsafe_allow_html=True)
+            renderizar_link_botao(registro.desenho, "Desenho", "🎨", THEME['accent_purple'])
+            st.markdown("<br>", unsafe_allow_html=True)
+            renderizar_link_botao(registro.gabarito, "Gabarito", "📐", THEME['accent_yellow'])
+        
+        with col2:
+            renderizar_link_botao(registro.plano_controle, "Plano de Controle", "📋", THEME['accent_orange'])
+            st.markdown("<br>", unsafe_allow_html=True)
+            renderizar_link_botao(registro.plano_acao, "Plano de Ação", "🎯", THEME['accent_red'])
+        
+        st.markdown("---")
+        
+        # ===== MANUTENÇÕES =====
+        renderizar_manutencao(registro.manutencao, registro.descricao)
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    # ======================
+    # INTERFACE PRINCIPAL
+    # ======================
+    
+    # ===== FILTROS =====
+    st.markdown("### 🔍 Filtros")
+    
+    # Carregar dados para obter opções únicas
+    with st.spinner("Carregando dados..."):
+        todos_ferramentais = carregar_ferramentais()
+    
+    if not todos_ferramentais:
+        st.info("📭 Nenhum ferramental cadastrado ainda. Cadastre um novo ferramental.")
+    
+    # Extrair opções únicas para filtros
+    opcoes_pcp = sorted(set([f.pcp for f in todos_ferramentais if f.pcp]))
+    opcoes_cliente = sorted(set([f.cliente for f in todos_ferramentais if f.cliente]))
+    
+    col_f1, col_f2, col_f3 = st.columns(3)
+    
+    with col_f1:
+        filtro_pcp = st.selectbox(
+            "📋 PCP",
+            options=["(Todos)"] + opcoes_pcp,
+            key="ferramentaria_filtro_pcp"
+        )
+    
+    with col_f2:
+        filtro_cliente = st.selectbox(
+            "🏢 Cliente",
+            options=["(Todos)"] + opcoes_cliente,
+            key="ferramentaria_filtro_cliente"
+        )
+    
+    with col_f3:
+        # Campo de busca com autocomplete visual
+        filtro_descricao = st.text_input(
+            "🔎 Descrição (digite para buscar)",
+            placeholder="Digite parte da descrição...",
+            key="ferramentaria_filtro_descricao"
+        )
+    
+    st.markdown("---")
+    
+    # ===== APLICAR FILTROS =====
+    filtros = {}
+    if filtro_pcp != "(Todos)":
+        filtros['pcp'] = filtro_pcp
+    if filtro_cliente != "(Todos)":
+        filtros['cliente'] = filtro_cliente
+    if filtro_descricao and filtro_descricao.strip():
+        filtros['descricao'] = filtro_descricao.strip()
+    
+    if filtros:
+        ferramentais_filtrados = carregar_ferramentais(filtros)
+    else:
+        ferramentais_filtrados = todos_ferramentais
+    
+    # ===== CONTAGEM E SELEÇÃO =====
+    col_count, col_add = st.columns([3, 1])
+    
+    with col_count:
+        st.markdown(f"""
+        <div style="font-size: 14px; color: {THEME['text_muted']}; padding: 8px 0;">
+            📊 <b>{len(ferramentais_filtrados)}</b> ferramentais encontrados
+            {f' (filtrados de {len(todos_ferramentais)} totais)' if filtros else ''}
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col_add:
+        if st.button("➕ NOVO FERRAMENTAL", type="primary", use_container_width=True):
+            st.session_state.mostrar_formulario_novo = True
+    
+    # ===== TABELA DE FERRAMENTAIS =====
+    if ferramentais_filtrados:
+        # Preparar dados para a tabela
+        dados_tabela = []
+        for f in ferramentais_filtrados:
+            # Verificar se tem documentação
+            tem_docs = any([f.avaliacao_inicial, f.desenho, f.gabarito, f.plano_controle, f.plano_acao])
+            tem_manut = bool(f.manutencao)
+            
+            dados_tabela.append({
+                "ID": f.id,
+                "PCP": f.pcp,
+                "Cliente": f.cliente,
+                "Descrição": f.descricao[:40] + "..." if len(f.descricao) > 40 else f.descricao,
+                "Data Inicial": f.data_inicial.strftime("%d/%m/%Y") if f.data_inicial else "-",
+                "📄 Docs": "✅" if tem_docs else "❌",
+                "🔧 Manut": "✅" if tem_manut else "❌",
+                "📊 Ações": "Ver Detalhes"
+            })
+        
+        df_tabela = pd.DataFrame(dados_tabela)
+        
+        # Criar coluna de ações com botões
+        st.markdown("""
+        <style>
+        .ferramental-row {
+            cursor: pointer;
+            transition: background 0.2s ease;
+        }
+        .ferramental-row:hover {
+            background: #f0f7ff !important;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        
+        # Exibir tabela com seleção
+        for idx, row in df_tabela.iterrows():
+            cols = st.columns([1, 1.5, 1.5, 3, 1.5, 0.8, 0.8, 1.2])
+            
+            with cols[0]:
+                st.write(row["ID"])
+            with cols[1]:
+                st.write(row["PCP"])
+            with cols[2]:
+                st.write(row["Cliente"])
+            with cols[3]:
+                st.write(row["Descrição"])
+            with cols[4]:
+                st.write(row["Data Inicial"])
+            with cols[5]:
+                st.write(row["📄 Docs"])
+            with cols[6]:
+                st.write(row["🔧 Manut"])
+            with cols[7]:
+                if st.button(f"📊", key=f"btn_ver_{row['ID']}", help="Ver detalhes"):
+                    st.session_state.ferramental_selecionado = row["ID"]
+                    st.rerun()
+            
+            st.divider()
+        
+        # ===== DETALHES DO FERRAMENTAL SELECIONADO =====
+        if 'ferramental_selecionado' in st.session_state:
+            ferramental_selecionado = next(
+                (f for f in ferramentais_filtrados if f.id == st.session_state.ferramental_selecionado), 
+                None
+            )
+            
+            if ferramental_selecionado:
+                renderizar_detalhes_ferramental(ferramental_selecionado)
+                
+                # Botão para fechar detalhes
+                if st.button("❌ Fechar Detalhes", use_container_width=True):
+                    del st.session_state.ferramental_selecionado
+                    st.rerun()
+        
+        # ===== BOTÃO PARA EXPANDIR TODOS =====
+        with st.expander("📋 Ver todos os ferramentais em lista completa", expanded=False):
+            df_completo = pd.DataFrame([{
+                "ID": f.id,
+                "PCP": f.pcp,
+                "Cliente": f.cliente,
+                "Descrição": f.descricao,
+                "Data Inicial": f.data_inicial.strftime("%d/%m/%Y") if f.data_inicial else "-",
+                "Avaliação Inicial": f.avaliacao_inicial[:30] + "..." if len(f.avaliacao_inicial) > 30 else f.avaliacao_inicial,
+                "Desenho": f.desenho[:30] + "..." if len(f.desenho) > 30 else f.desenho,
+                "Gabarito": f.gabarito[:30] + "..." if len(f.gabarito) > 30 else f.gabarito,
+                "Plano Controle": f.plano_controle[:30] + "..." if len(f.plano_controle) > 30 else f.plano_controle,
+                "Plano Ação": f.plano_acao[:30] + "..." if len(f.plano_acao) > 30 else f.plano_acao,
+                "Manutenção": f.manutencao[:30] + "..." if len(f.manutencao) > 30 else f.manutencao
+            } for f in ferramentais_filtrados])
+            
+            st.dataframe(df_completo, use_container_width=True, height=400)
+            
+            # Download CSV
+            csv = df_completo.to_csv(index=False, encoding='utf-8-sig')
+            st.download_button(
+                label="📥 Baixar Lista (CSV)",
+                data=csv,
+                file_name=f"ferramentais_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+    
+    else:
+        st.info("📭 Nenhum ferramental encontrado com os filtros selecionados.")
+    
+    # ===== FORMULÁRIO PARA NOVO FERRAMENTAL =====
+    if 'mostrar_formulario_novo' in st.session_state and st.session_state.mostrar_formulario_novo:
+        st.markdown("---")
+        st.markdown("### ➕ Novo Ferramental")
+        
+        with st.form("novo_ferramental"):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                novo_id = st.text_input("ID*", placeholder="Ex: FER-001", key="novo_ferr_id")
+                novo_pcp = st.text_input("PCP*", placeholder="Ex: MOLD-01", key="novo_ferr_pcp")
+                novo_cliente = st.text_input("Cliente*", placeholder="Nome do cliente", key="novo_ferr_cliente")
+                novo_descricao = st.text_area("Descrição*", placeholder="Descrição detalhada do ferramental", key="novo_ferr_descricao", height=80)
+                nova_data = st.date_input("Data Inicial", value=datetime.now().date(), key="novo_ferr_data")
+            
+            with col2:
+                nova_avaliacao = st.text_input("Avaliação Inicial (link)", placeholder="https://...", key="novo_ferr_avaliacao")
+                novo_desenho = st.text_input("Desenho (link)", placeholder="https://...", key="novo_ferr_desenho")
+                novo_gabarito = st.text_input("Gabarito (link)", placeholder="https://...", key="novo_ferr_gabarito")
+                novo_plano_controle = st.text_input("Plano de Controle (link)", placeholder="https://...", key="novo_ferr_plano_controle")
+                novo_plano_acao = st.text_input("Plano de Ação (link)", placeholder="https://...", key="novo_ferr_plano_acao")
+                nova_manutencao = st.text_input("Manutenção (pasta)", placeholder="\\\\servidor\\pasta\\", key="novo_ferr_manutencao")
+            
+            col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
+            with col_btn2:
+                submitted = st.form_submit_button("💾 SALVAR FERRAMENTAL", type
     
 # ==================================================================================================
 # RENDERIZAR FAIXA DE ROLAGEM NO RODAPÉ (aparece em todas as abas)
