@@ -10543,7 +10543,7 @@ elif aba_selecionada == 'PRÊMIO PRENSADOS':
     </div>
     """, unsafe_allow_html=True)
 # ==================================================================================================
-# FERRAMENTARIA - GERENCIAMENTO DE MOLDES (VERSÃO CORRIGIDA)
+# FERRAMENTARIA - GERENCIAMENTO DE MOLDES (VERSÃO COM LINKS NOS CARDS)
 # ==================================================================================================
 elif aba_selecionada == 'FERRAMENTARIA':
     render_page_header("🛠️ FERRAMENTARIA", 
@@ -10584,7 +10584,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
     # FUNÇÃO PARA OBTER THUMBNAIL DO GOOGLE DRIVE
     # ======================
     def obter_thumbnail(file_id: str, tamanho: str = "w400") -> str:
-        """Retorna a URL da thumbnail de um arquivo do Google Drive"""
         if not file_id:
             return ""
         return f"https://drive.google.com/thumbnail?id={file_id}&sz={tamanho}"
@@ -10735,17 +10734,16 @@ elif aba_selecionada == 'FERRAMENTARIA':
         return link
     
     # ======================
-    # CSS COMPLETO - COM CORREÇÕES
+    # CSS COMPLETO
     # ======================
     st.markdown("""
     <style>
-    /* ===== CONTAINER PRINCIPAL ===== */
     .ferramentaria-container {
         max-width: 100%;
         padding: 5px 0;
     }
     
-    /* ===== BREADCRUMB PROFISSIONAL ===== */
+    /* Breadcrumb */
     .breadcrumb-profissional {
         display: flex;
         align-items: center;
@@ -10754,7 +10752,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
         border-radius: 10px;
         margin-bottom: 16px;
         border: 1px solid #e0e4e8;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
         flex-wrap: wrap;
         gap: 4px;
         font-size: 13px;
@@ -10763,21 +10760,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
         font-size: 18px;
         margin-right: 6px;
         color: #666;
-    }
-    .breadcrumb-profissional .item {
-        color: #0078D4;
-        cursor: pointer;
-        padding: 4px 10px;
-        border-radius: 6px;
-        transition: all 0.2s ease;
-        background: none;
-        border: none;
-        font-size: 13px;
-        font-weight: 500;
-    }
-    .breadcrumb-profissional .item:hover {
-        background: rgba(0,120,212,0.1);
-        text-decoration: underline;
     }
     .breadcrumb-profissional .sep {
         color: #b0b8c0;
@@ -10792,7 +10774,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
         border-radius: 6px;
     }
     
-    /* ===== GRID DE PASTAS ===== */
+    /* Grid de Pastas - Cards com links */
     .pasta-grid {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
@@ -10806,12 +10788,13 @@ elif aba_selecionada == 'FERRAMENTARIA':
         padding: 18px 12px;
         text-align: center;
         transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        cursor: pointer;
         text-decoration: none;
         color: #1a1a2e;
         box-shadow: 0 1px 4px rgba(0,0,0,0.04);
         position: relative;
         overflow: hidden;
+        display: block;
+        cursor: pointer;
     }
     .pasta-card::before {
         content: '';
@@ -10843,17 +10826,14 @@ elif aba_selecionada == 'FERRAMENTARIA':
         opacity: 0.6;
         transition: opacity 0.2s ease;
     }
-    .pasta-card:hover .seta {
-        opacity: 1;
-    }
+    .pasta-card:hover .seta { opacity: 1; }
     
-    /* Cores das pastas */
     .pasta-entrada { border-left: 4px solid #28a745; }
     .pasta-saida { border-left: 4px solid #dc3545; }
     .pasta-forma { border-left: 4px solid #0078D4; }
     .pasta-data { border-left: 4px solid #f59e0b; }
     
-    /* ===== ARQUIVOS COM MINIATURAS - TAMANHO CORRIGIDO ===== */
+    /* Grid de Arquivos com miniaturas */
     .arquivo-grid {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
@@ -10906,36 +10886,12 @@ elif aba_selecionada == 'FERRAMENTARIA':
         gap: 10px;
         padding: 0 4px;
     }
-    .arquivo-card .info .icone {
-        font-size: 20px;
-        flex-shrink: 0;
-    }
-    .arquivo-card .info .nome {
-        font-size: 13px;
-        font-weight: 500;
-        flex: 1;
-        word-break: break-word;
-        line-height: 1.3;
-        max-height: 36px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
-    .arquivo-card .info .ext {
-        font-size: 10px;
-        color: #888;
-        background: #f0f2f5;
-        padding: 2px 10px;
-        border-radius: 4px;
-        flex-shrink: 0;
-        font-weight: 600;
-    }
-    .arquivo-card .info .link-icon {
-        font-size: 16px;
-        color: #0078D4;
-        flex-shrink: 0;
-    }
+    .arquivo-card .info .icone { font-size: 20px; flex-shrink: 0; }
+    .arquivo-card .info .nome { font-size: 13px; font-weight: 500; flex: 1; word-break: break-word; line-height: 1.3; max-height: 36px; overflow: hidden; text-overflow: ellipsis; }
+    .arquivo-card .info .ext { font-size: 10px; color: #888; background: #f0f2f5; padding: 2px 10px; border-radius: 4px; flex-shrink: 0; font-weight: 600; }
+    .arquivo-card .info .link-icon { font-size: 16px; color: #0078D4; flex-shrink: 0; }
     
-    /* ===== ÁRVORE HIERÁRQUICA - CORRIGIDA ===== */
+    /* Árvore Hierárquica */
     .arvore-container {
         background: white;
         border-radius: 10px;
@@ -10952,13 +10908,9 @@ elif aba_selecionada == 'FERRAMENTARIA':
     .arvore-item {
         display: flex;
         align-items: center;
-        padding: 5px 8px;
+        padding: 4px 8px;
         border-radius: 6px;
-        transition: all 0.2s ease;
         gap: 8px;
-    }
-    .arvore-item:hover {
-        background: #f0f7ff;
     }
     .arvore-item .nivel {
         color: #b0b8c0;
@@ -10967,33 +10919,10 @@ elif aba_selecionada == 'FERRAMENTARIA':
         text-align: center;
         flex-shrink: 0;
     }
-    .arvore-item .icone {
-        font-size: 18px;
-        flex-shrink: 0;
-    }
-    .arvore-item .nome {
-        font-size: 13px;
-        color: #333;
-        font-weight: 500;
-        cursor: pointer;
-    }
-    .arvore-item .nome:hover {
-        color: #0078D4;
-        text-decoration: underline;
-    }
-    .arvore-item .nome-atual {
-        font-weight: 600;
-        color: #0078D4;
-    }
-    .arvore-item .seta {
-        color: #0078D4;
-        margin-left: auto;
-        font-size: 12px;
-        opacity: 0.5;
-    }
-    .arvore-item:hover .seta {
-        opacity: 1;
-    }
+    .arvore-item .icone { font-size: 18px; flex-shrink: 0; }
+    .arvore-item .nome { font-size: 13px; color: #333; font-weight: 500; }
+    .arvore-item .nome-atual { font-weight: 600; color: #0078D4; }
+    .arvore-item .seta { color: #0078D4; margin-left: auto; font-size: 12px; opacity: 0.5; }
     .arvore-linha {
         display: flex;
         align-items: center;
@@ -11001,11 +10930,9 @@ elif aba_selecionada == 'FERRAMENTARIA':
         border-left: 2px solid #e4e8ed;
         margin-left: 10px;
     }
-    .arvore-btn-hidden {
-        display: none;
-    }
+    .arvore-btn-hidden { display: none; }
     
-    /* ===== BOTÕES DE NAVEGAÇÃO ===== */
+    /* Botões de navegação */
     .nav-botoes {
         display: flex;
         gap: 12px;
@@ -11030,12 +10957,9 @@ elif aba_selecionada == 'FERRAMENTARIA':
         border-color: #0078D4;
         color: #0078D4;
     }
-    .nav-botoes button:disabled {
-        opacity: 0.4;
-        cursor: not-allowed;
-    }
+    .nav-botoes button:disabled { opacity: 0.4; cursor: not-allowed; }
     
-    /* ===== TÍTULOS ===== */
+    /* Títulos */
     .titulo-secao {
         font-weight: 600;
         font-size: 15px;
@@ -11053,20 +10977,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
         color: #666;
         font-weight: 500;
     }
-    
-    /* ===== INFO BOX ===== */
-    .info-box {
-        background: #e8f4fd;
-        padding: 12px 16px;
-        border-radius: 8px;
-        border-left: 4px solid #0078D4;
-        margin: 10px 0;
-        font-size: 13px;
-        color: #005a8c;
-        display: flex;
-        align-items: center;
-        gap: 10px;
-    }
     .vazio-box {
         text-align: center;
         padding: 30px;
@@ -11076,21 +10986,11 @@ elif aba_selecionada == 'FERRAMENTARIA':
         border: 2px dashed #e0e0e0;
     }
     
-    /* ===== RESPONSIVO ===== */
     @media (max-width: 768px) {
-        .pasta-grid {
-            grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
-        }
-        .arquivo-grid {
-            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-        }
-        .breadcrumb-profissional {
-            font-size: 11px;
-            padding: 8px 12px;
-        }
-        .arquivo-card .thumbnail-container {
-            height: 140px;
-        }
+        .pasta-grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
+        .arquivo-grid { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
+        .breadcrumb-profissional { font-size: 11px; padding: 8px 12px; }
+        .arquivo-card .thumbnail-container { height: 140px; }
     }
     </style>
     """, unsafe_allow_html=True)
@@ -11107,12 +11007,12 @@ elif aba_selecionada == 'FERRAMENTARIA':
         st.markdown('<div class="arvore-container">', unsafe_allow_html=True)
         st.markdown('<div class="arvore-titulo">📂 Caminho atual</div>', unsafe_allow_html=True)
         
-        # Raiz - usando botão para evitar problemas com onclick
+        # Raiz
         st.markdown("""
         <div class="arvore-item">
             <span class="nivel">📁</span>
             <span class="icone">🏠</span>
-            <span class="nome" style="color:#0078D4;">Raiz</span>
+            <span class="nome" style="color:#0078D4;cursor:pointer;">Raiz</span>
             <span class="seta">›</span>
         </div>
         """, unsafe_allow_html=True)
@@ -11126,7 +11026,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
         for i, pasta in enumerate(st.session_state.caminho_navegacao):
             is_ultimo = (i == len(st.session_state.caminho_navegacao) - 1)
             
-            # Definir ícone baseado no nome
             nome_upper = pasta['nome'].upper()
             if nome_upper == "ENTRADA":
                 icone = "📥"
@@ -11137,7 +11036,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
             else:
                 icone = "📅"
             
-            # Construir HTML de forma segura - usando divs com classes
             classe_nome = "nome-atual" if is_ultimo else "nome"
             
             st.markdown(f'''
@@ -11151,7 +11049,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
             </div>
             ''', unsafe_allow_html=True)
             
-            # Botão hidden para voltar a este nível (apenas se não for o último)
+            # Botão hidden para voltar a este nível
             if not is_ultimo:
                 if st.button(f"Voltar para {pasta['nome']}", key=f"btn_arvore_{i}"):
                     voltar_nivel(i + 1)
@@ -11160,7 +11058,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
         st.markdown('</div>', unsafe_allow_html=True)
     
     # ======================
-    # FUNÇÃO RENDERIZAR EXPLORADOR HIERÁRQUICO
+    # FUNÇÃO RENDERIZAR EXPLORADOR HIERÁRQUICO (COM CARDS LINK)
     # ======================
     def renderizar_explorador_hierarquico(link_pasta: str, nome_ferramental: str):
         """Renderiza um explorador hierárquico com navegação por pastas"""
@@ -11175,7 +11073,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
             st.warning("⚠️ Não foi possível identificar a pasta.")
             return
         
-        # Determinar pasta atual
         if st.session_state.caminho_navegacao:
             pasta_atual_id = st.session_state.caminho_navegacao[-1]["id"]
             pasta_atual_nome = st.session_state.caminho_navegacao[-1]["nome"]
@@ -11183,11 +11080,10 @@ elif aba_selecionada == 'FERRAMENTARIA':
             pasta_atual_id = pasta_raiz_id
             pasta_atual_nome = "Raiz"
         
-        # ===== BREADCRUMB PROFISSIONAL =====
+        # Breadcrumb
         st.markdown('<div class="breadcrumb-profissional">', unsafe_allow_html=True)
         st.markdown('<span class="icone-inicio">📂</span>', unsafe_allow_html=True)
         
-        # Raiz
         if st.button("🏠 Raiz", key="btn_raiz_breadcrumb"):
             resetar_navegacao()
             st.rerun()
@@ -11203,10 +11099,10 @@ elif aba_selecionada == 'FERRAMENTARIA':
         
         st.markdown('</div>', unsafe_allow_html=True)
         
-        # ===== ÁRVORE HIERÁRQUICA =====
+        # Árvore
         renderizar_arvore_hierarquica()
         
-        # ===== CONTEÚDO =====
+        # Conteúdo
         with st.spinner(f"📂 Carregando pasta: {pasta_atual_nome}..."):
             conteudo = listar_conteudo_drive(pasta_atual_id)
         
@@ -11223,7 +11119,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
             """, unsafe_allow_html=True)
             return
         
-        # ===== PASTAS =====
+        # ===== PASTAS - CARDS COM LINKS =====
         if conteudo["pastas"]:
             st.markdown(f'<div class="titulo-secao">📁 Pastas <span class="badge">{len(conteudo["pastas"])}</span></div>', unsafe_allow_html=True)
             st.markdown('<div class="pasta-grid">', unsafe_allow_html=True)
@@ -11247,22 +11143,25 @@ elif aba_selecionada == 'FERRAMENTARIA':
                     icone = "📅"
                     desc = "Pasta"
                 
+                # Card inteiro é um link clicável que navega para dentro da pasta
+                # Usamos um link com onclick para chamar a navegação
                 st.markdown(f"""
-                <div class="pasta-card {classe}" onclick="document.getElementById('btn_pasta_{pasta['id']}').click();">
+                <a href="#" onclick="document.getElementById('btn_pasta_{pasta['id']}').click(); return false;" class="pasta-card {classe}">
                     <span class="icone">{icone}</span>
                     <div class="nome">{pasta['nome']}</div>
                     <div class="desc">{desc}</div>
                     <span class="seta">▶ Clique para entrar</span>
-                </div>
+                </a>
                 """, unsafe_allow_html=True)
                 
+                # Botão hidden que é acionado pelo clique no card
                 if st.button(f"Entrar em {pasta['nome']}", key=f"pasta_{pasta['id']}", help=f"Entrar em {pasta['nome']}"):
                     navegar_para_pasta(pasta['nome'], pasta['id'])
                     st.rerun()
             
             st.markdown('</div>', unsafe_allow_html=True)
         
-        # ===== ARQUIVOS COM MINIATURAS - TAMANHO CORRIGIDO =====
+        # ===== ARQUIVOS =====
         if conteudo["arquivos"]:
             st.markdown(f'<div class="titulo-secao">📄 Arquivos <span class="badge">{len(conteudo["arquivos"])}</span></div>', unsafe_allow_html=True)
             st.markdown('<div class="arquivo-grid">', unsafe_allow_html=True)
@@ -11289,7 +11188,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
         if not conteudo["pastas"] and not conteudo["arquivos"]:
             st.markdown('<div class="vazio-box">📭 Esta pasta está vazia.</div>', unsafe_allow_html=True)
         
-        # ===== BOTÕES DE NAVEGAÇÃO =====
+        # Botões de navegação
         st.markdown('<div class="nav-botoes">', unsafe_allow_html=True)
         
         if st.session_state.caminho_navegacao:
@@ -11309,8 +11208,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
     # FUNÇÃO RENDERIZAR MANUTENÇÃO
     # ======================
     def renderizar_manutencao(link_manutencao: str, nome_ferramental: str):
-        """Renderiza a seção de manutenção com explorador hierárquico"""
-        
         st.markdown("---")
         st.markdown("### 🔧 Manutenções do Ferramental")
         
@@ -11318,7 +11215,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
             st.info("📭 Nenhuma pasta de manutenção configurada.")
             return
         
-        # Resetar navegação ao trocar de ferramental
         if 'ferramental_atual' not in st.session_state or st.session_state.ferramental_atual != nome_ferramental:
             st.session_state.ferramental_atual = nome_ferramental
             resetar_navegacao()
@@ -11467,8 +11363,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
     # FUNÇÃO RENDERIZAR DETALHES
     # ======================
     def renderizar_detalhes_ferramental(registro: Ferramental):
-        """Renderiza a visualização detalhada de um ferramental"""
-        
         st.markdown(f"""
         <div style="background:{THEME['bg_card']};border-radius:12px;padding:20px;border:1px solid {THEME['border_bright']};
                     box-shadow:0 2px 8px rgba(0,0,0,0.05);margin-top:20px;">
@@ -11484,7 +11378,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
             </div>
         """, unsafe_allow_html=True)
         
-        # Documentação
         st.markdown("""
         <div style="font-weight:600;font-size:15px;margin:15px 0 10px 0;color:#333;border-bottom:1px solid #e0e0e0;padding-bottom:8px;">
             📄 Documentação do Ferramental
@@ -11503,16 +11396,12 @@ elif aba_selecionada == 'FERRAMENTARIA':
             st.markdown("<br>", unsafe_allow_html=True)
             renderizar_link_botao(registro.plano_acao, "Plano Ação", "🎯", THEME['accent_red'])
         
-        # Manutenções
         renderizar_manutencao(registro.manutencao, registro.descricao or 'Ferramental')
-        
         st.markdown('</div>', unsafe_allow_html=True)
     
     # ======================
     # INTERFACE PRINCIPAL
     # ======================
-    
-    # ===== FILTROS =====
     st.markdown("### 🔍 Filtros")
     
     with st.spinner("🔄 Carregando dados..."):
@@ -11535,7 +11424,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
     
     st.markdown("---")
     
-    # ===== APLICAR FILTROS =====
     filtros = {}
     if filtro_pcp != "(Todos)": filtros['pcp'] = filtro_pcp
     if filtro_cliente != "(Todos)": filtros['cliente'] = filtro_cliente
@@ -11546,7 +11434,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
     else:
         ferramentais_filtrados = todos_ferramentais
     
-    # ===== CONTAGEM E AÇÕES =====
     col_count, col_add = st.columns([3, 1])
     with col_count:
         if ferramentais_filtrados:
@@ -11560,7 +11447,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
         if st.button("➕ NOVO FERRAMENTAL", type="primary", use_container_width=True):
             st.session_state.mostrar_formulario_novo = True
     
-    # ===== TABELA DE FERRAMENTAIS =====
     if ferramentais_filtrados:
         st.markdown("""
         <div style="font-weight:600;font-size:16px;color:#333;margin:20px 0 10px 0;padding-bottom:8px;border-bottom:2px solid #e0e0e0;">
@@ -11598,7 +11484,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
                     st.rerun()
             st.divider()
         
-        # ===== DETALHES DO FERRAMENTAL SELECIONADO =====
         if st.session_state.ferramental_selecionado:
             selecionado = next((f for f in ferramentais_filtrados if f.id == st.session_state.ferramental_selecionado), None)
             if selecionado:
@@ -11612,7 +11497,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
         if todos_ferramentais:
             st.info("📭 Nenhum ferramental encontrado com os filtros selecionados.")
     
-    # ===== FORMULÁRIO NOVO =====
     if st.session_state.mostrar_formulario_novo:
         st.markdown("---")
         st.markdown("### ➕ Novo Ferramental")
@@ -11620,22 +11504,22 @@ elif aba_selecionada == 'FERRAMENTARIA':
         with st.form("novo_ferramental"):
             col1, col2 = st.columns(2)
             with col1:
-                novo_id = st.text_input("ID*", placeholder="Ex: FER-001", key="novo_ferr_id")
-                novo_pcp = st.text_input("PCP*", placeholder="Ex: MOLD-01", key="novo_ferr_pcp")
-                novo_cliente = st.text_input("Cliente*", placeholder="Nome do cliente", key="novo_ferr_cliente")
-                novo_descricao = st.text_area("Descrição*", placeholder="Descrição detalhada do ferramental", key="novo_ferr_descricao", height=80)
-                nova_data = st.text_input("Data Inicial", placeholder="DD/MM/AAAA", key="novo_ferr_data")
+                novo_id = st.text_input("ID*", placeholder="Ex: FER-001")
+                novo_pcp = st.text_input("PCP*", placeholder="Ex: MOLD-01")
+                novo_cliente = st.text_input("Cliente*")
+                novo_descricao = st.text_area("Descrição*", height=80)
+                nova_data = st.text_input("Data Inicial", placeholder="DD/MM/AAAA")
             with col2:
-                nova_avaliacao = st.text_input("Avaliação Inicial (link)", placeholder="https://...", key="novo_ferr_avaliacao")
-                novo_desenho = st.text_input("Desenho (link)", placeholder="https://...", key="novo_ferr_desenho")
-                novo_gabarito = st.text_input("Gabarito (link)", placeholder="https://...", key="novo_ferr_gabarito")
-                novo_plano_controle = st.text_input("Plano Controle (link)", placeholder="https://...", key="novo_ferr_plano_controle")
-                novo_plano_acao = st.text_input("Plano Ação (link)", placeholder="https://...", key="novo_ferr_plano_acao")
-                nova_manutencao = st.text_input("Manutenção (link Google Drive)", placeholder="https://drive.google.com/...", key="novo_ferr_manutencao")
+                nova_avaliacao = st.text_input("Avaliação Inicial", placeholder="https://...")
+                novo_desenho = st.text_input("Desenho", placeholder="https://...")
+                novo_gabarito = st.text_input("Gabarito", placeholder="https://...")
+                novo_plano_controle = st.text_input("Plano Controle", placeholder="https://...")
+                novo_plano_acao = st.text_input("Plano Ação", placeholder="https://...")
+                nova_manutencao = st.text_input("Manutenção", placeholder="https://drive.google.com/...")
             
             col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
             with col_btn2:
-                submitted = st.form_submit_button("💾 SALVAR FERRAMENTAL", type="primary", use_container_width=True)
+                submitted = st.form_submit_button("💾 SALVAR FERRAMENTAL", type="primary")
             
             if submitted:
                 if not novo_id or not novo_pcp or not novo_cliente or not novo_descricao:
@@ -11661,7 +11545,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
             st.session_state.mostrar_formulario_novo = False
             st.rerun()
     
-    # ===== RODAPÉ =====
     st.markdown(f"""
     <div style="text-align:right;padding:16px 0 8px;font-family:'JetBrains Mono',monospace;font-size:10px;color:{THEME['text_muted']};">
         🛠️ FERRAMENTARIA · {get_horario_brasilia()}
