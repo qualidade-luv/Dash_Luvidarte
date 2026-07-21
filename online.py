@@ -10543,7 +10543,7 @@ elif aba_selecionada == 'PRÊMIO PRENSADOS':
     </div>
     """, unsafe_allow_html=True)
 # ==================================================================================================
-# FERRAMENTARIA - GERENCIAMENTO DE MOLDES (VERSÃO COM LINKS NOS CARDS)
+# FERRAMENTARIA - GERENCIAMENTO DE MOLDES (VERSÃO FINAL CORRIGIDA)
 # ==================================================================================================
 elif aba_selecionada == 'FERRAMENTARIA':
     render_page_header("🛠️ FERRAMENTARIA", 
@@ -10581,7 +10581,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
         st.session_state.caminho_navegacao = st.session_state.caminho_navegacao[:indice]
     
     # ======================
-    # FUNÇÃO PARA OBTER THUMBNAIL DO GOOGLE DRIVE
+    # FUNÇÃO PARA OBTER THUMBNAIL
     # ======================
     def obter_thumbnail(file_id: str, tamanho: str = "w400") -> str:
         if not file_id:
@@ -10734,7 +10734,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
         return link
     
     # ======================
-    # CSS COMPLETO
+    # CSS COMPLETO - SEM BOTÕES VISÍVEIS
     # ======================
     st.markdown("""
     <style>
@@ -10774,7 +10774,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
         border-radius: 6px;
     }
     
-    /* Grid de Pastas - Cards com links */
+    /* Grid de Pastas - Cards com links (SEM BOTÕES VISÍVEIS) */
     .pasta-grid {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
@@ -10891,7 +10891,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
     .arquivo-card .info .ext { font-size: 10px; color: #888; background: #f0f2f5; padding: 2px 10px; border-radius: 4px; flex-shrink: 0; font-weight: 600; }
     .arquivo-card .info .link-icon { font-size: 16px; color: #0078D4; flex-shrink: 0; }
     
-    /* Árvore Hierárquica */
+    /* Árvore Hierárquica - SEM DIV ESCAPADA */
     .arvore-container {
         background: white;
         border-radius: 10px;
@@ -10930,9 +10930,8 @@ elif aba_selecionada == 'FERRAMENTARIA':
         border-left: 2px solid #e4e8ed;
         margin-left: 10px;
     }
-    .arvore-btn-hidden { display: none; }
     
-    /* Botões de navegação */
+    /* Botões de navegação (apenas Voltar e Raiz) */
     .nav-botoes {
         display: flex;
         gap: 12px;
@@ -10986,6 +10985,11 @@ elif aba_selecionada == 'FERRAMENTARIA':
         border: 2px dashed #e0e0e0;
     }
     
+    /* Esconder botões de navegação de pasta (deixar apenas o card) */
+    .pasta-btn-hidden {
+        display: none !important;
+    }
+    
     @media (max-width: 768px) {
         .pasta-grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
         .arquivo-grid { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
@@ -10996,7 +11000,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
     """, unsafe_allow_html=True)
     
     # ======================
-    # FUNÇÃO RENDERIZAR ÁRVORE HIERÁRQUICA (CORRIGIDA)
+    # FUNÇÃO RENDERIZAR ÁRVORE HIERÁRQUICA
     # ======================
     def renderizar_arvore_hierarquica():
         """Renderiza a árvore hierárquica de navegação"""
@@ -11007,20 +11011,21 @@ elif aba_selecionada == 'FERRAMENTARIA':
         st.markdown('<div class="arvore-container">', unsafe_allow_html=True)
         st.markdown('<div class="arvore-titulo">📂 Caminho atual</div>', unsafe_allow_html=True)
         
-        # Raiz
-        st.markdown("""
-        <div class="arvore-item">
-            <span class="nivel">📁</span>
-            <span class="icone">🏠</span>
-            <span class="nome" style="color:#0078D4;cursor:pointer;">Raiz</span>
-            <span class="seta">›</span>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Botão hidden para raiz
-        if st.button("Ir para Raiz", key="btn_raiz_arvore", help="Voltar para a raiz"):
-            resetar_navegacao()
-            st.rerun()
+        # Raiz - usa botão estilizado como texto
+        col_raiz1, col_raiz2 = st.columns([4, 1])
+        with col_raiz1:
+            st.markdown("""
+            <div class="arvore-item">
+                <span class="nivel">📁</span>
+                <span class="icone">🏠</span>
+                <span class="nome" style="color:#0078D4;cursor:pointer;">Raiz</span>
+                <span class="seta">›</span>
+            </div>
+            """, unsafe_allow_html=True)
+        with col_raiz2:
+            if st.button("↩️", key="btn_raiz_arvore", help="Voltar para a raiz"):
+                resetar_navegacao()
+                st.rerun()
         
         # Itens do caminho
         for i, pasta in enumerate(st.session_state.caminho_navegacao):
@@ -11038,27 +11043,40 @@ elif aba_selecionada == 'FERRAMENTARIA':
             
             classe_nome = "nome-atual" if is_ultimo else "nome"
             
-            st.markdown(f'''
-            <div class="arvore-linha">
-                <div class="arvore-item">
-                    <span class="nivel">├─</span>
-                    <span class="icone">{icone}</span>
-                    <span class="{classe_nome}">{pasta['nome']}</span>
-                    {'' if is_ultimo else '<span class="seta">›</span>'}
+            if is_ultimo:
+                # Item atual - apenas texto
+                st.markdown(f'''
+                <div class="arvore-linha">
+                    <div class="arvore-item">
+                        <span class="nivel">├─</span>
+                        <span class="icone">{icone}</span>
+                        <span class="{classe_nome}">{pasta['nome']}</span>
+                    </div>
                 </div>
-            </div>
-            ''', unsafe_allow_html=True)
-            
-            # Botão hidden para voltar a este nível
-            if not is_ultimo:
-                if st.button(f"Voltar para {pasta['nome']}", key=f"btn_arvore_{i}"):
-                    voltar_nivel(i + 1)
-                    st.rerun()
+                ''', unsafe_allow_html=True)
+            else:
+                # Item que pode ser clicado para voltar
+                col1, col2 = st.columns([4, 1])
+                with col1:
+                    st.markdown(f'''
+                    <div class="arvore-linha">
+                        <div class="arvore-item">
+                            <span class="nivel">├─</span>
+                            <span class="icone">{icone}</span>
+                            <span class="{classe_nome}">{pasta['nome']}</span>
+                            <span class="seta">›</span>
+                        </div>
+                    </div>
+                    ''', unsafe_allow_html=True)
+                with col2:
+                    if st.button("↩️", key=f"btn_arvore_{i}", help=f"Voltar para {pasta['nome']}"):
+                        voltar_nivel(i + 1)
+                        st.rerun()
         
         st.markdown('</div>', unsafe_allow_html=True)
     
     # ======================
-    # FUNÇÃO RENDERIZAR EXPLORADOR HIERÁRQUICO (COM CARDS LINK)
+    # FUNÇÃO RENDERIZAR EXPLORADOR HIERÁRQUICO
     # ======================
     def renderizar_explorador_hierarquico(link_pasta: str, nome_ferramental: str):
         """Renderiza um explorador hierárquico com navegação por pastas"""
@@ -11119,7 +11137,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
             """, unsafe_allow_html=True)
             return
         
-        # ===== PASTAS - CARDS COM LINKS =====
+        # ===== PASTAS - CARDS COM LINKS (SEM BOTÕES VISÍVEIS) =====
         if conteudo["pastas"]:
             st.markdown(f'<div class="titulo-secao">📁 Pastas <span class="badge">{len(conteudo["pastas"])}</span></div>', unsafe_allow_html=True)
             st.markdown('<div class="pasta-grid">', unsafe_allow_html=True)
@@ -11143,19 +11161,26 @@ elif aba_selecionada == 'FERRAMENTARIA':
                     icone = "📅"
                     desc = "Pasta"
                 
-                # Card inteiro é um link clicável que navega para dentro da pasta
-                # Usamos um link com onclick para chamar a navegação
+                # Card inteiro é clicável - usa onclick para navegar
+                # Botão hidden com classe para esconder
                 st.markdown(f"""
-                <a href="#" onclick="document.getElementById('btn_pasta_{pasta['id']}').click(); return false;" class="pasta-card {classe}">
+                <div class="pasta-card {classe}" onclick="document.getElementById('btn_pasta_{pasta['id']}').click();">
                     <span class="icone">{icone}</span>
                     <div class="nome">{pasta['nome']}</div>
                     <div class="desc">{desc}</div>
                     <span class="seta">▶ Clique para entrar</span>
-                </a>
+                </div>
                 """, unsafe_allow_html=True)
                 
-                # Botão hidden que é acionado pelo clique no card
-                if st.button(f"Entrar em {pasta['nome']}", key=f"pasta_{pasta['id']}", help=f"Entrar em {pasta['nome']}"):
+                # Botão hidden (invisível) que é acionado pelo clique no card
+                st.markdown(f"""
+                <div style="display:none;">
+                    {st.button(f"Entrar", key=f"pasta_{pasta['id']}", help=f"Entrar em {pasta['nome']}")}
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Processar o clique do botão hidden
+                if st.session_state.get(f"pasta_{pasta['id']}", False):
                     navegar_para_pasta(pasta['nome'], pasta['id'])
                     st.rerun()
             
@@ -11188,7 +11213,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
         if not conteudo["pastas"] and not conteudo["arquivos"]:
             st.markdown('<div class="vazio-box">📭 Esta pasta está vazia.</div>', unsafe_allow_html=True)
         
-        # Botões de navegação
+        # Botões de navegação (Voltar e Raiz)
         st.markdown('<div class="nav-botoes">', unsafe_allow_html=True)
         
         if st.session_state.caminho_navegacao:
