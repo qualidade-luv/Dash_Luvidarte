@@ -10543,7 +10543,7 @@ elif aba_selecionada == 'PRÊMIO PRENSADOS':
     </div>
     """, unsafe_allow_html=True)
 # ==================================================================================================
-# FERRAMENTARIA - GERENCIAMENTO DE MOLDES (VERSÃO COMPLETA E CORRIGIDA)
+# FERRAMENTARIA - GERENCIAMENTO DE MOLDES (VERSÃO CORRIGIDA)
 # ==================================================================================================
 elif aba_selecionada == 'FERRAMENTARIA':
     render_page_header("🛠️ FERRAMENTARIA", 
@@ -10583,11 +10583,11 @@ elif aba_selecionada == 'FERRAMENTARIA':
     # ======================
     # FUNÇÃO PARA OBTER THUMBNAIL DO GOOGLE DRIVE
     # ======================
-    def obter_thumbnail(file_id: str) -> str:
+    def obter_thumbnail(file_id: str, tamanho: str = "w400") -> str:
         """Retorna a URL da thumbnail de um arquivo do Google Drive"""
         if not file_id:
             return ""
-        return f"https://drive.google.com/thumbnail?id={file_id}&sz=w200"
+        return f"https://drive.google.com/thumbnail?id={file_id}&sz={tamanho}"
     
     # ======================
     # FUNÇÃO PARA LISTAR CONTEÚDO DO GOOGLE DRIVE
@@ -10676,7 +10676,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
                             web_link = f"https://drive.google.com/file/d/{item.get('id')}/view"
                         
                         is_imagem = extensao in ['JPG', 'JPEG', 'PNG', 'GIF', 'WEBP', 'SVG', 'BMP', 'ICO']
-                        thumbnail = obter_thumbnail(item.get('id')) if is_imagem else ""
+                        thumbnail = obter_thumbnail(item.get('id'), "w400") if is_imagem else ""
                         
                         resultado["arquivos"].append({
                             "nome": nome,
@@ -10735,7 +10735,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
         return link
     
     # ======================
-    # CSS COMPLETO
+    # CSS COMPLETO - COM CORREÇÕES
     # ======================
     st.markdown("""
     <style>
@@ -10853,18 +10853,18 @@ elif aba_selecionada == 'FERRAMENTARIA':
     .pasta-forma { border-left: 4px solid #0078D4; }
     .pasta-data { border-left: 4px solid #f59e0b; }
     
-    /* ===== ARQUIVOS COM MINIATURAS ===== */
+    /* ===== ARQUIVOS COM MINIATURAS - TAMANHO CORRIGIDO ===== */
     .arquivo-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-        gap: 12px;
+        grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+        gap: 16px;
         margin: 12px 0;
     }
     .arquivo-card {
         background: white;
         border: 1px solid #e4e8ed;
-        border-radius: 10px;
-        padding: 10px;
+        border-radius: 12px;
+        padding: 12px;
         display: flex;
         flex-direction: column;
         transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -10880,42 +10880,43 @@ elif aba_selecionada == 'FERRAMENTARIA':
     }
     .arquivo-card .thumbnail-container {
         width: 100%;
-        height: 140px;
+        height: 180px;
         background: #f0f2f5;
-        border-radius: 6px;
+        border-radius: 8px;
         overflow: hidden;
         display: flex;
         align-items: center;
         justify-content: center;
-        margin-bottom: 8px;
+        margin-bottom: 10px;
         position: relative;
     }
     .arquivo-card .thumbnail-container img {
         width: 100%;
         height: 100%;
-        object-fit: cover;
+        object-fit: contain;
+        background: #f8f9fa;
     }
     .arquivo-card .thumbnail-container .icone-grande {
-        font-size: 48px;
-        opacity: 0.5;
+        font-size: 56px;
+        opacity: 0.3;
     }
     .arquivo-card .info {
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: 10px;
         padding: 0 4px;
     }
     .arquivo-card .info .icone {
-        font-size: 18px;
+        font-size: 20px;
         flex-shrink: 0;
     }
     .arquivo-card .info .nome {
-        font-size: 12px;
+        font-size: 13px;
         font-weight: 500;
         flex: 1;
         word-break: break-word;
         line-height: 1.3;
-        max-height: 32px;
+        max-height: 36px;
         overflow: hidden;
         text-overflow: ellipsis;
     }
@@ -10923,17 +10924,18 @@ elif aba_selecionada == 'FERRAMENTARIA':
         font-size: 10px;
         color: #888;
         background: #f0f2f5;
-        padding: 2px 8px;
+        padding: 2px 10px;
         border-radius: 4px;
         flex-shrink: 0;
+        font-weight: 600;
     }
     .arquivo-card .info .link-icon {
-        font-size: 14px;
+        font-size: 16px;
         color: #0078D4;
         flex-shrink: 0;
     }
     
-    /* ===== ÁRVORE HIERÁRQUICA ===== */
+    /* ===== ÁRVORE HIERÁRQUICA - CORRIGIDA ===== */
     .arvore-container {
         background: white;
         border-radius: 10px;
@@ -10941,10 +10943,16 @@ elif aba_selecionada == 'FERRAMENTARIA':
         border: 1px solid #e4e8ed;
         margin-bottom: 12px;
     }
+    .arvore-titulo {
+        font-weight: 600;
+        font-size: 13px;
+        color: #666;
+        margin-bottom: 8px;
+    }
     .arvore-item {
         display: flex;
         align-items: center;
-        padding: 6px 8px;
+        padding: 5px 8px;
         border-radius: 6px;
         transition: all 0.2s ease;
         gap: 8px;
@@ -10967,6 +10975,15 @@ elif aba_selecionada == 'FERRAMENTARIA':
         font-size: 13px;
         color: #333;
         font-weight: 500;
+        cursor: pointer;
+    }
+    .arvore-item .nome:hover {
+        color: #0078D4;
+        text-decoration: underline;
+    }
+    .arvore-item .nome-atual {
+        font-weight: 600;
+        color: #0078D4;
     }
     .arvore-item .seta {
         color: #0078D4;
@@ -10983,6 +11000,9 @@ elif aba_selecionada == 'FERRAMENTARIA':
         padding-left: 20px;
         border-left: 2px solid #e4e8ed;
         margin-left: 10px;
+    }
+    .arvore-btn-hidden {
+        display: none;
     }
     
     /* ===== BOTÕES DE NAVEGAÇÃO ===== */
@@ -11013,16 +11033,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
     .nav-botoes button:disabled {
         opacity: 0.4;
         cursor: not-allowed;
-    }
-    .nav-botoes button.primario {
-        background: #0078D4;
-        color: white;
-        border-color: #0078D4;
-    }
-    .nav-botoes button.primario:hover:not(:disabled) {
-        background: #005a9e;
-        border-color: #005a9e;
-        color: white;
     }
     
     /* ===== TÍTULOS ===== */
@@ -11072,11 +11082,14 @@ elif aba_selecionada == 'FERRAMENTARIA':
             grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
         }
         .arquivo-grid {
-            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
         }
         .breadcrumb-profissional {
             font-size: 11px;
             padding: 8px 12px;
+        }
+        .arquivo-card .thumbnail-container {
+            height: 140px;
         }
     }
     </style>
@@ -11092,14 +11105,14 @@ elif aba_selecionada == 'FERRAMENTARIA':
             return
         
         st.markdown('<div class="arvore-container">', unsafe_allow_html=True)
-        st.markdown('<div style="font-weight:600;font-size:13px;color:#666;margin-bottom:8px;">📂 Caminho atual</div>', unsafe_allow_html=True)
+        st.markdown('<div class="arvore-titulo">📂 Caminho atual</div>', unsafe_allow_html=True)
         
-        # Raiz
+        # Raiz - usando botão para evitar problemas com onclick
         st.markdown("""
         <div class="arvore-item">
             <span class="nivel">📁</span>
             <span class="icone">🏠</span>
-            <span class="nome" style="color:#0078D4;cursor:pointer;" onclick="document.getElementById('btn_raiz_arvore').click();">Raiz</span>
+            <span class="nome" style="color:#0078D4;">Raiz</span>
             <span class="seta">›</span>
         </div>
         """, unsafe_allow_html=True)
@@ -11124,30 +11137,21 @@ elif aba_selecionada == 'FERRAMENTARIA':
             else:
                 icone = "📅"
             
-            # Construir HTML manualmente
-            html_arvore = f'''
+            # Construir HTML de forma segura - usando divs com classes
+            classe_nome = "nome-atual" if is_ultimo else "nome"
+            
+            st.markdown(f'''
             <div class="arvore-linha">
                 <div class="arvore-item">
                     <span class="nivel">├─</span>
                     <span class="icone">{icone}</span>
-                    <span class="nome" style="{'' if is_ultimo else 'color:#0078D4;cursor:pointer;'}"'''
-            
-            if not is_ultimo:
-                html_arvore += f' onclick="document.getElementById(\'btn_arvore_{i}\').click();"'
-            
-            html_arvore += f'''
-                    >
-                        {pasta['nome']}
-                        {'' if not is_ultimo else ' <span style="color:#0078D4;font-weight:600;">◄</span>'}
-                    </span>
+                    <span class="{classe_nome}">{pasta['nome']}</span>
                     {'' if is_ultimo else '<span class="seta">›</span>'}
                 </div>
             </div>
-            '''
+            ''', unsafe_allow_html=True)
             
-            st.markdown(html_arvore, unsafe_allow_html=True)
-            
-            # Botão hidden para voltar a este nível
+            # Botão hidden para voltar a este nível (apenas se não for o último)
             if not is_ultimo:
                 if st.button(f"Voltar para {pasta['nome']}", key=f"btn_arvore_{i}"):
                     voltar_nivel(i + 1)
@@ -11258,7 +11262,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
             
             st.markdown('</div>', unsafe_allow_html=True)
         
-        # ===== ARQUIVOS COM MINIATURAS =====
+        # ===== ARQUIVOS COM MINIATURAS - TAMANHO CORRIGIDO =====
         if conteudo["arquivos"]:
             st.markdown(f'<div class="titulo-secao">📄 Arquivos <span class="badge">{len(conteudo["arquivos"])}</span></div>', unsafe_allow_html=True)
             st.markdown('<div class="arquivo-grid">', unsafe_allow_html=True)
