@@ -10543,7 +10543,7 @@ elif aba_selecionada == 'PRÊMIO PRENSADOS':
     </div>
     """, unsafe_allow_html=True)
 # ==================================================================================================
-# FERRAMENTARIA - GERENCIAMENTO DE MOLDES (VERSÃO CORRIGIDA)
+# FERRAMENTARIA - NAVEGAÇÃO HIERÁRQUICA COM LISTA DE ARQUIVOS
 # ==================================================================================================
 elif aba_selecionada == 'FERRAMENTARIA':
     render_page_header("🛠️ FERRAMENTARIA", 
@@ -10557,9 +10557,30 @@ elif aba_selecionada == 'FERRAMENTARIA':
     ABA_FERRAMENTARIA = 'MOLDES'
     
     # ======================
+    # INICIALIZAR SESSION STATE PARA NAVEGAÇÃO
+    # ======================
+    if 'caminho_navegacao' not in st.session_state:
+        st.session_state.caminho_navegacao = []
+    
+    def resetar_navegacao():
+        """Reseta a navegação para a raiz"""
+        st.session_state.caminho_navegacao = []
+    
+    def navegar_para_pasta(nome_pasta: str, pasta_id: str):
+        """Adiciona uma pasta ao caminho de navegação"""
+        st.session_state.caminho_navegacao.append({
+            "nome": nome_pasta,
+            "id": pasta_id
+        })
+    
+    def voltar_nivel(indice: int):
+        """Volta para um nível específico do caminho"""
+        st.session_state.caminho_navegacao = st.session_state.caminho_navegacao[:indice]
+    
+    # ======================
     # FUNÇÃO PARA LISTAR CONTEÚDO DO GOOGLE DRIVE
     # ======================
-    def listar_conteudo_drive(link_pasta: str) -> Dict[str, Any]:
+    def listar_conteudo_drive(pasta_id: str) -> Dict[str, Any]:
         """
         Lista o conteúdo de uma pasta do Google Drive usando a API
         """
@@ -10570,36 +10591,14 @@ elif aba_selecionada == 'FERRAMENTARIA':
             "nome_pasta": ""
         }
         
-        if not link_pasta or link_pasta.strip() == "":
-            resultado["erro"] = "Link da pasta vazio"
+        if not pasta_id or pasta_id.strip() == "":
+            resultado["erro"] = "ID da pasta vazio"
             return resultado
         
         try:
-            import re
             from googleapiclient.discovery import build
             from google.oauth2.service_account import Credentials
-            
-            # Extrair ID da pasta do link
-            folder_id = None
-            patterns = [
-                r'\/d\/([a-zA-Z0-9_-]+)',
-                r'\/folders\/([a-zA-Z0-9_-]+)',
-                r'id=([a-zA-Z0-9_-]+)',
-                r'([a-zA-Z0-9_-]{28,})'
-            ]
-            
-            for pattern in patterns:
-                match = re.search(pattern, link_pasta)
-                if match:
-                    folder_id = match.group(1)
-                    break
-            
-            if not folder_id:
-                if len(link_pasta) >= 28 and re.match(r'^[a-zA-Z0-9_-]+$', link_pasta):
-                    folder_id = link_pasta
-                else:
-                    resultado["erro"] = f"Não foi possível extrair o ID da pasta"
-                    return resultado
+            import re
             
             # Obter credenciais
             try:
@@ -10632,16 +10631,18 @@ elif aba_selecionada == 'FERRAMENTARIA':
                 
                 drive_service = build('drive', 'v3', credentials=creds)
                 
+                # Buscar nome da pasta
                 try:
                     pasta_info = drive_service.files().get(
-                        fileId=folder_id,
+                        fileId=pasta_id,
                         fields="name"
                     ).execute()
                     resultado["nome_pasta"] = pasta_info.get('name', 'Pasta')
                 except Exception as e:
                     resultado["nome_pasta"] = "Pasta"
                 
-                query = f"'{folder_id}' in parents and trashed = false"
+                # Listar arquivos na pasta
+                query = f"'{pasta_id}' in parents and trashed = false"
                 
                 results = drive_service.files().list(
                     q=query,
@@ -10677,8 +10678,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
                             "tipo": "arquivo",
                             "extensao": extensao,
                             "icone": icone,
-                            "tamanho": "",
-                            "modificado": ""
+                            "modificado": item.get('modifiedTime', '')
                         })
                 
                 resultado["pastas"] = sorted(resultado["pastas"], key=lambda x: x["nome"].lower())
@@ -10707,17 +10707,14 @@ elif aba_selecionada == 'FERRAMENTARIA':
         return icones.get(extensao.upper(), '📎')
     
     # ======================
-    # FUNÇÃO RENDERIZAR EXPLORADOR (NOME CORRETO)
+    # FUNÇÃO PARA EXTRAIR ID DO LINK
     # ======================
-    def renderizar_explorador(link_pasta: str, nome_ferramental: str):
-        """Renderiza o explorador de pastas do Google Drive"""
-        if not link_pasta or link_pasta.strip() == "":
-            st.info("📭 Nenhuma pasta configurada.")
-            return
+    def extrair_id_drive(link: str) -> str:
+        """Extrai o ID de uma pasta/arquivo do Google Drive"""
+        if not link:
+            return ""
         
-        # Extrair o ID da pasta
         import re
-        folder_id = None
         patterns = [
             r'\/d\/([a-zA-Z0-9_-]+)',
             r'\/folders\/([a-zA-Z0-9_-]+)',
@@ -10726,174 +10723,298 @@ elif aba_selecionada == 'FERRAMENTARIA':
         ]
         
         for pattern in patterns:
-            match = re.search(pattern, link_pasta)
+            match = re.search(pattern, link)
             if match:
-                folder_id = match.group(1)
-                break
+                return match.group(1)
         
-        if not folder_id:
-            folder_id = link_pasta
+        return link
+    
+    # ======================
+    # FUNÇÃO RENDERIZAR EXPLORADOR HIERÁRQUICO
+    # ======================
+    def renderizar_explorador_hierarquico(link_pasta: str, nome_ferramental: str):
+        """Renderiza um explorador hierárquico com navegação por pastas"""
         
+        if not link_pasta or link_pasta.strip() == "":
+            st.info("📭 Nenhuma pasta configurada.")
+            return
+        
+        # Extrair ID da pasta raiz
+        pasta_raiz_id = extrair_id_drive(link_pasta)
+        
+        if not pasta_raiz_id:
+            st.warning("⚠️ Não foi possível identificar a pasta.")
+            return
+        
+        # Determinar qual pasta listar
+        if st.session_state.caminho_navegacao:
+            pasta_atual_id = st.session_state.caminho_navegacao[-1]["id"]
+            pasta_atual_nome = st.session_state.caminho_navegacao[-1]["nome"]
+        else:
+            pasta_atual_id = pasta_raiz_id
+            pasta_atual_nome = "Raiz"
+        
+        # CSS
         st.markdown("""
         <style>
-        .explorador-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-            gap: 12px;
-            margin: 15px 0;
-        }
-        .explorador-card {
-            background: white;
-            border: 1px solid #e0e0e0;
+        .navegacao-container {
+            background: #f8f9fc;
             border-radius: 10px;
             padding: 15px;
+            margin: 10px 0;
+            border: 1px solid #e0e0e0;
+        }
+        .breadcrumb {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            padding: 8px 12px;
+            background: white;
+            border-radius: 6px;
+            margin-bottom: 12px;
+            border: 1px solid #e0e0e0;
+            gap: 4px;
+        }
+        .breadcrumb .sep { color: #999; margin: 0 4px; }
+        .breadcrumb .item {
+            color: #0078D4;
+            cursor: pointer;
+            padding: 2px 8px;
+            border-radius: 4px;
+            transition: all 0.2s ease;
+        }
+        .breadcrumb .item:hover {
+            background: #e8ecf1;
+            text-decoration: underline;
+        }
+        .breadcrumb .atual {
+            font-weight: 600;
+            color: #333;
+            padding: 2px 8px;
+        }
+        .pasta-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+            gap: 10px;
+            margin: 10px 0;
+        }
+        .pasta-card {
+            background: white;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 12px;
             text-align: center;
+            transition: all 0.2s ease;
+            cursor: pointer;
+            text-decoration: none;
+            color: #333;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+        .pasta-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            border-color: #0078D4;
+        }
+        .pasta-card .icone { font-size: 32px; display: block; margin-bottom: 6px; }
+        .pasta-card .nome { font-size: 12px; font-weight: 600; word-break: break-word; }
+        .pasta-card .qtd { font-size: 10px; color: #999; }
+        .arquivo-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 8px;
+            margin: 10px 0;
+        }
+        .arquivo-card {
+            background: white;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 10px 12px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
             transition: all 0.2s ease;
             text-decoration: none;
             color: #333;
             box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-            display: block;
-            cursor: pointer;
         }
-        .explorador-card:hover {
-            transform: translateY(-4px);
-            box-shadow: 0 6px 20px rgba(0,0,0,0.1);
-            border-color: #0078D4;
+        .arquivo-card:hover {
+            transform: translateX(5px);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            border-color: #28a745;
         }
-        .explorador-card .icone { font-size: 36px; display: block; margin-bottom: 8px; }
-        .explorador-card .nome { font-size: 12px; font-weight: 600; word-break: break-word; }
-        .explorador-card .desc { font-size: 11px; color: #999; margin-top: 4px; }
-        .explorador-pasta { border-left: 3px solid #0078D4; }
-        .explorador-arquivo { border-left: 3px solid #28a745; }
-        .explorador-header {
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-            padding: 15px 20px;
-            border-radius: 10px;
-            margin-bottom: 15px;
-            color: white;
+        .arquivo-card .icone { font-size: 24px; }
+        .arquivo-card .nome { font-size: 12px; font-weight: 500; flex: 1; word-break: break-word; }
+        .arquivo-card .ext { font-size: 10px; color: #999; background: #f0f0f0; padding: 2px 6px; border-radius: 4px; }
+        .arquivo-card .link-icon { font-size: 14px; color: #0078D4; }
+        .info-box {
+            background: #e8f4fd;
+            padding: 10px 15px;
+            border-radius: 8px;
+            border-left: 4px solid #0078D4;
+            margin: 10px 0;
+            font-size: 13px;
+            color: #005a8c;
         }
-        .explorador-header h3 { margin: 0; font-size: 16px; }
-        .explorador-header .sub { font-size: 12px; color: #a0aec0; word-break: break-all; }
-        .pasta-raiz-btn {
+        .vazio-box {
             text-align: center;
-            margin-top: 15px;
-            padding-top: 15px;
-            border-top: 1px solid #e0e0e0;
+            padding: 20px;
+            color: #999;
+            background: #f8f9fa;
+            border-radius: 8px;
         }
-        .pasta-raiz-btn a { text-decoration: none; }
-        .pasta-raiz-btn div {
+        .titulo-secao {
+            font-weight: 600;
+            font-size: 14px;
+            color: #333;
+            margin: 15px 0 8px 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .botao-raiz {
+            text-align: center;
+            margin: 15px 0;
+        }
+        .botao-raiz button {
             background: #e8ecf1;
+            border: none;
             padding: 8px 16px;
             border-radius: 6px;
-            display: inline-block;
             font-size: 12px;
             color: #333;
+            cursor: pointer;
             transition: all 0.2s ease;
         }
-        .pasta-raiz-btn div:hover {
+        .botao-raiz button:hover {
             background: #d5d9e0;
             transform: scale(1.02);
         }
+        .pasta-entrada { border-left: 3px solid #28a745; }
+        .pasta-saida { border-left: 3px solid #dc3545; }
+        .pasta-forma { border-left: 3px solid #0078D4; }
+        .pasta-data { border-left: 3px solid #FFB900; }
         </style>
         """, unsafe_allow_html=True)
         
-        with st.spinner(f"📂 Carregando conteúdo da pasta..."):
-            conteudo = listar_conteudo_drive(link_pasta)
+        # ===== BREADCRUMB =====
+        st.markdown('<div class="navegacao-container">', unsafe_allow_html=True)
         
-        nome_pasta = conteudo.get('nome_pasta', 'Pasta')
+        # Breadcrumb
+        st.markdown('<div class="breadcrumb">', unsafe_allow_html=True)
+        st.markdown('<span>📂</span>', unsafe_allow_html=True)
         
-        st.markdown(f"""
-        <div class="explorador-header">
-            <h3>🔧 Manutenções - {nome_ferramental}</h3>
-            <div class="sub">📁 {nome_pasta}</div>
-        </div>
-        """, unsafe_allow_html=True)
+        # Botão raiz
+        if st.button("🏠 Raiz", key="btn_raiz_hierarquico"):
+            resetar_navegacao()
+            st.rerun()
+        
+        for i, pasta in enumerate(st.session_state.caminho_navegacao):
+            st.markdown('<span class="sep">›</span>', unsafe_allow_html=True)
+            if i == len(st.session_state.caminho_navegacao) - 1:
+                st.markdown(f'<span class="atual">{pasta["nome"]}</span>', unsafe_allow_html=True)
+            else:
+                if st.button(pasta["nome"], key=f"bread_{i}"):
+                    voltar_nivel(i + 1)
+                    st.rerun()
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        # ===== CARREGAR CONTEÚDO =====
+        with st.spinner(f"📂 Carregando pasta: {pasta_atual_nome}..."):
+            conteudo = listar_conteudo_drive(pasta_atual_id)
         
         if conteudo.get("erro"):
-            st.warning(f"⚠️ Erro ao listar o conteúdo: {conteudo['erro']}")
-            
-            # Links manuais para ENTRADA e SAÍDA
-            st.markdown("""
-            <div style="font-weight:600;font-size:14px;margin:15px 0 8px 0;">📁 Pastas (links manuais)</div>
-            """, unsafe_allow_html=True)
-            
-            st.markdown('<div class="explorador-grid">', unsafe_allow_html=True)
-            
-            pastas_manuais = [
-                {"nome": "ENTRADA", "icone": "📥", "cor": "#28a745"},
-                {"nome": "SAÍDA", "icone": "📤", "cor": "#dc3545"}
-            ]
-            
-            for pasta in pastas_manuais:
-                link_subpasta = f"{link_pasta.rstrip('/')}/{pasta['nome']}"
-                
-                st.markdown(f"""
-                <a href="{link_subpasta}" target="_blank" rel="noopener noreferrer" class="explorador-card explorador-pasta" style="border-left-color: {pasta['cor']};">
-                    <span class="icone">{pasta['icone']}</span>
-                    <div class="nome">{pasta['nome']}</div>
-                    <div class="desc">Clique para abrir no Drive</div>
-                </a>
-                """, unsafe_allow_html=True)
-            
-            st.markdown('</div>', unsafe_allow_html=True)
-            
-            # Botão pasta raiz
+            st.warning(f"⚠️ Erro: {conteudo['erro']}")
             st.markdown(f"""
-            <div class="pasta-raiz-btn">
-                <a href="{link_pasta}" target="_blank" rel="noopener noreferrer">
-                    <div>📂 Abrir pasta raiz no Google Drive</div>
+            <div style="text-align:center;margin:10px 0;">
+                <a href="{link_pasta}" target="_blank" rel="noopener noreferrer" style="text-decoration:none;">
+                    <div style="background:#0078D4;color:white;padding:10px 20px;border-radius:6px;display:inline-block;">
+                        📂 Abrir pasta no Google Drive
+                    </div>
                 </a>
             </div>
             """, unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
             return
         
+        # ===== PASTAS =====
         if conteudo["pastas"]:
-            st.markdown(f'<div style="font-weight:600;font-size:14px;">📁 Pastas ({len(conteudo["pastas"])})</div>', unsafe_allow_html=True)
-            st.markdown('<div class="explorador-grid">', unsafe_allow_html=True)
+            st.markdown(f'<div class="titulo-secao">📁 Pastas ({len(conteudo["pastas"])})</div>', unsafe_allow_html=True)
+            st.markdown('<div class="pasta-grid">', unsafe_allow_html=True)
             
             for pasta in conteudo["pastas"]:
-                icone = "📥" if pasta['nome'].upper() == "ENTRADA" else "📤" if pasta['nome'].upper() == "SAÍDA" else "📂"
-                cor = "#28a745" if pasta['nome'].upper() == "ENTRADA" else "#dc3545" if pasta['nome'].upper() == "SAÍDA" else "#0078D4"
+                # Determinar classe e ícone
+                nome_upper = pasta['nome'].upper()
+                if nome_upper == "ENTRADA":
+                    classe = "pasta-entrada"
+                    icone = "📥"
+                elif nome_upper == "SAÍDA":
+                    classe = "pasta-saida"
+                    icone = "📤"
+                elif "FORMA" in nome_upper or "MOLDE" in nome_upper:
+                    classe = "pasta-forma"
+                    icone = "🔧"
+                else:
+                    classe = "pasta-data"
+                    icone = "📅"
                 
+                # Botão para navegar para dentro da pasta
+                if st.button(f"{icone} {pasta['nome']}", key=f"pasta_{pasta['id']}", use_container_width=True):
+                    navegar_para_pasta(pasta['nome'], pasta['id'])
+                    st.rerun()
+                
+                # Mostrar card
                 st.markdown(f"""
-                <a href="{pasta['link']}" target="_blank" rel="noopener noreferrer" class="explorador-card explorador-pasta" style="border-left-color: {cor};">
+                <div class="pasta-card {classe}">
                     <span class="icone">{icone}</span>
                     <div class="nome">{pasta['nome']}</div>
-                    <div class="desc">Clique para abrir</div>
+                    <div class="qtd">Clique para abrir</div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            st.markdown('</div>', unsafe_allow_html=True)
+        
+        # ===== ARQUIVOS =====
+        if conteudo["arquivos"]:
+            st.markdown(f'<div class="titulo-secao">📄 Arquivos ({len(conteudo["arquivos"])})</div>', unsafe_allow_html=True)
+            st.markdown('<div class="arquivo-grid">', unsafe_allow_html=True)
+            
+            for arquivo in conteudo["arquivos"]:
+                st.markdown(f"""
+                <a href="{arquivo['link']}" target="_blank" rel="noopener noreferrer" class="arquivo-card">
+                    <span class="icone">{arquivo['icone']}</span>
+                    <span class="nome">{arquivo['nome']}</span>
+                    <span class="ext">{arquivo['extensao']}</span>
+                    <span class="link-icon">↗</span>
                 </a>
                 """, unsafe_allow_html=True)
             
             st.markdown('</div>', unsafe_allow_html=True)
         
-        if conteudo["arquivos"]:
-            st.markdown(f'<div style="font-weight:600;font-size:14px;margin-top:15px;">📄 Arquivos ({len(conteudo["arquivos"])})</div>', unsafe_allow_html=True)
-            st.markdown('<div class="explorador-grid">', unsafe_allow_html=True)
-            for arquivo in conteudo["arquivos"]:
-                st.markdown(f"""
-                <a href="{arquivo['link']}" target="_blank" rel="noopener noreferrer" class="explorador-card explorador-arquivo">
-                    <span class="icone">{arquivo['icone']}</span>
-                    <div class="nome">{arquivo['nome']}</div>
-                    <div class="desc">Clique para abrir</div>
-                </a>
-                """, unsafe_allow_html=True)
-            st.markdown('</div>', unsafe_allow_html=True)
-        
+        # ===== SE NÃO HOUVER NADA =====
         if not conteudo["pastas"] and not conteudo["arquivos"]:
-            st.info("📭 Esta pasta está vazia.")
+            st.markdown('<div class="vazio-box">📭 Esta pasta está vazia.</div>', unsafe_allow_html=True)
         
-        st.markdown(f"""
-        <div class="pasta-raiz-btn">
-            <a href="{link_pasta}" target="_blank" rel="noopener noreferrer">
-                <div>📂 Abrir pasta raiz no Google Drive</div>
-            </a>
-        </div>
-        """, unsafe_allow_html=True)
+        # ===== BOTÕES DE NAVEGAÇÃO =====
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.session_state.caminho_navegacao:
+                if st.button("⬅️ Voltar", use_container_width=True):
+                    voltar_nivel(len(st.session_state.caminho_navegacao) - 1)
+                    st.rerun()
+        
+        with col2:
+            if st.button("🏠 Ir para Raiz", use_container_width=True):
+                resetar_navegacao()
+                st.rerun()
+        
+        st.markdown('</div>', unsafe_allow_html=True)
     
     # ======================
-    # FUNÇÃO RENDERIZAR MANUTENÇÃO (NOME CORRETO)
+    # FUNÇÃO RENDERIZAR MANUTENÇÃO
     # ======================
     def renderizar_manutencao(link_manutencao: str, nome_ferramental: str):
-        """Renderiza a seção de manutenção com explorador"""
+        """Renderiza a seção de manutenção com explorador hierárquico"""
         st.markdown(f"""
         <div style="background: {THEME['bg_card']}; border-radius: 12px; 
                     padding: 20px; border: 1px solid {THEME['border_bright']};
@@ -10903,12 +11024,17 @@ elif aba_selecionada == 'FERRAMENTARIA':
         if not link_manutencao or link_manutencao.strip() == "":
             st.info("📭 Nenhuma pasta de manutenção configurada.")
         else:
-            renderizar_explorador(link_manutencao, nome_ferramental)
+            # Resetar navegação ao entrar
+            if 'ferramental_anterior' not in st.session_state or st.session_state.ferramental_anterior != nome_ferramental:
+                st.session_state.ferramental_anterior = nome_ferramental
+                resetar_navegacao()
+            
+            renderizar_explorador_hierarquico(link_manutencao, nome_ferramental)
         
         st.markdown('</div>', unsafe_allow_html=True)
     
     # ======================
-    # DATACLASS
+    # DATACLASS E DEMAIS FUNÇÕES
     # ======================
     @dataclass
     class Ferramental:
@@ -10924,9 +11050,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
         plano_acao: str = ""
         manutencao: str = ""
     
-    # ======================
-    # FUNÇÕES DE CARREGAMENTO
-    # ======================
     @retry_on_quota()
     @st.cache_data(ttl=600)
     def carregar_ferramentais_dict(filtros: Dict[str, Any] = None) -> List[Dict]:
@@ -11149,6 +11272,8 @@ elif aba_selecionada == 'FERRAMENTARIA':
             with cols[6]: st.write(row["🔧"])
             with cols[7]:
                 if st.button("📊", key=f"btn_{row['ID']}"):
+                    # Resetar navegação ao selecionar um novo ferramental
+                    resetar_navegacao()
                     st.session_state.ferramental_selecionado = row["ID"]
                     st.rerun()
             st.divider()
@@ -11159,6 +11284,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
                 renderizar_detalhes_ferramental(selecionado)
                 if st.button("❌ Fechar", use_container_width=True):
                     del st.session_state.ferramental_selecionado
+                    resetar_navegacao()
                     st.rerun()
     
     # ===== FORMULÁRIO NOVO =====
