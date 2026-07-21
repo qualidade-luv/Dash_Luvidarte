@@ -10543,7 +10543,7 @@ elif aba_selecionada == 'PRÊMIO PRENSADOS':
     </div>
     """, unsafe_allow_html=True)
 # ==================================================================================================
-# FERRAMENTARIA - NAVEGAÇÃO HIERÁRQUICA COM LISTA DE ARQUIVOS
+# FERRAMENTARIA - GERENCIAMENTO DE MOLDES (VERSÃO COMPLETA E ORGANIZADA)
 # ==================================================================================================
 elif aba_selecionada == 'FERRAMENTARIA':
     render_page_header("🛠️ FERRAMENTARIA", 
@@ -10557,33 +10557,33 @@ elif aba_selecionada == 'FERRAMENTARIA':
     ABA_FERRAMENTARIA = 'MOLDES'
     
     # ======================
-    # INICIALIZAR SESSION STATE PARA NAVEGAÇÃO
+    # INICIALIZAR SESSION STATE
     # ======================
     if 'caminho_navegacao' not in st.session_state:
         st.session_state.caminho_navegacao = []
     
+    if 'ferramental_selecionado' not in st.session_state:
+        st.session_state.ferramental_selecionado = None
+    
+    if 'mostrar_formulario_novo' not in st.session_state:
+        st.session_state.mostrar_formulario_novo = False
+    
     def resetar_navegacao():
-        """Reseta a navegação para a raiz"""
         st.session_state.caminho_navegacao = []
     
     def navegar_para_pasta(nome_pasta: str, pasta_id: str):
-        """Adiciona uma pasta ao caminho de navegação"""
         st.session_state.caminho_navegacao.append({
             "nome": nome_pasta,
             "id": pasta_id
         })
     
     def voltar_nivel(indice: int):
-        """Volta para um nível específico do caminho"""
         st.session_state.caminho_navegacao = st.session_state.caminho_navegacao[:indice]
     
     # ======================
     # FUNÇÃO PARA LISTAR CONTEÚDO DO GOOGLE DRIVE
     # ======================
     def listar_conteudo_drive(pasta_id: str) -> Dict[str, Any]:
-        """
-        Lista o conteúdo de uma pasta do Google Drive usando a API
-        """
         resultado = {
             "pastas": [],
             "arquivos": [],
@@ -10600,7 +10600,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
             from google.oauth2.service_account import Credentials
             import re
             
-            # Obter credenciais
             try:
                 if 'gcp_service_account' in st.secrets:
                     creds_dict = dict(st.secrets["gcp_service_account"])
@@ -10631,19 +10630,16 @@ elif aba_selecionada == 'FERRAMENTARIA':
                 
                 drive_service = build('drive', 'v3', credentials=creds)
                 
-                # Buscar nome da pasta
                 try:
                     pasta_info = drive_service.files().get(
                         fileId=pasta_id,
                         fields="name"
                     ).execute()
                     resultado["nome_pasta"] = pasta_info.get('name', 'Pasta')
-                except Exception as e:
+                except:
                     resultado["nome_pasta"] = "Pasta"
                 
-                # Listar arquivos na pasta
                 query = f"'{pasta_id}' in parents and trashed = false"
-                
                 results = drive_service.files().list(
                     q=query,
                     fields="files(id, name, mimeType, webViewLink, size, modifiedTime, iconLink)",
@@ -10666,7 +10662,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
                     else:
                         extensao = nome.split('.')[-1].upper() if '.' in nome else ''
                         icone = get_icone_arquivo(extensao)
-                        
                         web_link = item.get('webViewLink')
                         if not web_link:
                             web_link = f"https://drive.google.com/file/d/{item.get('id')}/view"
@@ -10710,10 +10705,8 @@ elif aba_selecionada == 'FERRAMENTARIA':
     # FUNÇÃO PARA EXTRAIR ID DO LINK
     # ======================
     def extrair_id_drive(link: str) -> str:
-        """Extrai o ID de uma pasta/arquivo do Google Drive"""
         if not link:
             return ""
-        
         import re
         patterns = [
             r'\/d\/([a-zA-Z0-9_-]+)',
@@ -10721,13 +10714,203 @@ elif aba_selecionada == 'FERRAMENTARIA':
             r'id=([a-zA-Z0-9_-]+)',
             r'([a-zA-Z0-9_-]{28,})'
         ]
-        
         for pattern in patterns:
             match = re.search(pattern, link)
             if match:
                 return match.group(1)
-        
         return link
+    
+    # ======================
+    # CSS GLOBAL DO MÓDULO
+    # ======================
+    st.markdown("""
+    <style>
+    /* Container principal */
+    .ferramentaria-container {
+        max-width: 100%;
+        padding: 5px 0;
+    }
+    
+    /* Cards de pasta */
+    .pasta-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+        gap: 12px;
+        margin: 10px 0;
+    }
+    .pasta-card {
+        background: white;
+        border: 1px solid #e0e0e0;
+        border-radius: 10px;
+        padding: 16px;
+        text-align: center;
+        transition: all 0.3s ease;
+        cursor: pointer;
+        text-decoration: none;
+        color: #333;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        display: block;
+    }
+    .pasta-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 6px 20px rgba(0,0,0,0.1);
+        border-color: #0078D4;
+    }
+    .pasta-card .icone { font-size: 38px; display: block; margin-bottom: 6px; }
+    .pasta-card .nome { font-size: 13px; font-weight: 600; word-break: break-word; }
+    .pasta-card .desc { font-size: 11px; color: #999; margin-top: 4px; }
+    .pasta-card .seta { font-size: 12px; color: #0078D4; margin-top: 6px; display: inline-block; }
+    
+    /* Cores das pastas */
+    .pasta-entrada { border-left: 4px solid #28a745; }
+    .pasta-saida { border-left: 4px solid #dc3545; }
+    .pasta-forma { border-left: 4px solid #0078D4; }
+    .pasta-data { border-left: 4px solid #FFB900; }
+    
+    /* Cards de arquivo */
+    .arquivo-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 8px;
+        margin: 10px 0;
+    }
+    .arquivo-card {
+        background: white;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 10px 14px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        transition: all 0.2s ease;
+        text-decoration: none;
+        color: #333;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    .arquivo-card:hover {
+        transform: translateX(5px);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        border-color: #28a745;
+    }
+    .arquivo-card .icone { font-size: 24px; }
+    .arquivo-card .nome { font-size: 12px; font-weight: 500; flex: 1; word-break: break-word; }
+    .arquivo-card .ext { font-size: 10px; color: #999; background: #f0f0f0; padding: 2px 8px; border-radius: 4px; }
+    .arquivo-card .link-icon { font-size: 14px; color: #0078D4; }
+    
+    /* Breadcrumb */
+    .breadcrumb {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        padding: 8px 14px;
+        background: white;
+        border-radius: 8px;
+        margin-bottom: 12px;
+        border: 1px solid #e0e0e0;
+        gap: 4px;
+        font-size: 13px;
+    }
+    .breadcrumb .sep { color: #999; margin: 0 4px; }
+    .breadcrumb .item {
+        color: #0078D4;
+        cursor: pointer;
+        padding: 2px 8px;
+        border-radius: 4px;
+        transition: all 0.2s ease;
+        background: none;
+        border: none;
+        font-size: 13px;
+    }
+    .breadcrumb .item:hover {
+        background: #e8ecf1;
+        text-decoration: underline;
+    }
+    .breadcrumb .atual {
+        font-weight: 600;
+        color: #333;
+        padding: 2px 8px;
+    }
+    
+    /* Navegação container */
+    .navegacao-container {
+        background: #f8f9fc;
+        border-radius: 10px;
+        padding: 15px;
+        margin: 10px 0;
+        border: 1px solid #e0e0e0;
+    }
+    
+    /* Botões de navegação */
+    .nav-botoes {
+        display: flex;
+        gap: 10px;
+        margin-top: 15px;
+        padding-top: 15px;
+        border-top: 1px solid #e0e0e0;
+    }
+    .nav-botoes button {
+        flex: 1;
+        padding: 8px 12px;
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        background: white;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        font-size: 13px;
+    }
+    .nav-botoes button:hover {
+        background: #f0f2f5;
+        border-color: #0078D4;
+    }
+    .nav-botoes button.primario {
+        background: #0078D4;
+        color: white;
+        border-color: #0078D4;
+    }
+    .nav-botoes button.primario:hover {
+        background: #005a9e;
+    }
+    
+    /* Títulos */
+    .titulo-secao {
+        font-weight: 600;
+        font-size: 14px;
+        color: #333;
+        margin: 15px 0 8px 0;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    
+    /* Info box */
+    .info-box {
+        background: #e8f4fd;
+        padding: 10px 15px;
+        border-radius: 8px;
+        border-left: 4px solid #0078D4;
+        margin: 10px 0;
+        font-size: 13px;
+        color: #005a8c;
+    }
+    .vazio-box {
+        text-align: center;
+        padding: 25px;
+        color: #999;
+        background: #f8f9fa;
+        border-radius: 8px;
+    }
+    
+    /* Tabela de ferramentais */
+    .ferramentais-header {
+        font-weight: 600;
+        font-size: 16px;
+        color: #333;
+        margin: 20px 0 10px 0;
+        padding-bottom: 8px;
+        border-bottom: 2px solid #e0e0e0;
+    }
+    </style>
+    """, unsafe_allow_html=True)
     
     # ======================
     # FUNÇÃO RENDERIZAR EXPLORADOR HIERÁRQUICO
@@ -10739,14 +10922,13 @@ elif aba_selecionada == 'FERRAMENTARIA':
             st.info("📭 Nenhuma pasta configurada.")
             return
         
-        # Extrair ID da pasta raiz
         pasta_raiz_id = extrair_id_drive(link_pasta)
         
         if not pasta_raiz_id:
             st.warning("⚠️ Não foi possível identificar a pasta.")
             return
         
-        # Determinar qual pasta listar
+        # Determinar pasta atual
         if st.session_state.caminho_navegacao:
             pasta_atual_id = st.session_state.caminho_navegacao[-1]["id"]
             pasta_atual_nome = st.session_state.caminho_navegacao[-1]["nome"]
@@ -10754,156 +10936,11 @@ elif aba_selecionada == 'FERRAMENTARIA':
             pasta_atual_id = pasta_raiz_id
             pasta_atual_nome = "Raiz"
         
-        # CSS
-        st.markdown("""
-        <style>
-        .navegacao-container {
-            background: #f8f9fc;
-            border-radius: 10px;
-            padding: 15px;
-            margin: 10px 0;
-            border: 1px solid #e0e0e0;
-        }
-        .breadcrumb {
-            display: flex;
-            flex-wrap: wrap;
-            align-items: center;
-            padding: 8px 12px;
-            background: white;
-            border-radius: 6px;
-            margin-bottom: 12px;
-            border: 1px solid #e0e0e0;
-            gap: 4px;
-        }
-        .breadcrumb .sep { color: #999; margin: 0 4px; }
-        .breadcrumb .item {
-            color: #0078D4;
-            cursor: pointer;
-            padding: 2px 8px;
-            border-radius: 4px;
-            transition: all 0.2s ease;
-        }
-        .breadcrumb .item:hover {
-            background: #e8ecf1;
-            text-decoration: underline;
-        }
-        .breadcrumb .atual {
-            font-weight: 600;
-            color: #333;
-            padding: 2px 8px;
-        }
-        .pasta-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-            gap: 10px;
-            margin: 10px 0;
-        }
-        .pasta-card {
-            background: white;
-            border: 1px solid #e0e0e0;
-            border-radius: 8px;
-            padding: 12px;
-            text-align: center;
-            transition: all 0.2s ease;
-            cursor: pointer;
-            text-decoration: none;
-            color: #333;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-        }
-        .pasta-card:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-            border-color: #0078D4;
-        }
-        .pasta-card .icone { font-size: 32px; display: block; margin-bottom: 6px; }
-        .pasta-card .nome { font-size: 12px; font-weight: 600; word-break: break-word; }
-        .pasta-card .qtd { font-size: 10px; color: #999; }
-        .arquivo-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-            gap: 8px;
-            margin: 10px 0;
-        }
-        .arquivo-card {
-            background: white;
-            border: 1px solid #e0e0e0;
-            border-radius: 8px;
-            padding: 10px 12px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            transition: all 0.2s ease;
-            text-decoration: none;
-            color: #333;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-        }
-        .arquivo-card:hover {
-            transform: translateX(5px);
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-            border-color: #28a745;
-        }
-        .arquivo-card .icone { font-size: 24px; }
-        .arquivo-card .nome { font-size: 12px; font-weight: 500; flex: 1; word-break: break-word; }
-        .arquivo-card .ext { font-size: 10px; color: #999; background: #f0f0f0; padding: 2px 6px; border-radius: 4px; }
-        .arquivo-card .link-icon { font-size: 14px; color: #0078D4; }
-        .info-box {
-            background: #e8f4fd;
-            padding: 10px 15px;
-            border-radius: 8px;
-            border-left: 4px solid #0078D4;
-            margin: 10px 0;
-            font-size: 13px;
-            color: #005a8c;
-        }
-        .vazio-box {
-            text-align: center;
-            padding: 20px;
-            color: #999;
-            background: #f8f9fa;
-            border-radius: 8px;
-        }
-        .titulo-secao {
-            font-weight: 600;
-            font-size: 14px;
-            color: #333;
-            margin: 15px 0 8px 0;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        .botao-raiz {
-            text-align: center;
-            margin: 15px 0;
-        }
-        .botao-raiz button {
-            background: #e8ecf1;
-            border: none;
-            padding: 8px 16px;
-            border-radius: 6px;
-            font-size: 12px;
-            color: #333;
-            cursor: pointer;
-            transition: all 0.2s ease;
-        }
-        .botao-raiz button:hover {
-            background: #d5d9e0;
-            transform: scale(1.02);
-        }
-        .pasta-entrada { border-left: 3px solid #28a745; }
-        .pasta-saida { border-left: 3px solid #dc3545; }
-        .pasta-forma { border-left: 3px solid #0078D4; }
-        .pasta-data { border-left: 3px solid #FFB900; }
-        </style>
-        """, unsafe_allow_html=True)
-        
         # ===== BREADCRUMB =====
-        st.markdown('<div class="navegacao-container">', unsafe_allow_html=True)
-        
-        # Breadcrumb
         st.markdown('<div class="breadcrumb">', unsafe_allow_html=True)
         st.markdown('<span>📂</span>', unsafe_allow_html=True)
         
-        # Botão raiz
+        # Raiz
         if st.button("🏠 Raiz", key="btn_raiz_hierarquico"):
             resetar_navegacao()
             st.rerun()
@@ -10919,7 +10956,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
         
         st.markdown('</div>', unsafe_allow_html=True)
         
-        # ===== CARREGAR CONTEÚDO =====
+        # ===== CONTEÚDO =====
         with st.spinner(f"📂 Carregando pasta: {pasta_atual_nome}..."):
             conteudo = listar_conteudo_drive(pasta_atual_id)
         
@@ -10934,7 +10971,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
                 </a>
             </div>
             """, unsafe_allow_html=True)
-            st.markdown('</div>', unsafe_allow_html=True)
             return
         
         # ===== PASTAS =====
@@ -10943,34 +10979,38 @@ elif aba_selecionada == 'FERRAMENTARIA':
             st.markdown('<div class="pasta-grid">', unsafe_allow_html=True)
             
             for pasta in conteudo["pastas"]:
-                # Determinar classe e ícone
                 nome_upper = pasta['nome'].upper()
                 if nome_upper == "ENTRADA":
                     classe = "pasta-entrada"
                     icone = "📥"
+                    desc = "Entrada de manutenção"
                 elif nome_upper == "SAÍDA":
                     classe = "pasta-saida"
                     icone = "📤"
+                    desc = "Saída de manutenção"
                 elif "FORMA" in nome_upper or "MOLDE" in nome_upper:
                     classe = "pasta-forma"
                     icone = "🔧"
+                    desc = "Ferramental"
                 else:
                     classe = "pasta-data"
                     icone = "📅"
+                    desc = "Pasta"
                 
-                # Botão para navegar para dentro da pasta
-                if st.button(f"{icone} {pasta['nome']}", key=f"pasta_{pasta['id']}", use_container_width=True):
-                    navegar_para_pasta(pasta['nome'], pasta['id'])
-                    st.rerun()
-                
-                # Mostrar card
+                # Card clicável - usa botão Streamlit para navegação
                 st.markdown(f"""
-                <div class="pasta-card {classe}">
+                <div class="pasta-card {classe}" onclick="document.getElementById('btn_pasta_{pasta['id']}').click();">
                     <span class="icone">{icone}</span>
                     <div class="nome">{pasta['nome']}</div>
-                    <div class="qtd">Clique para abrir</div>
+                    <div class="desc">{desc}</div>
+                    <span class="seta">▶ Clique para entrar</span>
                 </div>
                 """, unsafe_allow_html=True)
+                
+                # Botão hidden que é ativado pelo clique no card
+                if st.button(f"Entrar em {pasta['nome']}", key=f"pasta_{pasta['id']}", help=f"Entrar em {pasta['nome']}"):
+                    navegar_para_pasta(pasta['nome'], pasta['id'])
+                    st.rerun()
             
             st.markdown('</div>', unsafe_allow_html=True)
         
@@ -10991,22 +11031,22 @@ elif aba_selecionada == 'FERRAMENTARIA':
             
             st.markdown('</div>', unsafe_allow_html=True)
         
-        # ===== SE NÃO HOUVER NADA =====
         if not conteudo["pastas"] and not conteudo["arquivos"]:
             st.markdown('<div class="vazio-box">📭 Esta pasta está vazia.</div>', unsafe_allow_html=True)
         
         # ===== BOTÕES DE NAVEGAÇÃO =====
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.session_state.caminho_navegacao:
-                if st.button("⬅️ Voltar", use_container_width=True):
-                    voltar_nivel(len(st.session_state.caminho_navegacao) - 1)
-                    st.rerun()
+        st.markdown('<div class="nav-botoes">', unsafe_allow_html=True)
         
-        with col2:
-            if st.button("🏠 Ir para Raiz", use_container_width=True):
-                resetar_navegacao()
+        if st.session_state.caminho_navegacao:
+            if st.button("⬅️ Voltar", use_container_width=True):
+                voltar_nivel(len(st.session_state.caminho_navegacao) - 1)
                 st.rerun()
+        else:
+            st.button("⬅️ Voltar", disabled=True, use_container_width=True)
+        
+        if st.button("🏠 Ir para Raiz", use_container_width=True):
+            resetar_navegacao()
+            st.rerun()
         
         st.markdown('</div>', unsafe_allow_html=True)
     
@@ -11015,26 +11055,23 @@ elif aba_selecionada == 'FERRAMENTARIA':
     # ======================
     def renderizar_manutencao(link_manutencao: str, nome_ferramental: str):
         """Renderiza a seção de manutenção com explorador hierárquico"""
-        st.markdown(f"""
-        <div style="background: {THEME['bg_card']}; border-radius: 12px; 
-                    padding: 20px; border: 1px solid {THEME['border_bright']};
-                    box-shadow: 0 2px 8px rgba(0,0,0,0.05); margin: 10px 0;">
-        """, unsafe_allow_html=True)
+        
+        st.markdown("---")
+        st.markdown("### 🔧 Manutenções do Ferramental")
         
         if not link_manutencao or link_manutencao.strip() == "":
             st.info("📭 Nenhuma pasta de manutenção configurada.")
-        else:
-            # Resetar navegação ao entrar
-            if 'ferramental_anterior' not in st.session_state or st.session_state.ferramental_anterior != nome_ferramental:
-                st.session_state.ferramental_anterior = nome_ferramental
-                resetar_navegacao()
-            
-            renderizar_explorador_hierarquico(link_manutencao, nome_ferramental)
+            return
         
-        st.markdown('</div>', unsafe_allow_html=True)
+        # Resetar navegação ao trocar de ferramental
+        if 'ferramental_atual' not in st.session_state or st.session_state.ferramental_atual != nome_ferramental:
+            st.session_state.ferramental_atual = nome_ferramental
+            resetar_navegacao()
+        
+        renderizar_explorador_hierarquico(link_manutencao, nome_ferramental)
     
     # ======================
-    # DATACLASS E DEMAIS FUNÇÕES
+    # DATACLASS
     # ======================
     @dataclass
     class Ferramental:
@@ -11050,6 +11087,9 @@ elif aba_selecionada == 'FERRAMENTARIA':
         plano_acao: str = ""
         manutencao: str = ""
     
+    # ======================
+    # FUNÇÕES DE CARREGAMENTO
+    # ======================
     @retry_on_quota()
     @st.cache_data(ttl=600)
     def carregar_ferramentais_dict(filtros: Dict[str, Any] = None) -> List[Dict]:
@@ -11104,7 +11144,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
         except Exception as e:
             if "429" in str(e) or "Quota exceeded" in str(e):
                 return registros
-            st.error(f"❌ Erro ao carregar: {str(e)}")
             return registros
     
     def dict_para_ferramental(data: dict) -> Ferramental:
@@ -11173,6 +11212,8 @@ elif aba_selecionada == 'FERRAMENTARIA':
     # FUNÇÃO RENDERIZAR DETALHES
     # ======================
     def renderizar_detalhes_ferramental(registro: Ferramental):
+        """Renderiza a visualização detalhada de um ferramental"""
+        
         st.markdown(f"""
         <div style="background:{THEME['bg_card']};border-radius:12px;padding:20px;border:1px solid {THEME['border_bright']};
                     box-shadow:0 2px 8px rgba(0,0,0,0.05);margin-top:20px;">
@@ -11188,26 +11229,35 @@ elif aba_selecionada == 'FERRAMENTARIA':
             </div>
         """, unsafe_allow_html=True)
         
+        # Documentação
         st.markdown("""
-        <div style="font-weight:600;font-size:14px;margin:15px 0 10px 0;color:#333;">📄 Documentação</div>
+        <div style="font-weight:600;font-size:15px;margin:15px 0 10px 0;color:#333;border-bottom:1px solid #e0e0e0;padding-bottom:8px;">
+            📄 Documentação do Ferramental
+        </div>
         """, unsafe_allow_html=True)
         
         col1, col2 = st.columns(2)
         with col1:
             renderizar_link_botao(registro.avaliacao_inicial, "Avaliação Inicial", "📋", THEME['accent_cyan'])
+            st.markdown("<br>", unsafe_allow_html=True)
             renderizar_link_botao(registro.desenho, "Desenho", "🎨", THEME['accent_purple'])
+            st.markdown("<br>", unsafe_allow_html=True)
             renderizar_link_botao(registro.gabarito, "Gabarito", "📐", THEME['accent_yellow'])
         with col2:
             renderizar_link_botao(registro.plano_controle, "Plano Controle", "📋", THEME['accent_orange'])
+            st.markdown("<br>", unsafe_allow_html=True)
             renderizar_link_botao(registro.plano_acao, "Plano Ação", "🎯", THEME['accent_red'])
         
-        st.markdown("---")
+        # Manutenções
         renderizar_manutencao(registro.manutencao, registro.descricao or 'Ferramental')
+        
         st.markdown('</div>', unsafe_allow_html=True)
     
     # ======================
     # INTERFACE PRINCIPAL
     # ======================
+    
+    # ===== FILTROS =====
     st.markdown("### 🔍 Filtros")
     
     with st.spinner("🔄 Carregando dados..."):
@@ -11230,6 +11280,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
     
     st.markdown("---")
     
+    # ===== APLICAR FILTROS =====
     filtros = {}
     if filtro_pcp != "(Todos)": filtros['pcp'] = filtro_pcp
     if filtro_cliente != "(Todos)": filtros['cliente'] = filtro_cliente
@@ -11240,20 +11291,35 @@ elif aba_selecionada == 'FERRAMENTARIA':
     else:
         ferramentais_filtrados = todos_ferramentais
     
+    # ===== CONTAGEM E AÇÕES =====
     col_count, col_add = st.columns([3, 1])
     with col_count:
         if ferramentais_filtrados:
-            st.markdown(f"📊 <b>{len(ferramentais_filtrados)}</b> ferramentais encontrados", unsafe_allow_html=True)
+            st.markdown(f"""
+            <div style="font-size:14px;color:{THEME['text_muted']};padding:8px 0;">
+                📊 <b>{len(ferramentais_filtrados)}</b> ferramentais encontrados
+                {f' (filtrados de {len(todos_ferramentais)} totais)' if filtros else ''}
+            </div>
+            """, unsafe_allow_html=True)
     with col_add:
-        if st.button("➕ NOVO", type="primary", use_container_width=True):
+        if st.button("➕ NOVO FERRAMENTAL", type="primary", use_container_width=True):
             st.session_state.mostrar_formulario_novo = True
     
+    # ===== TABELA DE FERRAMENTAIS =====
     if ferramentais_filtrados:
+        st.markdown("""
+        <div style="font-weight:600;font-size:16px;color:#333;margin:20px 0 10px 0;padding-bottom:8px;border-bottom:2px solid #e0e0e0;">
+            📋 Lista de Ferramentais
+        </div>
+        """, unsafe_allow_html=True)
+        
         dados_tabela = []
         for f in ferramentais_filtrados:
             tem_docs = any([f.avaliacao_inicial, f.desenho, f.gabarito, f.plano_controle, f.plano_acao])
             dados_tabela.append({
-                "ID": f.id, "PCP": f.pcp, "Cliente": f.cliente,
+                "ID": f.id,
+                "PCP": f.pcp,
+                "Cliente": f.cliente,
                 "Descrição": f.descricao[:40] + "..." if len(f.descricao) > 40 else f.descricao,
                 "Data": f.data_inicial,
                 "📄": "✅" if tem_docs else "❌",
@@ -11262,7 +11328,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
         df_tabela = pd.DataFrame(dados_tabela)
         
         for idx, row in df_tabela.iterrows():
-            cols = st.columns([1, 1.5, 1.5, 3, 1.5, 0.6, 0.6, 1])
+            cols = st.columns([1, 1.2, 1.2, 3, 1.2, 0.6, 0.6, 1])
             with cols[0]: st.write(row["ID"])
             with cols[1]: st.write(row["PCP"])
             with cols[2]: st.write(row["Cliente"])
@@ -11271,65 +11337,76 @@ elif aba_selecionada == 'FERRAMENTARIA':
             with cols[5]: st.write(row["📄"])
             with cols[6]: st.write(row["🔧"])
             with cols[7]:
-                if st.button("📊", key=f"btn_{row['ID']}"):
-                    # Resetar navegação ao selecionar um novo ferramental
+                if st.button("📊 Ver", key=f"btn_ver_{row['ID']}"):
                     resetar_navegacao()
                     st.session_state.ferramental_selecionado = row["ID"]
                     st.rerun()
             st.divider()
         
-        if 'ferramental_selecionado' in st.session_state:
+        # ===== DETALHES DO FERRAMENTAL SELECIONADO =====
+        if st.session_state.ferramental_selecionado:
             selecionado = next((f for f in ferramentais_filtrados if f.id == st.session_state.ferramental_selecionado), None)
             if selecionado:
                 renderizar_detalhes_ferramental(selecionado)
-                if st.button("❌ Fechar", use_container_width=True):
-                    del st.session_state.ferramental_selecionado
+                if st.button("❌ Fechar Detalhes", use_container_width=True):
+                    st.session_state.ferramental_selecionado = None
                     resetar_navegacao()
                     st.rerun()
     
+    else:
+        if todos_ferramentais:
+            st.info("📭 Nenhum ferramental encontrado com os filtros selecionados.")
+    
     # ===== FORMULÁRIO NOVO =====
-    if st.session_state.get('mostrar_formulario_novo', False):
+    if st.session_state.mostrar_formulario_novo:
         st.markdown("---")
         st.markdown("### ➕ Novo Ferramental")
+        
         with st.form("novo_ferramental"):
             col1, col2 = st.columns(2)
             with col1:
-                novo_id = st.text_input("ID*", placeholder="Ex: FER-001")
-                novo_pcp = st.text_input("PCP*", placeholder="Ex: MOLD-01")
-                novo_cliente = st.text_input("Cliente*")
-                novo_descricao = st.text_area("Descrição*", height=80)
-                nova_data = st.text_input("Data Inicial", placeholder="DD/MM/AAAA")
+                novo_id = st.text_input("ID*", placeholder="Ex: FER-001", key="novo_ferr_id")
+                novo_pcp = st.text_input("PCP*", placeholder="Ex: MOLD-01", key="novo_ferr_pcp")
+                novo_cliente = st.text_input("Cliente*", placeholder="Nome do cliente", key="novo_ferr_cliente")
+                novo_descricao = st.text_area("Descrição*", placeholder="Descrição detalhada do ferramental", key="novo_ferr_descricao", height=80)
+                nova_data = st.text_input("Data Inicial", placeholder="DD/MM/AAAA", key="novo_ferr_data")
             with col2:
-                nova_avaliacao = st.text_input("Avaliação Inicial", placeholder="https://...")
-                novo_desenho = st.text_input("Desenho", placeholder="https://...")
-                novo_gabarito = st.text_input("Gabarito", placeholder="https://...")
-                novo_plano_controle = st.text_input("Plano Controle", placeholder="https://...")
-                novo_plano_acao = st.text_input("Plano Ação", placeholder="https://...")
-                nova_manutencao = st.text_input("Manutenção (link Drive)", placeholder="https://drive.google.com/...")
+                nova_avaliacao = st.text_input("Avaliação Inicial (link)", placeholder="https://...", key="novo_ferr_avaliacao")
+                novo_desenho = st.text_input("Desenho (link)", placeholder="https://...", key="novo_ferr_desenho")
+                novo_gabarito = st.text_input("Gabarito (link)", placeholder="https://...", key="novo_ferr_gabarito")
+                novo_plano_controle = st.text_input("Plano Controle (link)", placeholder="https://...", key="novo_ferr_plano_controle")
+                novo_plano_acao = st.text_input("Plano Ação (link)", placeholder="https://...", key="novo_ferr_plano_acao")
+                nova_manutencao = st.text_input("Manutenção (link Google Drive)", placeholder="https://drive.google.com/...", key="novo_ferr_manutencao")
             
-            if st.form_submit_button("💾 SALVAR", type="primary"):
+            col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
+            with col_btn2:
+                submitted = st.form_submit_button("💾 SALVAR FERRAMENTAL", type="primary", use_container_width=True)
+            
+            if submitted:
                 if not novo_id or not novo_pcp or not novo_cliente or not novo_descricao:
-                    st.error("❌ Preencha os campos obrigatórios (*)")
+                    st.error("❌ Preencha todos os campos obrigatórios (*)")
                 else:
-                    reg = Ferramental(
+                    registro = Ferramental(
                         id=novo_id, pcp=novo_pcp, cliente=novo_cliente,
                         descricao=novo_descricao, data_inicial=nova_data,
                         avaliacao_inicial=nova_avaliacao, desenho=novo_desenho,
                         gabarito=novo_gabarito, plano_controle=novo_plano_controle,
                         plano_acao=novo_plano_acao, manutencao=nova_manutencao
                     )
-                    sucesso, msg = salvar_ferramental(reg)
+                    sucesso, mensagem = salvar_ferramental(registro)
                     if sucesso:
-                        st.success(msg)
+                        st.success(mensagem)
+                        st.balloons()
                         st.session_state.mostrar_formulario_novo = False
                         st.rerun()
                     else:
-                        st.error(msg)
+                        st.error(mensagem)
         
-        if st.button("❌ Cancelar"):
+        if st.button("❌ Cancelar", use_container_width=True):
             st.session_state.mostrar_formulario_novo = False
             st.rerun()
     
+    # ===== RODAPÉ =====
     st.markdown(f"""
     <div style="text-align:right;padding:16px 0 8px;font-family:'JetBrains Mono',monospace;font-size:10px;color:{THEME['text_muted']};">
         🛠️ FERRAMENTARIA · {get_horario_brasilia()}
