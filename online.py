@@ -10543,7 +10543,7 @@ elif aba_selecionada == 'PRÊMIO PRENSADOS':
     </div>
     """, unsafe_allow_html=True)
 # ==================================================================================================
-# FERRAMENTARIA - GERENCIAMENTO DE MOLDES (VERSÃO FINAL CORRIGIDA)
+# FERRAMENTARIA - GERENCIAMENTO DE MOLDES COM CALIBRAÇÃO
 # ==================================================================================================
 elif aba_selecionada == 'FERRAMENTARIA':
     render_page_header("🛠️ FERRAMENTARIA", 
@@ -10734,7 +10734,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
         return link
     
     # ======================
-    # CSS COMPLETO - SEM BOTÕES VISÍVEIS
+    # CSS COMPLETO
     # ======================
     st.markdown("""
     <style>
@@ -10774,7 +10774,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
         border-radius: 6px;
     }
     
-    /* Grid de Pastas - Cards com links (SEM BOTÕES VISÍVEIS) */
+    /* Grid de Pastas */
     .pasta-grid {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
@@ -10833,7 +10833,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
     .pasta-forma { border-left: 4px solid #0078D4; }
     .pasta-data { border-left: 4px solid #f59e0b; }
     
-    /* Grid de Arquivos com miniaturas */
+    /* Grid de Arquivos */
     .arquivo-grid {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
@@ -10891,7 +10891,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
     .arquivo-card .info .ext { font-size: 10px; color: #888; background: #f0f2f5; padding: 2px 10px; border-radius: 4px; flex-shrink: 0; font-weight: 600; }
     .arquivo-card .info .link-icon { font-size: 16px; color: #0078D4; flex-shrink: 0; }
     
-    /* Árvore Hierárquica - SEM DIV ESCAPADA */
+    /* Árvore Hierárquica */
     .arvore-container {
         background: white;
         border-radius: 10px;
@@ -10931,7 +10931,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
         margin-left: 10px;
     }
     
-    /* Botões de navegação (apenas Voltar e Raiz) */
+    /* Botões de navegação */
     .nav-botoes {
         display: flex;
         gap: 12px;
@@ -10985,7 +10985,79 @@ elif aba_selecionada == 'FERRAMENTARIA':
         border: 2px dashed #e0e0e0;
     }
     
-    /* Esconder botões de navegação de pasta (deixar apenas o card) */
+    /* Cards de Calibração */
+    .calibracao-container {
+        background: white;
+        border-radius: 12px;
+        padding: 16px 20px;
+        border: 1px solid #e4e8ed;
+        margin: 10px 0;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+    }
+    .calibracao-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 16px;
+        margin: 10px 0;
+    }
+    .calibracao-card {
+        background: #f8f9fc;
+        border-radius: 10px;
+        padding: 14px 16px;
+        text-align: center;
+        border: 1px solid #e4e8ed;
+        transition: all 0.2s ease;
+    }
+    .calibracao-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+    }
+    .calibracao-card .valor {
+        font-size: 28px;
+        font-weight: 700;
+        color: #1a1a2e;
+        display: block;
+        margin: 4px 0;
+    }
+    .calibracao-card .label {
+        font-size: 11px;
+        color: #888;
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+    .calibracao-card .status {
+        font-size: 13px;
+        font-weight: 600;
+        margin-top: 6px;
+        padding: 4px 12px;
+        border-radius: 20px;
+        display: inline-block;
+    }
+    .status-critical { background: #fee2e2; color: #dc2626; }
+    .status-warning { background: #fef3c7; color: #d97706; }
+    .status-info { background: #dbeafe; color: #2563eb; }
+    .status-success { background: #d1fae5; color: #059669; }
+    .status-default { background: #f3f4f6; color: #6b7280; }
+    
+    .calibracao-barra-container {
+        background: #f0f2f5;
+        border-radius: 8px;
+        height: 8px;
+        margin: 8px 0 4px 0;
+        overflow: hidden;
+    }
+    .calibracao-barra {
+        height: 100%;
+        border-radius: 8px;
+        transition: width 0.5s ease;
+    }
+    .calibracao-barra-critical { background: #dc3545; }
+    .calibracao-barra-warning { background: #f59e0b; }
+    .calibracao-barra-info { background: #0078D4; }
+    .calibracao-barra-success { background: #28a745; }
+    
+    /* Esconder botões de pasta */
     .pasta-btn-hidden {
         display: none !important;
     }
@@ -10995,6 +11067,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
         .arquivo-grid { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
         .breadcrumb-profissional { font-size: 11px; padding: 8px 12px; }
         .arquivo-card .thumbnail-container { height: 140px; }
+        .calibracao-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
     }
     </style>
     """, unsafe_allow_html=True)
@@ -11003,15 +11076,13 @@ elif aba_selecionada == 'FERRAMENTARIA':
     # FUNÇÃO RENDERIZAR ÁRVORE HIERÁRQUICA
     # ======================
     def renderizar_arvore_hierarquica():
-        """Renderiza a árvore hierárquica de navegação"""
-        
         if not st.session_state.caminho_navegacao:
             return
         
         st.markdown('<div class="arvore-container">', unsafe_allow_html=True)
         st.markdown('<div class="arvore-titulo">📂 Caminho atual</div>', unsafe_allow_html=True)
         
-        # Raiz - usa botão estilizado como texto
+        # Raiz
         col_raiz1, col_raiz2 = st.columns([4, 1])
         with col_raiz1:
             st.markdown("""
@@ -11027,7 +11098,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
                 resetar_navegacao()
                 st.rerun()
         
-        # Itens do caminho
         for i, pasta in enumerate(st.session_state.caminho_navegacao):
             is_ultimo = (i == len(st.session_state.caminho_navegacao) - 1)
             
@@ -11044,7 +11114,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
             classe_nome = "nome-atual" if is_ultimo else "nome"
             
             if is_ultimo:
-                # Item atual - apenas texto
                 st.markdown(f'''
                 <div class="arvore-linha">
                     <div class="arvore-item">
@@ -11055,7 +11124,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
                 </div>
                 ''', unsafe_allow_html=True)
             else:
-                # Item que pode ser clicado para voltar
                 col1, col2 = st.columns([4, 1])
                 with col1:
                     st.markdown(f'''
@@ -11079,8 +11147,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
     # FUNÇÃO RENDERIZAR EXPLORADOR HIERÁRQUICO
     # ======================
     def renderizar_explorador_hierarquico(link_pasta: str, nome_ferramental: str):
-        """Renderiza um explorador hierárquico com navegação por pastas"""
-        
         if not link_pasta or link_pasta.strip() == "":
             st.info("📭 Nenhuma pasta configurada.")
             return
@@ -11098,7 +11164,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
             pasta_atual_id = pasta_raiz_id
             pasta_atual_nome = "Raiz"
         
-        # Breadcrumb
         st.markdown('<div class="breadcrumb-profissional">', unsafe_allow_html=True)
         st.markdown('<span class="icone-inicio">📂</span>', unsafe_allow_html=True)
         
@@ -11117,10 +11182,8 @@ elif aba_selecionada == 'FERRAMENTARIA':
         
         st.markdown('</div>', unsafe_allow_html=True)
         
-        # Árvore
         renderizar_arvore_hierarquica()
         
-        # Conteúdo
         with st.spinner(f"📂 Carregando pasta: {pasta_atual_nome}..."):
             conteudo = listar_conteudo_drive(pasta_atual_id)
         
@@ -11137,7 +11200,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
             """, unsafe_allow_html=True)
             return
         
-        # ===== PASTAS - CARDS COM LINKS (SEM BOTÕES VISÍVEIS) =====
         if conteudo["pastas"]:
             st.markdown(f'<div class="titulo-secao">📁 Pastas <span class="badge">{len(conteudo["pastas"])}</span></div>', unsafe_allow_html=True)
             st.markdown('<div class="pasta-grid">', unsafe_allow_html=True)
@@ -11161,8 +11223,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
                     icone = "📅"
                     desc = "Pasta"
                 
-                # Card inteiro é clicável - usa onclick para navegar
-                # Botão hidden com classe para esconder
                 st.markdown(f"""
                 <div class="pasta-card {classe}" onclick="document.getElementById('btn_pasta_{pasta['id']}').click();">
                     <span class="icone">{icone}</span>
@@ -11172,21 +11232,18 @@ elif aba_selecionada == 'FERRAMENTARIA':
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # Botão hidden (invisível) que é acionado pelo clique no card
                 st.markdown(f"""
                 <div style="display:none;">
                     {st.button(f"Entrar", key=f"pasta_{pasta['id']}", help=f"Entrar em {pasta['nome']}")}
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # Processar o clique do botão hidden
                 if st.session_state.get(f"pasta_{pasta['id']}", False):
                     navegar_para_pasta(pasta['nome'], pasta['id'])
                     st.rerun()
             
             st.markdown('</div>', unsafe_allow_html=True)
         
-        # ===== ARQUIVOS =====
         if conteudo["arquivos"]:
             st.markdown(f'<div class="titulo-secao">📄 Arquivos <span class="badge">{len(conteudo["arquivos"])}</span></div>', unsafe_allow_html=True)
             st.markdown('<div class="arquivo-grid">', unsafe_allow_html=True)
@@ -11213,7 +11270,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
         if not conteudo["pastas"] and not conteudo["arquivos"]:
             st.markdown('<div class="vazio-box">📭 Esta pasta está vazia.</div>', unsafe_allow_html=True)
         
-        # Botões de navegação (Voltar e Raiz)
         st.markdown('<div class="nav-botoes">', unsafe_allow_html=True)
         
         if st.session_state.caminho_navegacao:
@@ -11228,6 +11284,198 @@ elif aba_selecionada == 'FERRAMENTARIA':
             st.rerun()
         
         st.markdown('</div>', unsafe_allow_html=True)
+    
+    # ======================
+    # FUNÇÃO RENDERIZAR MANUTENÇÃO
+    # ======================
+    def renderizar_manutencao(link_manutencao: str, nome_ferramental: str):
+        st.markdown("---")
+        st.markdown("### 🔧 Manutenções do Ferramental")
+        
+        if not link_manutencao or link_manutencao.strip() == "":
+            st.info("📭 Nenhuma pasta de manutenção configurada.")
+            return
+        
+        if 'ferramental_atual' not in st.session_state or st.session_state.ferramental_atual != nome_ferramental:
+            st.session_state.ferramental_atual = nome_ferramental
+            resetar_navegacao()
+        
+        renderizar_explorador_hierarquico(link_manutencao, nome_ferramental)
+    
+    # ======================
+    # FUNÇÃO RENDERIZAR CALIBRAÇÃO
+    # ======================
+    def renderizar_calibracao(registro: Ferramental):
+        """Renderiza o cronograma de calibração de dispositivos de aferição"""
+        
+        # Verificar se tem dados de calibração
+        if not registro.quant_gabaritos and not registro.data_calibracao and not registro.frequencia:
+            st.info("📭 Nenhum dispositivo de aferição cadastrado para este ferramental.")
+            return
+        
+        st.markdown("---")
+        st.markdown("### 📏 Cronograma de Calibração - Dispositivos de Aferição")
+        
+        # Converter dados
+        try:
+            quant_gabaritos = int(registro.quant_gabaritos) if registro.quant_gabaritos else 0
+        except:
+            quant_gabaritos = 0
+        
+        try:
+            frequencia = int(registro.frequencia) if registro.frequencia else 0
+        except:
+            frequencia = 0
+        
+        # Data da última calibração
+        data_calibracao = None
+        if registro.data_calibracao:
+            try:
+                if '/' in registro.data_calibracao:
+                    partes = registro.data_calibracao.split('/')
+                    if len(partes) == 3:
+                        data_calibracao = datetime(int(partes[2]), int(partes[1]), int(partes[0]))
+                else:
+                    data_calibracao = datetime.strptime(registro.data_calibracao, "%Y-%m-%d")
+            except:
+                data_calibracao = None
+        
+        # Calcular status
+        hoje = datetime.now().date()
+        proxima_calibracao = None
+        dias_restantes = None
+        status = "default"
+        cor_status = "#6b7280"
+        mensagem_status = "⏳ Sem dados"
+        classe_status = "status-default"
+        classe_barra = "calibracao-barra-success"
+        percentual_barra = 0
+        
+        if data_calibracao and frequencia > 0:
+            data_calibracao_date = data_calibracao.date() if hasattr(data_calibracao, 'date') else data_calibracao
+            proxima_calibracao = data_calibracao_date + timedelta(days=frequencia)
+            dias_restantes = (proxima_calibracao - hoje).days
+            dias_passados = frequencia - dias_restantes if dias_restantes > 0 else frequencia
+            percentual_barra = min(100, max(0, (dias_passados / frequencia) * 100)) if frequencia > 0 else 0
+            
+            if dias_restantes < 0:
+                status = "critical"
+                cor_status = "#dc3545"
+                mensagem_status = f"🔴 ATRASADA há {abs(dias_restantes)} dias"
+                classe_status = "status-critical"
+                classe_barra = "calibracao-barra-critical"
+            elif dias_restantes <= 7:
+                status = "warning"
+                cor_status = "#f59e0b"
+                mensagem_status = f"🟡 VENCE em {dias_restantes} dias"
+                classe_status = "status-warning"
+                classe_barra = "calibracao-barra-warning"
+            elif dias_restantes <= 30:
+                status = "info"
+                cor_status = "#0078D4"
+                mensagem_status = f"ℹ️ VENCE em {dias_restantes} dias"
+                classe_status = "status-info"
+                classe_barra = "calibracao-barra-info"
+            else:
+                status = "success"
+                cor_status = "#28a745"
+                mensagem_status = f"✅ VENCE em {dias_restantes} dias"
+                classe_status = "status-success"
+                classe_barra = "calibracao-barra-success"
+        
+        # ===== CARDS DE CALIBRAÇÃO =====
+        st.markdown('<div class="calibracao-container">', unsafe_allow_html=True)
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.markdown(f"""
+            <div class="calibracao-card">
+                <span class="label">📦 Quantidade</span>
+                <span class="valor">{quant_gabaritos}</span>
+                <span style="font-size:11px;color:#888;">dispositivo(s)</span>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col2:
+            data_str = data_calibracao.strftime("%d/%m/%Y") if data_calibracao else "N/A"
+            st.markdown(f"""
+            <div class="calibracao-card">
+                <span class="label">📅 Última Calibração</span>
+                <span class="valor" style="font-size:22px;">{data_str}</span>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col3:
+            freq_str = f"{frequencia} dias" if frequencia > 0 else "N/A"
+            st.markdown(f"""
+            <div class="calibracao-card">
+                <span class="label">🔄 Frequência</span>
+                <span class="valor" style="font-size:22px;">{freq_str}</span>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col4:
+            prox_str = proxima_calibracao.strftime("%d/%m/%Y") if proxima_calibracao else "N/A"
+            st.markdown(f"""
+            <div class="calibracao-card">
+                <span class="label">📌 Próxima Calibração</span>
+                <span class="valor" style="font-size:22px;">{prox_str}</span>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        # ===== STATUS E BARRA DE PROGRESSO =====
+        if data_calibracao and frequencia > 0:
+            st.markdown(f"""
+            <div class="calibracao-container" style="border-left: 4px solid {cor_status};">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                    <span style="font-size:14px;font-weight:600;color:{cor_status};">Status da Calibração</span>
+                    <span class="status {classe_status}">{mensagem_status}</span>
+                </div>
+                <div class="calibracao-barra-container">
+                    <div class="calibracao-barra {classe_barra}" style="width:{percentual_barra}%;"></div>
+                </div>
+                <div style="display:flex;justify-content:space-between;font-size:10px;color:#888;margin-top:2px;">
+                    <span>Última: {data_calibracao.strftime('%d/%m/%Y') if data_calibracao else 'N/A'}</span>
+                    <span>{percentual_barra:.0f}% do ciclo</span>
+                    <span>Próxima: {proxima_calibracao.strftime('%d/%m/%Y') if proxima_calibracao else 'N/A'}</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # ===== ALERTAS =====
+        if status == "critical":
+            st.error(f"""
+            🚨 **ALERTA CRÍTICO!** 
+            
+            A calibração deste ferramental está **ATRASADA há {abs(dias_restantes)} dias**.
+            
+            **Ação necessária:** Realizar a calibração imediatamente!
+            """)
+        elif status == "warning":
+            st.warning(f"""
+            ⚠️ **ATENÇÃO!**
+            
+            A calibração deste ferramental **VENCE em {dias_restantes} dias**.
+            
+            **Ação necessária:** Programar a calibração nos próximos dias.
+            """)
+        elif status == "info":
+            st.info(f"""
+            ℹ️ **INFORMAÇÃO**
+            
+            A calibração deste ferramental **VENCE em {dias_restantes} dias**.
+            
+            **Ação:** Planejar a calibração dentro do prazo.
+            """)
+        elif status == "success":
+            st.success(f"""
+            ✅ **CALIBRAÇÃO EM DIA**
+            
+            A calibração deste ferramental está em dia. Próxima calibração em **{dias_restantes} dias**.
+            """)
     
     # ======================
     # FUNÇÃO RENDERIZAR MANUTENÇÃO
@@ -11262,6 +11510,10 @@ elif aba_selecionada == 'FERRAMENTARIA':
         plano_controle: str = ""
         plano_acao: str = ""
         manutencao: str = ""
+        # Novas colunas de calibração
+        quant_gabaritos: str = ""
+        data_calibracao: str = ""
+        frequencia: str = ""
     
     # ======================
     # FUNÇÕES DE CARREGAMENTO
@@ -11297,7 +11549,11 @@ elif aba_selecionada == 'FERRAMENTARIA':
                         'gabarito': row[7].strip() if len(row) > 7 and row[7] else "",
                         'plano_controle': row[8].strip() if len(row) > 8 and row[8] else "",
                         'plano_acao': row[9].strip() if len(row) > 9 and row[9] else "",
-                        'manutencao': row[10].strip() if len(row) > 10 and row[10] else ""
+                        'manutencao': row[10].strip() if len(row) > 10 and row[10] else "",
+                        # Novas colunas
+                        'quant_gabaritos': row[11].strip() if len(row) > 11 and row[11] else "",
+                        'data_calibracao': row[12].strip() if len(row) > 12 and row[12] else "",
+                        'frequencia': row[13].strip() if len(row) > 13 and row[13] else ""
                     }
                     registros.append(registro)
                 except:
@@ -11334,7 +11590,10 @@ elif aba_selecionada == 'FERRAMENTARIA':
             gabarito=data.get('gabarito', ''),
             plano_controle=data.get('plano_controle', ''),
             plano_acao=data.get('plano_acao', ''),
-            manutencao=data.get('manutencao', '')
+            manutencao=data.get('manutencao', ''),
+            quant_gabaritos=data.get('quant_gabaritos', ''),
+            data_calibracao=data.get('data_calibracao', ''),
+            frequencia=data.get('frequencia', '')
         )
     
     def salvar_ferramental(registro: Ferramental) -> tuple:
@@ -11347,7 +11606,10 @@ elif aba_selecionada == 'FERRAMENTARIA':
                 registro.id, registro.pcp, registro.cliente, registro.descricao,
                 registro.data_inicial, registro.avaliacao_inicial, registro.desenho,
                 registro.gabarito, registro.plano_controle, registro.plano_acao,
-                registro.manutencao
+                registro.manutencao,
+                registro.quant_gabaritos,
+                registro.data_calibracao,
+                registro.frequencia
             ]
             sheet.append_row(dados)
             st.cache_data.clear()
@@ -11403,6 +11665,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
             </div>
         """, unsafe_allow_html=True)
         
+        # Documentação
         st.markdown("""
         <div style="font-weight:600;font-size:15px;margin:15px 0 10px 0;color:#333;border-bottom:1px solid #e0e0e0;padding-bottom:8px;">
             📄 Documentação do Ferramental
@@ -11421,12 +11684,18 @@ elif aba_selecionada == 'FERRAMENTARIA':
             st.markdown("<br>", unsafe_allow_html=True)
             renderizar_link_botao(registro.plano_acao, "Plano Ação", "🎯", THEME['accent_red'])
         
+        # Calibração
+        renderizar_calibracao(registro)
+        
+        # Manutenções
         renderizar_manutencao(registro.manutencao, registro.descricao or 'Ferramental')
+        
         st.markdown('</div>', unsafe_allow_html=True)
     
     # ======================
     # INTERFACE PRINCIPAL
     # ======================
+    
     st.markdown("### 🔍 Filtros")
     
     with st.spinner("🔄 Carregando dados..."):
@@ -11482,6 +11751,33 @@ elif aba_selecionada == 'FERRAMENTARIA':
         dados_tabela = []
         for f in ferramentais_filtrados:
             tem_docs = any([f.avaliacao_inicial, f.desenho, f.gabarito, f.plano_controle, f.plano_acao])
+            tem_calibracao = any([f.quant_gabaritos, f.data_calibracao, f.frequencia])
+            
+            # Status de calibração para exibição rápida
+            status_icon = "⏳"
+            if tem_calibracao:
+                try:
+                    quant = int(f.quant_gabaritos) if f.quant_gabaritos else 0
+                    freq = int(f.frequencia) if f.frequencia else 0
+                    if f.data_calibracao and freq > 0:
+                        if '/' in f.data_calibracao:
+                            partes = f.data_calibracao.split('/')
+                            data_cal = datetime(int(partes[2]), int(partes[1]), int(partes[0]))
+                        else:
+                            data_cal = datetime.strptime(f.data_calibracao, "%Y-%m-%d")
+                        prox = data_cal.date() + timedelta(days=freq)
+                        dias = (prox - datetime.now().date()).days
+                        if dias < 0:
+                            status_icon = "🔴"
+                        elif dias <= 7:
+                            status_icon = "🟡"
+                        elif dias <= 30:
+                            status_icon = "ℹ️"
+                        else:
+                            status_icon = "✅"
+                except:
+                    status_icon = "❓"
+            
             dados_tabela.append({
                 "ID": f.id,
                 "PCP": f.pcp,
@@ -11489,12 +11785,13 @@ elif aba_selecionada == 'FERRAMENTARIA':
                 "Descrição": f.descricao[:40] + "..." if len(f.descricao) > 40 else f.descricao,
                 "Data": f.data_inicial,
                 "📄": "✅" if tem_docs else "❌",
-                "🔧": "✅" if f.manutencao else "❌"
+                "🔧": "✅" if f.manutencao else "❌",
+                "📏": status_icon if tem_calibracao else "❌"
             })
         df_tabela = pd.DataFrame(dados_tabela)
         
         for idx, row in df_tabela.iterrows():
-            cols = st.columns([1, 1.2, 1.2, 3, 1.2, 0.6, 0.6, 1])
+            cols = st.columns([1, 1.2, 1.2, 3, 1.2, 0.6, 0.6, 0.6, 1])
             with cols[0]: st.write(row["ID"])
             with cols[1]: st.write(row["PCP"])
             with cols[2]: st.write(row["Cliente"])
@@ -11502,7 +11799,8 @@ elif aba_selecionada == 'FERRAMENTARIA':
             with cols[4]: st.write(row["Data"])
             with cols[5]: st.write(row["📄"])
             with cols[6]: st.write(row["🔧"])
-            with cols[7]:
+            with cols[7]: st.write(row["📏"])
+            with cols[8]:
                 if st.button("📊 Ver", key=f"btn_ver_{row['ID']}"):
                     resetar_navegacao()
                     st.session_state.ferramental_selecionado = row["ID"]
@@ -11534,6 +11832,9 @@ elif aba_selecionada == 'FERRAMENTARIA':
                 novo_cliente = st.text_input("Cliente*")
                 novo_descricao = st.text_area("Descrição*", height=80)
                 nova_data = st.text_input("Data Inicial", placeholder="DD/MM/AAAA")
+                nova_quant_gabaritos = st.text_input("Quant. Gabaritos", placeholder="Ex: 5")
+                nova_data_calibracao = st.text_input("Data Calibração", placeholder="DD/MM/AAAA")
+                nova_frequencia = st.text_input("Frequência (dias)", placeholder="Ex: 30")
             with col2:
                 nova_avaliacao = st.text_input("Avaliação Inicial", placeholder="https://...")
                 novo_desenho = st.text_input("Desenho", placeholder="https://...")
@@ -11541,6 +11842,15 @@ elif aba_selecionada == 'FERRAMENTARIA':
                 novo_plano_controle = st.text_input("Plano Controle", placeholder="https://...")
                 novo_plano_acao = st.text_input("Plano Ação", placeholder="https://...")
                 nova_manutencao = st.text_input("Manutenção", placeholder="https://drive.google.com/...")
+            
+            st.markdown("""
+            <div style="background:#f8f9fc;padding:10px 15px;border-radius:8px;border-left:4px solid #0078D4;margin:10px 0;">
+                <span style="font-weight:600;color:#333;">📏 Cronograma de Calibração</span>
+                <span style="font-size:12px;color:#666;display:block;margin-top:4px;">
+                    Preencha os campos para controlar a calibração dos dispositivos de aferição.
+                </span>
+            </div>
+            """, unsafe_allow_html=True)
             
             col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
             with col_btn2:
@@ -11555,7 +11865,10 @@ elif aba_selecionada == 'FERRAMENTARIA':
                         descricao=novo_descricao, data_inicial=nova_data,
                         avaliacao_inicial=nova_avaliacao, desenho=novo_desenho,
                         gabarito=novo_gabarito, plano_controle=novo_plano_controle,
-                        plano_acao=novo_plano_acao, manutencao=nova_manutencao
+                        plano_acao=novo_plano_acao, manutencao=nova_manutencao,
+                        quant_gabaritos=nova_quant_gabaritos,
+                        data_calibracao=nova_data_calibracao,
+                        frequencia=nova_frequencia
                     )
                     sucesso, mensagem = salvar_ferramental(registro)
                     if sucesso:
