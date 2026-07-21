@@ -10787,40 +10787,36 @@ elif aba_selecionada == 'FERRAMENTARIA':
         }
         return icones.get(extensao.upper(), '📎')
     
+        # ======================
+    # FUNÇÃO RENDERIZAR EXPLORADOR (CORRIGIDA)
     # ======================
-    # FUNÇÃO PARA RENDERIZAR EXPLORADOR DE PASTAS
-    # ======================
-    def renderizar_explorador_drive(link_pasta: str, nome_ferramental: str):
-        """Renderiza um explorador de pastas do Google Drive"""
-        
+    def renderizar_explorador(link_pasta: str, nome_ferramental: str):
         if not link_pasta or link_pasta.strip() == "":
             st.info("📭 Nenhuma pasta configurada.")
             return
         
-        # CSS do explorador
+        # Extrair o ID da pasta corretamente
+        import re
+        folder_id = None
+        patterns = [
+            r'\/d\/([a-zA-Z0-9_-]+)',
+            r'\/folders\/([a-zA-Z0-9_-]+)',
+            r'id=([a-zA-Z0-9_-]+)',
+            r'([a-zA-Z0-9_-]{28,})'
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, link_pasta)
+            if match:
+                folder_id = match.group(1)
+                break
+        
+        # Se não encontrou ID, usar o link como está
+        if not folder_id:
+            folder_id = link_pasta
+        
         st.markdown("""
         <style>
-        .explorador-container {
-            font-family: 'Segoe UI', sans-serif;
-            padding: 5px 0;
-        }
-        .explorador-header {
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-            padding: 15px 20px;
-            border-radius: 10px;
-            margin-bottom: 15px;
-            color: white;
-        }
-        .explorador-header h3 {
-            margin: 0;
-            font-size: 16px;
-        }
-        .explorador-header .sub {
-            font-size: 12px;
-            color: #a0aec0;
-            margin-top: 4px;
-            word-break: break-all;
-        }
         .explorador-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
@@ -10834,186 +10830,183 @@ elif aba_selecionada == 'FERRAMENTARIA':
             padding: 15px;
             text-align: center;
             transition: all 0.2s ease;
-            cursor: pointer;
             text-decoration: none;
             color: #333;
             box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            display: block;
+            cursor: pointer;
         }
         .explorador-card:hover {
             transform: translateY(-4px);
             box-shadow: 0 6px 20px rgba(0,0,0,0.1);
             border-color: #0078D4;
         }
-        .explorador-card .icone {
-            font-size: 36px;
-            display: block;
-            margin-bottom: 8px;
+        .explorador-card .icone { font-size: 36px; display: block; margin-bottom: 8px; }
+        .explorador-card .nome { font-size: 12px; font-weight: 600; word-break: break-word; }
+        .explorador-card .desc { font-size: 11px; color: #999; margin-top: 4px; }
+        .explorador-pasta { border-left: 3px solid #0078D4; }
+        .explorador-arquivo { border-left: 3px solid #28a745; }
+        .explorador-header {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            padding: 15px 20px;
+            border-radius: 10px;
+            margin-bottom: 15px;
+            color: white;
         }
-        .explorador-card .nome {
-            font-size: 12px;
-            font-weight: 600;
-            color: #333;
-            word-break: break-word;
+        .explorador-header h3 { margin: 0; font-size: 16px; }
+        .explorador-header .sub { font-size: 12px; color: #a0aec0; word-break: break-all; }
+        .contador { font-size: 12px; color: #999; margin: 5px 0; }
+        .pasta-raiz-btn {
+            text-align: center;
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #e0e0e0;
         }
-        .explorador-card .info {
-            font-size: 10px;
-            color: #999;
-            margin-top: 4px;
+        .pasta-raiz-btn a {
+            text-decoration: none;
         }
-        .explorador-card .link-icon {
-            font-size: 12px;
-            color: #0078D4;
-            margin-top: 6px;
-            display: inline-block;
-        }
-        .explorador-pasta {
-            border-left: 3px solid #0078D4;
-        }
-        .explorador-arquivo {
-            border-left: 3px solid #28a745;
-        }
-        .explorador-info {
-            background: #fff3cd;
-            padding: 10px 15px;
-            border-radius: 8px;
-            border-left: 4px solid #FFB900;
-            margin: 10px 0;
-            font-size: 13px;
-            color: #856404;
-        }
-        .breadcrumb-drive {
-            display: flex;
-            flex-wrap: wrap;
-            align-items: center;
-            padding: 8px 12px;
-            background: #f0f2f5;
+        .pasta-raiz-btn div {
+            background: #e8ecf1;
+            padding: 8px 16px;
             border-radius: 6px;
-            margin-bottom: 12px;
-            font-size: 13px;
-            gap: 4px;
-        }
-        .breadcrumb-drive .sep {
-            color: #999;
-            margin: 0 4px;
-        }
-        .breadcrumb-drive .item {
-            color: #0078D4;
-            cursor: pointer;
-        }
-        .breadcrumb-drive .item:hover {
-            text-decoration: underline;
-        }
-        .breadcrumb-drive .atual {
-            font-weight: 600;
-            color: #333;
-        }
-        .contador-itens {
+            display: inline-block;
             font-size: 12px;
-            color: #999;
-            margin-top: 5px;
+            color: #333;
+            transition: all 0.2s ease;
+        }
+        .pasta-raiz-btn div:hover {
+            background: #d5d9e0;
+            transform: scale(1.02);
         }
         </style>
         """, unsafe_allow_html=True)
         
-        # ===== CARREGAR CONTEÚDO =====
         with st.spinner(f"📂 Carregando conteúdo da pasta..."):
             conteudo = listar_conteudo_drive(link_pasta)
         
-        # ===== HEADER =====
+        # Nome da pasta
+        nome_pasta = conteudo.get('nome_pasta', 'Pasta')
+        
         st.markdown(f"""
         <div class="explorador-header">
             <h3>🔧 Manutenções - {nome_ferramental}</h3>
-            <div class="sub">📁 {conteudo.get('nome_pasta', 'Pasta')}</div>
+            <div class="sub">📁 {nome_pasta}</div>
         </div>
         """, unsafe_allow_html=True)
         
         # ===== VERIFICAR ERROS =====
         if conteudo.get("erro"):
-            st.warning(f"""
-            ⚠️ **Erro ao listar o conteúdo da pasta**
+            st.warning(f"⚠️ Erro ao listar o conteúdo: {conteudo['erro']}")
             
-            **Erro:** {conteudo['erro']}
-            
-            **Soluções:**
-            1. Verifique se a pasta está compartilhada com a conta de serviço
-            2. Verifique se o link da pasta está correto
-            3. Aguarde alguns minutos e tente novamente
-            """)
-            
-            # Botão para abrir no Drive
+            # Mostrar link direto para a pasta raiz
             st.markdown(f"""
-            <div style="text-align: center; margin-top: 10px;">
+            <div style="text-align: center; margin: 15px 0;">
                 <a href="{link_pasta}" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">
-                    <div style="background: #0078D4; color: white; padding: 10px 20px; border-radius: 6px; display: inline-block;">
+                    <div style="background: #0078D4; color: white; padding: 12px 24px; border-radius: 8px; display: inline-block; font-size: 14px;">
                         📂 Abrir pasta no Google Drive
                     </div>
                 </a>
             </div>
             """, unsafe_allow_html=True)
-            return
-        
-        # ===== PASTAS =====
-        if conteudo["pastas"]:
-            st.markdown(f"""
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-                <div style="font-weight: 600; font-size: 14px; color: #333;">📁 Pastas</div>
-                <div class="contador-itens">{len(conteudo['pastas'])} pasta(s)</div>
-            </div>
+            
+            # Mesmo com erro, mostrar links manuais para ENTRADA e SAÍDA
+            st.markdown("""
+            <div style="font-weight:600;font-size:14px;margin:15px 0 8px 0;">📁 Pastas (links manuais)</div>
             """, unsafe_allow_html=True)
             
             st.markdown('<div class="explorador-grid">', unsafe_allow_html=True)
             
-            for pasta in conteudo["pastas"]:
-                # Botão para navegar para dentro da pasta
-                chave_pasta = f"pasta_{pasta['id']}"
+            # Links manuais para ENTRADA e SAÍDA
+            pastas_manuais = [
+                {"nome": "ENTRADA", "icone": "📥", "cor": "#28a745"},
+                {"nome": "SAÍDA", "icone": "📤", "cor": "#dc3545"}
+            ]
+            
+            for pasta in pastas_manuais:
+                # Construir URL correta para a subpasta
+                # Formato: https://drive.google.com/drive/folders/ID_DA_PASTA_RAIZ?usp=drive_link
+                # Para subpastas, usamos o formato: https://drive.google.com/drive/folders/ID_DA_PASTA_RAIZ?q=parent:ID_DA_PASTA_RAIZ
+                # Ou simplesmente adicionamos o nome ao final da URL
+                link_subpasta = f"{link_pasta.rstrip('/')}/{pasta['nome']}"
                 
                 st.markdown(f"""
-                <div class="explorador-card explorador-pasta" onclick="window.open('{pasta['link']}', '_blank')">
-                    <span class="icone">📂</span>
+                <a href="{link_subpasta}" target="_blank" rel="noopener noreferrer" class="explorador-card explorador-pasta" style="border-left-color: {pasta['cor']};">
+                    <span class="icone">{pasta['icone']}</span>
                     <div class="nome">{pasta['nome']}</div>
-                    <div class="info">Clique para abrir</div>
-                    <span class="link-icon">↗ Abrir</span>
-                </div>
+                    <div class="desc">Clique para abrir no Drive</div>
+                </a>
+                """, unsafe_allow_html=True)
+            
+            st.markdown('</div>', unsafe_allow_html=True)
+            return
+        
+        # ===== PASTAS =====
+        if conteudo["pastas"]:
+            st.markdown(f'<div style="font-weight:600;font-size:14px;">📁 Pastas ({len(conteudo["pastas"])})</div>', unsafe_allow_html=True)
+            st.markdown('<div class="explorador-grid">', unsafe_allow_html=True)
+            
+            for pasta in conteudo["pastas"]:
+                # Verificar se é ENTRADA ou SAÍDA para usar ícone diferente
+                icone = "📥" if pasta['nome'].upper() == "ENTRADA" else "📤" if pasta['nome'].upper() == "SAÍDA" else "📂"
+                cor = "#28a745" if pasta['nome'].upper() == "ENTRADA" else "#dc3545" if pasta['nome'].upper() == "SAÍDA" else "#0078D4"
+                
+                st.markdown(f"""
+                <a href="{pasta['link']}" target="_blank" rel="noopener noreferrer" class="explorador-card explorador-pasta" style="border-left-color: {cor};">
+                    <span class="icone">{icone}</span>
+                    <div class="nome">{pasta['nome']}</div>
+                    <div class="desc">Clique para abrir</div>
+                </a>
                 """, unsafe_allow_html=True)
             
             st.markdown('</div>', unsafe_allow_html=True)
         
         # ===== ARQUIVOS =====
         if conteudo["arquivos"]:
-            st.markdown(f"""
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 15px;">
-                <div style="font-weight: 600; font-size: 14px; color: #333;">📄 Arquivos</div>
-                <div class="contador-itens">{len(conteudo['arquivos'])} arquivo(s)</div>
-            </div>
-            """, unsafe_allow_html=True)
-            
+            st.markdown(f'<div style="font-weight:600;font-size:14px;margin-top:15px;">📄 Arquivos ({len(conteudo["arquivos"])})</div>', unsafe_allow_html=True)
             st.markdown('<div class="explorador-grid">', unsafe_allow_html=True)
-            
             for arquivo in conteudo["arquivos"]:
                 st.markdown(f"""
-                <a href="{arquivo['link']}" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">
-                    <div class="explorador-card explorador-arquivo">
-                        <span class="icone">{arquivo['icone']}</span>
-                        <div class="nome">{arquivo['nome']}</div>
-                        <div class="info">{arquivo['tamanho']} · {arquivo['modificado']}</div>
-                        <span class="link-icon">↗ Abrir</span>
-                    </div>
+                <a href="{arquivo['link']}" target="_blank" rel="noopener noreferrer" class="explorador-card explorador-arquivo">
+                    <span class="icone">{arquivo['icone']}</span>
+                    <div class="nome">{arquivo['nome']}</div>
+                    <div class="desc">Clique para abrir</div>
                 </a>
                 """, unsafe_allow_html=True)
-            
             st.markdown('</div>', unsafe_allow_html=True)
         
         # ===== SE NÃO HOUVER NADA =====
         if not conteudo["pastas"] and not conteudo["arquivos"]:
             st.info("📭 Esta pasta está vazia.")
+            
+            # Mostrar links manuais para ENTRADA e SAÍDA
+            st.markdown("""
+            <div style="font-weight:600;font-size:14px;margin:15px 0 8px 0;">📁 Pastas (links manuais)</div>
+            """, unsafe_allow_html=True)
+            
+            st.markdown('<div class="explorador-grid">', unsafe_allow_html=True)
+            
+            pastas_manuais = [
+                {"nome": "ENTRADA", "icone": "📥", "cor": "#28a745"},
+                {"nome": "SAÍDA", "icone": "📤", "cor": "#dc3545"}
+            ]
+            
+            for pasta in pastas_manuais:
+                link_subpasta = f"{link_pasta.rstrip('/')}/{pasta['nome']}"
+                st.markdown(f"""
+                <a href="{link_subpasta}" target="_blank" rel="noopener noreferrer" class="explorador-card explorador-pasta" style="border-left-color: {pasta['cor']};">
+                    <span class="icone">{pasta['icone']}</span>
+                    <div class="nome">{pasta['nome']}</div>
+                    <div class="desc">Clique para abrir no Drive</div>
+                </a>
+                """, unsafe_allow_html=True)
+            
+            st.markdown('</div>', unsafe_allow_html=True)
         
         # ===== BOTÃO PARA ABRIR PASTA RAIZ =====
         st.markdown(f"""
-        <div style="text-align: center; margin-top: 15px; padding-top: 15px; border-top: 1px solid #e0e0e0;">
-            <a href="{link_pasta}" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">
-                <div style="background: #e8ecf1; padding: 8px 16px; border-radius: 6px; display: inline-block; font-size: 12px; color: #333; transition: all 0.2s ease;">
-                    📂 Abrir pasta raiz no Google Drive
-                </div>
+        <div class="pasta-raiz-btn">
+            <a href="{link_pasta}" target="_blank" rel="noopener noreferrer">
+                <div>📂 Abrir pasta raiz no Google Drive</div>
             </a>
         </div>
         """, unsafe_allow_html=True)
