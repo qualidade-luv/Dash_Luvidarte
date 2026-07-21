@@ -10543,7 +10543,7 @@ elif aba_selecionada == 'PRÊMIO PRENSADOS':
     </div>
     """, unsafe_allow_html=True)
 # ==================================================================================================
-# FERRAMENTARIA - COM MINIATURAS E LAYOUT PROFISSIONAL
+# FERRAMENTARIA - GERENCIAMENTO DE MOLDES (VERSÃO COMPLETA E ORGANIZADA)
 # ==================================================================================================
 elif aba_selecionada == 'FERRAMENTARIA':
     render_page_header("🛠️ FERRAMENTARIA", 
@@ -10579,15 +10579,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
     
     def voltar_nivel(indice: int):
         st.session_state.caminho_navegacao = st.session_state.caminho_navegacao[:indice]
-    
-    # ======================
-    # FUNÇÃO PARA OBTER THUMBNAIL DO GOOGLE DRIVE
-    # ======================
-    def obter_thumbnail(file_id: str) -> str:
-        """Retorna a URL da thumbnail de um arquivo do Google Drive"""
-        if not file_id:
-            return ""
-        return f"https://drive.google.com/thumbnail?id={file_id}&sz=w200"
     
     # ======================
     # FUNÇÃO PARA LISTAR CONTEÚDO DO GOOGLE DRIVE
@@ -10675,10 +10666,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
                         if not web_link:
                             web_link = f"https://drive.google.com/file/d/{item.get('id')}/view"
                         
-                        # Verificar se é imagem para mostrar thumbnail
-                        is_imagem = extensao in ['JPG', 'JPEG', 'PNG', 'GIF', 'WEBP', 'SVG', 'BMP', 'ICO']
-                        thumbnail = obter_thumbnail(item.get('id')) if is_imagem else ""
-                        
                         resultado["arquivos"].append({
                             "nome": nome,
                             "id": item.get('id'),
@@ -10686,8 +10673,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
                             "tipo": "arquivo",
                             "extensao": extensao,
                             "icone": icone,
-                            "thumbnail": thumbnail,
-                            "is_imagem": is_imagem,
                             "modificado": item.get('modifiedTime', '')
                         })
                 
@@ -10736,417 +10721,196 @@ elif aba_selecionada == 'FERRAMENTARIA':
         return link
     
     # ======================
-    # CSS COMPLETO - LAYOUT PROFISSIONAL
+    # CSS GLOBAL DO MÓDULO
     # ======================
     st.markdown("""
     <style>
-    /* ===== CONTAINER PRINCIPAL ===== */
+    /* Container principal */
     .ferramentaria-container {
         max-width: 100%;
         padding: 5px 0;
     }
     
-    /* ===== BREADCRUMB ESTILO EXPLORADOR ===== */
-    .breadcrumb-profissional {
-        display: flex;
-        align-items: center;
-        padding: 10px 16px;
-        background: linear-gradient(135deg, #f8f9fc 0%, #eef1f5 100%);
-        border-radius: 10px;
-        margin-bottom: 16px;
-        border: 1px solid #e0e4e8;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
-        flex-wrap: wrap;
-        gap: 4px;
-        font-size: 13px;
-    }
-    .breadcrumb-profissional .icone-inicio {
-        font-size: 18px;
-        margin-right: 6px;
-        color: #666;
-    }
-    .breadcrumb-profissional .item {
-        color: #0078D4;
-        cursor: pointer;
-        padding: 4px 10px;
-        border-radius: 6px;
-        transition: all 0.2s ease;
-        background: none;
-        border: none;
-        font-size: 13px;
-        font-weight: 500;
-    }
-    .breadcrumb-profissional .item:hover {
-        background: rgba(0,120,212,0.1);
-        text-decoration: underline;
-    }
-    .breadcrumb-profissional .sep {
-        color: #b0b8c0;
-        margin: 0 2px;
-        font-weight: 300;
-    }
-    .breadcrumb-profissional .atual {
-        font-weight: 600;
-        color: #1a1a2e;
-        padding: 4px 10px;
-        background: rgba(0,120,212,0.08);
-        border-radius: 6px;
-    }
-    
-    /* ===== GRID DE PASTAS ===== */
+    /* Cards de pasta */
     .pasta-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
-        gap: 14px;
-        margin: 12px 0;
+        grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+        gap: 12px;
+        margin: 10px 0;
     }
     .pasta-card {
         background: white;
-        border: 1px solid #e4e8ed;
-        border-radius: 12px;
-        padding: 18px 12px;
+        border: 1px solid #e0e0e0;
+        border-radius: 10px;
+        padding: 16px;
         text-align: center;
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        transition: all 0.3s ease;
         cursor: pointer;
         text-decoration: none;
-        color: #1a1a2e;
-        box-shadow: 0 1px 4px rgba(0,0,0,0.04);
-        position: relative;
-        overflow: hidden;
-    }
-    .pasta-card::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        height: 3px;
-        background: linear-gradient(90deg, #0078D4, #00a8ff);
-        opacity: 0;
-        transition: opacity 0.3s ease;
-    }
-    .pasta-card:hover::before {
-        opacity: 1;
+        color: #333;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        display: block;
     }
     .pasta-card:hover {
-        transform: translateY(-6px);
-        box-shadow: 0 8px 30px rgba(0,0,0,0.1);
+        transform: translateY(-5px);
+        box-shadow: 0 6px 20px rgba(0,0,0,0.1);
         border-color: #0078D4;
     }
-    .pasta-card .icone { font-size: 40px; display: block; margin-bottom: 6px; }
+    .pasta-card .icone { font-size: 38px; display: block; margin-bottom: 6px; }
     .pasta-card .nome { font-size: 13px; font-weight: 600; word-break: break-word; }
-    .pasta-card .desc { font-size: 11px; color: #888; margin-top: 4px; }
-    .pasta-card .seta { 
-        font-size: 12px; 
-        color: #0078D4; 
-        margin-top: 8px; 
-        display: inline-block;
-        opacity: 0.6;
-        transition: opacity 0.2s ease;
-    }
-    .pasta-card:hover .seta {
-        opacity: 1;
-    }
+    .pasta-card .desc { font-size: 11px; color: #999; margin-top: 4px; }
+    .pasta-card .seta { font-size: 12px; color: #0078D4; margin-top: 6px; display: inline-block; }
     
     /* Cores das pastas */
     .pasta-entrada { border-left: 4px solid #28a745; }
     .pasta-saida { border-left: 4px solid #dc3545; }
     .pasta-forma { border-left: 4px solid #0078D4; }
-    .pasta-data { border-left: 4px solid #f59e0b; }
+    .pasta-data { border-left: 4px solid #FFB900; }
     
-    /* ===== ARQUIVOS COM MINIATURAS ===== */
+    /* Cards de arquivo */
     .arquivo-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-        gap: 12px;
-        margin: 12px 0;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 8px;
+        margin: 10px 0;
     }
     .arquivo-card {
         background: white;
-        border: 1px solid #e4e8ed;
-        border-radius: 10px;
-        padding: 10px;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 10px 14px;
         display: flex;
-        flex-direction: column;
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        align-items: center;
+        gap: 10px;
+        transition: all 0.2s ease;
         text-decoration: none;
-        color: #1a1a2e;
-        box-shadow: 0 1px 4px rgba(0,0,0,0.04);
-        overflow: hidden;
+        color: #333;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
     }
     .arquivo-card:hover {
-        transform: translateY(-4px);
-        box-shadow: 0 8px 25px rgba(0,0,0,0.1);
+        transform: translateX(5px);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         border-color: #28a745;
     }
-    .arquivo-card .thumbnail-container {
-        width: 100%;
-        height: 140px;
-        background: #f0f2f5;
-        border-radius: 6px;
-        overflow: hidden;
+    .arquivo-card .icone { font-size: 24px; }
+    .arquivo-card .nome { font-size: 12px; font-weight: 500; flex: 1; word-break: break-word; }
+    .arquivo-card .ext { font-size: 10px; color: #999; background: #f0f0f0; padding: 2px 8px; border-radius: 4px; }
+    .arquivo-card .link-icon { font-size: 14px; color: #0078D4; }
+    
+    /* Breadcrumb */
+    .breadcrumb {
         display: flex;
+        flex-wrap: wrap;
         align-items: center;
-        justify-content: center;
-        margin-bottom: 8px;
-        position: relative;
+        padding: 8px 14px;
+        background: white;
+        border-radius: 8px;
+        margin-bottom: 12px;
+        border: 1px solid #e0e0e0;
+        gap: 4px;
+        font-size: 13px;
     }
-    .arquivo-card .thumbnail-container img {
-        width: 100%;
-        height: 100%;
-        object-fit: cover;
-    }
-    .arquivo-card .thumbnail-container .icone-grande {
-        font-size: 48px;
-        opacity: 0.5;
-    }
-    .arquivo-card .info {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 0 4px;
-    }
-    .arquivo-card .info .icone {
-        font-size: 18px;
-        flex-shrink: 0;
-    }
-    .arquivo-card .info .nome {
-        font-size: 12px;
-        font-weight: 500;
-        flex: 1;
-        word-break: break-word;
-        line-height: 1.3;
-        max-height: 32px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
-    .arquivo-card .info .ext {
-        font-size: 10px;
-        color: #888;
-        background: #f0f2f5;
+    .breadcrumb .sep { color: #999; margin: 0 4px; }
+    .breadcrumb .item {
+        color: #0078D4;
+        cursor: pointer;
         padding: 2px 8px;
         border-radius: 4px;
-        flex-shrink: 0;
+        transition: all 0.2s ease;
+        background: none;
+        border: none;
+        font-size: 13px;
     }
-    .arquivo-card .info .link-icon {
-        font-size: 14px;
-        color: #0078D4;
-        flex-shrink: 0;
+    .breadcrumb .item:hover {
+        background: #e8ecf1;
+        text-decoration: underline;
+    }
+    .breadcrumb .atual {
+        font-weight: 600;
+        color: #333;
+        padding: 2px 8px;
     }
     
-    /* ===== BOTÕES DE NAVEGAÇÃO ===== */
+    /* Navegação container */
+    .navegacao-container {
+        background: #f8f9fc;
+        border-radius: 10px;
+        padding: 15px;
+        margin: 10px 0;
+        border: 1px solid #e0e0e0;
+    }
+    
+    /* Botões de navegação */
     .nav-botoes {
         display: flex;
-        gap: 12px;
-        margin-top: 16px;
-        padding-top: 16px;
-        border-top: 1px solid #e4e8ed;
+        gap: 10px;
+        margin-top: 15px;
+        padding-top: 15px;
+        border-top: 1px solid #e0e0e0;
     }
     .nav-botoes button {
         flex: 1;
-        padding: 10px 16px;
-        border: 1px solid #dce0e5;
-        border-radius: 8px;
+        padding: 8px 12px;
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
         background: white;
         cursor: pointer;
         transition: all 0.2s ease;
         font-size: 13px;
-        font-weight: 500;
-        color: #333;
     }
-    .nav-botoes button:hover:not(:disabled) {
+    .nav-botoes button:hover {
         background: #f0f2f5;
         border-color: #0078D4;
-        color: #0078D4;
-    }
-    .nav-botoes button:disabled {
-        opacity: 0.4;
-        cursor: not-allowed;
     }
     .nav-botoes button.primario {
         background: #0078D4;
         color: white;
         border-color: #0078D4;
     }
-    .nav-botoes button.primario:hover:not(:disabled) {
+    .nav-botoes button.primario:hover {
         background: #005a9e;
-        border-color: #005a9e;
-        color: white;
     }
     
-    /* ===== TÍTULOS ===== */
+    /* Títulos */
     .titulo-secao {
         font-weight: 600;
-        font-size: 15px;
-        color: #1a1a2e;
-        margin: 18px 0 10px 0;
+        font-size: 14px;
+        color: #333;
+        margin: 15px 0 8px 0;
         display: flex;
         align-items: center;
-        gap: 10px;
-    }
-    .titulo-secao .badge {
-        background: #e8ecf1;
-        padding: 2px 10px;
-        border-radius: 12px;
-        font-size: 11px;
-        color: #666;
-        font-weight: 500;
+        gap: 8px;
     }
     
-    /* ===== INFO BOX ===== */
+    /* Info box */
     .info-box {
         background: #e8f4fd;
-        padding: 12px 16px;
+        padding: 10px 15px;
         border-radius: 8px;
         border-left: 4px solid #0078D4;
         margin: 10px 0;
         font-size: 13px;
         color: #005a8c;
-        display: flex;
-        align-items: center;
-        gap: 10px;
     }
     .vazio-box {
         text-align: center;
-        padding: 30px;
+        padding: 25px;
         color: #999;
         background: #f8f9fa;
-        border-radius: 10px;
-        border: 2px dashed #e0e0e0;
+        border-radius: 8px;
     }
     
-    /* ===== ÁRVORE HIERÁRQUICA ===== */
-    .arvore-container {
-        background: white;
-        border-radius: 10px;
-        padding: 12px 16px;
-        border: 1px solid #e4e8ed;
-        margin-bottom: 12px;
-    }
-    .arvore-item {
-        display: flex;
-        align-items: center;
-        padding: 6px 8px;
-        border-radius: 6px;
-        transition: all 0.2s ease;
-        gap: 8px;
-    }
-    .arvore-item:hover {
-        background: #f0f7ff;
-    }
-    .arvore-item .nivel {
-        color: #b0b8c0;
-        font-size: 14px;
-        width: 20px;
-        text-align: center;
-        flex-shrink: 0;
-    }
-    .arvore-item .icone {
-        font-size: 18px;
-        flex-shrink: 0;
-    }
-    .arvore-item .nome {
-        font-size: 13px;
+    /* Tabela de ferramentais */
+    .ferramentais-header {
+        font-weight: 600;
+        font-size: 16px;
         color: #333;
-        font-weight: 500;
-    }
-    .arvore-item .seta {
-        color: #0078D4;
-        margin-left: auto;
-        font-size: 12px;
-        opacity: 0.5;
-    }
-    .arvore-item:hover .seta {
-        opacity: 1;
-    }
-    .arvore-linha {
-        display: flex;
-        align-items: center;
-        padding-left: 20px;
-        border-left: 2px solid #e4e8ed;
-        margin-left: 10px;
-    }
-    
-    /* ===== RESPONSIVO ===== */
-    @media (max-width: 768px) {
-        .pasta-grid {
-            grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
-        }
-        .arquivo-grid {
-            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-        }
-        .breadcrumb-profissional {
-            font-size: 11px;
-            padding: 8px 12px;
-        }
+        margin: 20px 0 10px 0;
+        padding-bottom: 8px;
+        border-bottom: 2px solid #e0e0e0;
     }
     </style>
     """, unsafe_allow_html=True)
-    
-    # ======================
-    # FUNÇÃO RENDERIZAR ÁRVORE HIERÁRQUICA
-    # ======================
-    def renderizar_arvore_hierarquica():
-        """Renderiza a árvore hierárquica de navegação"""
-        
-        if not st.session_state.caminho_navegacao:
-            return
-        
-        st.markdown('<div class="arvore-container">', unsafe_allow_html=True)
-        st.markdown('<div style="font-weight:600;font-size:13px;color:#666;margin-bottom:8px;">📂 Caminho atual</div>', unsafe_allow_html=True)
-        
-        # Raiz
-        st.markdown("""
-        <div class="arvore-item">
-            <span class="nivel">📁</span>
-            <span class="icone">🏠</span>
-            <span class="nome" style="color:#0078D4;cursor:pointer;" onclick="document.getElementById('btn_raiz_arvore').click();">Raiz</span>
-            <span class="seta">›</span>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Botão hidden para raiz
-        if st.button("Ir para Raiz", key="btn_raiz_arvore", help="Voltar para a raiz"):
-            resetar_navegacao()
-            st.rerun()
-        
-        # Itens do caminho
-        for i, pasta in enumerate(st.session_state.caminho_navegacao):
-            is_ultimo = (i == len(st.session_state.caminho_navegacao) - 1)
-            
-            # Definir ícone baseado no nome
-            nome_upper = pasta['nome'].upper()
-            if nome_upper == "ENTRADA":
-                icone = "📥"
-            elif nome_upper == "SAÍDA":
-                icone = "📤"
-            elif "FORMA" in nome_upper or "MOLDE" in nome_upper:
-                icone = "🔧"
-            else:
-                icone = "📅"
-            
-            st.markdown(f"""
-            <div class="arvore-linha">
-                <div class="arvore-item">
-                    <span class="nivel">├─</span>
-                    <span class="icone">{icone}</span>
-                    <span class="nome" style="{'' if is_ultimo else 'color:#0078D4;cursor:pointer;'}" 
-                          {f'onclick="document.getElementById(\\'btn_arvore_{i}\\').click();"' if not is_ultimo else ''}>
-                        {pasta['nome']}
-                        {'' if not is_ultimo else ' <span style="color:#0078D4;font-weight:600;">◄</span>'}
-                    </span>
-                    {'' if is_ultimo else '<span class="seta">›</span>'}
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            # Botão hidden para voltar a este nível
-            if not is_ultimo:
-                if st.button(f"Voltar para {pasta['nome']}", key=f"btn_arvore_{i}"):
-                    voltar_nivel(i + 1)
-                    st.rerun()
-        
-        st.markdown('</div>', unsafe_allow_html=True)
     
     # ======================
     # FUNÇÃO RENDERIZAR EXPLORADOR HIERÁRQUICO
@@ -11172,12 +10936,12 @@ elif aba_selecionada == 'FERRAMENTARIA':
             pasta_atual_id = pasta_raiz_id
             pasta_atual_nome = "Raiz"
         
-        # ===== BREADCRUMB PROFISSIONAL =====
-        st.markdown('<div class="breadcrumb-profissional">', unsafe_allow_html=True)
-        st.markdown('<span class="icone-inicio">📂</span>', unsafe_allow_html=True)
+        # ===== BREADCRUMB =====
+        st.markdown('<div class="breadcrumb">', unsafe_allow_html=True)
+        st.markdown('<span>📂</span>', unsafe_allow_html=True)
         
         # Raiz
-        if st.button("🏠 Raiz", key="btn_raiz_breadcrumb"):
+        if st.button("🏠 Raiz", key="btn_raiz_hierarquico"):
             resetar_navegacao()
             st.rerun()
         
@@ -11192,9 +10956,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
         
         st.markdown('</div>', unsafe_allow_html=True)
         
-        # ===== ÁRVORE HIERÁRQUICA =====
-        renderizar_arvore_hierarquica()
-        
         # ===== CONTEÚDO =====
         with st.spinner(f"📂 Carregando pasta: {pasta_atual_nome}..."):
             conteudo = listar_conteudo_drive(pasta_atual_id)
@@ -11204,7 +10965,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
             st.markdown(f"""
             <div style="text-align:center;margin:10px 0;">
                 <a href="{link_pasta}" target="_blank" rel="noopener noreferrer" style="text-decoration:none;">
-                    <div style="background:#0078D4;color:white;padding:10px 20px;border-radius:8px;display:inline-block;">
+                    <div style="background:#0078D4;color:white;padding:10px 20px;border-radius:6px;display:inline-block;">
                         📂 Abrir pasta no Google Drive
                     </div>
                 </a>
@@ -11214,7 +10975,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
         
         # ===== PASTAS =====
         if conteudo["pastas"]:
-            st.markdown(f'<div class="titulo-secao">📁 Pastas <span class="badge">{len(conteudo["pastas"])}</span></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="titulo-secao">📁 Pastas ({len(conteudo["pastas"])})</div>', unsafe_allow_html=True)
             st.markdown('<div class="pasta-grid">', unsafe_allow_html=True)
             
             for pasta in conteudo["pastas"]:
@@ -11236,6 +10997,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
                     icone = "📅"
                     desc = "Pasta"
                 
+                # Card clicável - usa botão Streamlit para navegação
                 st.markdown(f"""
                 <div class="pasta-card {classe}" onclick="document.getElementById('btn_pasta_{pasta['id']}').click();">
                     <span class="icone">{icone}</span>
@@ -11245,32 +11007,25 @@ elif aba_selecionada == 'FERRAMENTARIA':
                 </div>
                 """, unsafe_allow_html=True)
                 
+                # Botão hidden que é ativado pelo clique no card
                 if st.button(f"Entrar em {pasta['nome']}", key=f"pasta_{pasta['id']}", help=f"Entrar em {pasta['nome']}"):
                     navegar_para_pasta(pasta['nome'], pasta['id'])
                     st.rerun()
             
             st.markdown('</div>', unsafe_allow_html=True)
         
-        # ===== ARQUIVOS COM MINIATURAS =====
+        # ===== ARQUIVOS =====
         if conteudo["arquivos"]:
-            st.markdown(f'<div class="titulo-secao">📄 Arquivos <span class="badge">{len(conteudo["arquivos"])}</span></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="titulo-secao">📄 Arquivos ({len(conteudo["arquivos"])})</div>', unsafe_allow_html=True)
             st.markdown('<div class="arquivo-grid">', unsafe_allow_html=True)
             
             for arquivo in conteudo["arquivos"]:
-                # Verificar se é imagem e tem thumbnail
-                tem_thumbnail = arquivo.get('is_imagem', False) and arquivo.get('thumbnail')
-                
                 st.markdown(f"""
                 <a href="{arquivo['link']}" target="_blank" rel="noopener noreferrer" class="arquivo-card">
-                    <div class="thumbnail-container">
-                        {f'<img src="{arquivo["thumbnail"]}" alt="{arquivo["nome"]}" loading="lazy" onerror="this.style.display=\'none\'">' if tem_thumbnail else f'<span class="icone-grande">{arquivo["icone"]}</span>'}
-                    </div>
-                    <div class="info">
-                        <span class="icone">{arquivo['icone']}</span>
-                        <span class="nome">{arquivo['nome']}</span>
-                        <span class="ext">{arquivo['extensao']}</span>
-                        <span class="link-icon">↗</span>
-                    </div>
+                    <span class="icone">{arquivo['icone']}</span>
+                    <span class="nome">{arquivo['nome']}</span>
+                    <span class="ext">{arquivo['extensao']}</span>
+                    <span class="link-icon">↗</span>
                 </a>
                 """, unsafe_allow_html=True)
             
@@ -11289,7 +11044,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
         else:
             st.button("⬅️ Voltar", disabled=True, use_container_width=True)
         
-        if st.button("🏠 Ir para Raiz", use_container_width=True, key="btn_nav_raiz"):
+        if st.button("🏠 Ir para Raiz", use_container_width=True):
             resetar_navegacao()
             st.rerun()
         
