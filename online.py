@@ -575,9 +575,10 @@ ABAS = {
     'REQUISIÇÃO MANUTENÇÃO': 'RM',
     'FECHAMENTO TURNO': 'FT',
     'MANUTENÇÃO PREVENTIVA': 'MP',
-    'MAPEAMENTO DE HABILIDADES': 'MP',
+    'MAPEAMENTO DE HABILIDADES': 'MH',   # <-- CORRIGIDO: antes era 'MP'
     'FERRAMENTARIA': 'FM',
-    'PRÊMIO PRENSADOS': 'PP'
+    'PRÊMIO PRENSADOS': 'PP',
+    'REPASSES DE PRODUÇÃO': 'RP'         # <-- NOVO
 }
 
 CAMINHO_PDF_AR = r"\\srv-luvidarte\dados\DOC\Engenharia_Luvidarte\SGQ - LUVIDARTE - ALTERADAS\0-AVISO DE REJEIÇÃO\1-PDF"
