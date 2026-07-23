@@ -11476,25 +11476,8 @@ elif aba_selecionada == 'FERRAMENTARIA':
             ✅ **CALIBRAÇÃO EM DIA**
             
             A calibração deste ferramental está em dia. Próxima calibração em **{dias_restantes} dias**.
-            """)
-    
-    # ======================
-    # FUNÇÃO RENDERIZAR MANUTENÇÃO
-    # ======================
-    def renderizar_manutencao(link_manutencao: str, nome_ferramental: str):
-        st.markdown("---")
-        st.markdown("### 🔧 Manutenções do Ferramental")
-        
-        if not link_manutencao or link_manutencao.strip() == "":
-            st.info("📭 Nenhuma pasta de manutenção configurada.")
-            return
-        
-        if 'ferramental_atual' not in st.session_state or st.session_state.ferramental_atual != nome_ferramental:
-            st.session_state.ferramental_atual = nome_ferramental
-            resetar_navegacao()
-        
-        renderizar_explorador_hierarquico(link_manutencao, nome_ferramental)
-    
+            """)    
+       
     # ======================
     # DATACLASS
     # ======================
