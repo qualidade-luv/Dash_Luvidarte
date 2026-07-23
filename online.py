@@ -11287,7 +11287,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
         st.markdown('</div>', unsafe_allow_html=True)
     
     # ======================
-    # FUNÇÃO RENDERIZAR MANUTENÇÃO
+    # FUNÇÃO RENDERIZAR MANUTENÇÃO (ÚNICA DEFINIDA AQUI)
     # ======================
     def renderizar_manutencao(link_manutencao: str, nome_ferramental: str):
         st.markdown("---")
@@ -11477,23 +11477,6 @@ elif aba_selecionada == 'FERRAMENTARIA':
             
             A calibração deste ferramental está em dia. Próxima calibração em **{dias_restantes} dias**.
             """)
-    
-    # ======================
-    # FUNÇÃO RENDERIZAR MANUTENÇÃO
-    # ======================
-    def renderizar_manutencao(link_manutencao: str, nome_ferramental: str):
-        st.markdown("---")
-        st.markdown("### 🔧 Manutenções do Ferramental")
-        
-        if not link_manutencao or link_manutencao.strip() == "":
-            st.info("📭 Nenhuma pasta de manutenção configurada.")
-            return
-        
-        if 'ferramental_atual' not in st.session_state or st.session_state.ferramental_atual != nome_ferramental:
-            st.session_state.ferramental_atual = nome_ferramental
-            resetar_navegacao()
-        
-        renderizar_explorador_hierarquico(link_manutencao, nome_ferramental)
     
     # ======================
     # DATACLASS
@@ -11889,7 +11872,517 @@ elif aba_selecionada == 'FERRAMENTARIA':
         🛠️ FERRAMENTARIA · {get_horario_brasilia()}
     </div>
     """, unsafe_allow_html=True)
+
+# ==================================================================================================
+# REPASSES DE PRODUÇÃO - PEDIDOS EM ABERTO (CARTEIRA)
+# ==================================================================================================
+elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
+    render_page_header("REPASSES DE PRODUÇÃO", 
+                       f"Carteira de Pedidos em Aberto · Atualizado {get_horario_brasilia()}", 
+                       THEME['accent_orange'])
     
+    # ======================
+    # CONFIGURAÇÃO DA PLANILHA URGÊNCIAS
+    # ======================
+    ID_PLANILHA_URGENCIAS = '1nyMCIeW5_EWkNOU5-6d_QMePq9gilvRaqvtTGekP5dk'
+    ABA_CARTEIRA = 'CARTEIRA'
+    
+    # ======================
+    # FUNÇÃO PARA CARREGAR DADOS DA CARTEIRA
+    # ======================
+    @retry_on_quota()
+    @st.cache_data(ttl=600)  # Atualiza a cada 10 minutos
+    def carregar_carteira_pedidos() -> pd.DataFrame:
+        """
+        Carrega os dados da aba CARTEIRA da planilha URGÊNCIAS
+        Retorna DataFrame com as colunas renomeadas para o dashboard
+        """
+        try:
+            client = get_gspread_client()
+            if client is None:
+                st.error("❌ Erro ao conectar ao Google Sheets")
+                return pd.DataFrame()
+            
+            # Abrir a planilha URGÊNCIAS
+            spreadsheet = client.open_by_key(ID_PLANILHA_URGENCIAS)
+            
+            # Tentar acessar a aba CARTEIRA
+            try:
+                sheet = spreadsheet.worksheet(ABA_CARTEIRA)
+            except Exception as e:
+                st.error(f"❌ Aba '{ABA_CARTEIRA}' não encontrada na planilha URGÊNCIAS. Erro: {e}")
+                return pd.DataFrame()
+            
+            # Ler todos os dados
+            todos_dados = sheet.get_all_values()
+            
+            if len(todos_dados) < 2:
+                st.info("📭 Nenhum dado encontrado na aba CARTEIRA.")
+                return pd.DataFrame()
+            
+            # Cabeçalho na primeira linha
+            cabecalho = todos_dados[0]
+            valores = todos_dados[1:]
+            
+            # Criar DataFrame
+            df = pd.DataFrame(valores, columns=cabecalho)
+            
+            # Limpar nomes das colunas
+            df.columns = df.columns.str.strip().str.upper()
+            df.columns = df.columns.str.replace(' ', '_')
+            df.columns = df.columns.str.replace('Ç', 'C')
+            df.columns = df.columns.str.replace('Ã', 'A')
+            df.columns = df.columns.str.replace('Á', 'A')
+            df.columns = df.columns.str.replace('É', 'E')
+            df.columns = df.columns.str.replace('Í', 'I')
+            df.columns = df.columns.str.replace('Ó', 'O')
+            df.columns = df.columns.str.replace('Ú', 'U')
+            
+            # Mapeamento de colunas esperadas
+            colunas_esperadas = ['CODIGO', 'REFERENCIA', 'DESCRICAO', 'ESTOQUE', 'PEDIDO_EM_ABERTO']
+            
+            # Verificar quais colunas existem
+            colunas_existentes = []
+            for col in colunas_esperadas:
+                col_encontrada = None
+                for col_df in df.columns:
+                    if col in col_df or col_df in col:
+                        col_encontrada = col_df
+                        break
+                if col_encontrada:
+                    colunas_existentes.append(col_encontrada)
+            
+            if not colunas_existentes:
+                st.error("❌ Nenhuma coluna esperada encontrada na planilha.")
+                st.write("Colunas encontradas:", list(df.columns))
+                return pd.DataFrame()
+            
+            # Manter apenas colunas existentes
+            df = df[colunas_existentes]
+            
+            # Renomear colunas para o padrão esperado
+            mapa_renomeacao = {}
+            for col in df.columns:
+                col_upper = col.upper()
+                if 'CODIGO' in col_upper:
+                    mapa_renomeacao[col] = 'CODIGO'
+                elif 'REFERENCIA' in col_upper or 'REFERÊNCIA' in col_upper:
+                    mapa_renomeacao[col] = 'REFERENCIA'
+                elif 'DESCRICAO' in col_upper or 'DESCRIÇÃO' in col_upper:
+                    mapa_renomeacao[col] = 'DESCRICAO'
+                elif 'ESTOQUE' in col_upper:
+                    mapa_renomeacao[col] = 'ESTOQUE'
+                elif 'PEDIDO_EM_ABERTO' in col_upper or 'PEDIDO' in col_upper:
+                    mapa_renomeacao[col] = 'PEDIDO_EM_ABERTO'
+            
+            df = df.rename(columns=mapa_renomeacao)
+            
+            # Converter colunas numéricas
+            colunas_numericas = ['ESTOQUE', 'PEDIDO_EM_ABERTO']
+            for col in colunas_numericas:
+                if col in df.columns:
+                    df[col] = df[col].astype(str).str.replace('.', '', regex=False)
+                    df[col] = df[col].astype(str).str.replace(',', '.', regex=False)
+                    df[col] = df[col].astype(str).str.replace(r'[^\d\.]', '', regex=True)
+                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+                    df[col] = df[col].astype(int)
+            
+            # Remover linhas vazias
+            if 'CODIGO' in df.columns:
+                df = df[df['CODIGO'].astype(str).str.strip() != '']
+                df = df[df['CODIGO'].astype(str).str.strip() != 'nan']
+            
+            # Remover linhas onde todos os campos numéricos são zero
+            if 'ESTOQUE' in df.columns and 'PEDIDO_EM_ABERTO' in df.columns:
+                df = df[(df['ESTOQUE'] > 0) | (df['PEDIDO_EM_ABERTO'] > 0)]
+            
+            # Ordenar por PEDIDO_EM_ABERTO (maior para menor)
+            if 'PEDIDO_EM_ABERTO' in df.columns:
+                df = df.sort_values('PEDIDO_EM_ABERTO', ascending=False)
+            
+            return df
+            
+        except Exception as e:
+            st.error(f"❌ Erro ao carregar dados da carteira: {str(e)}")
+            return pd.DataFrame()
+    
+    # ======================
+    # FUNÇÃO PARA GERAR GRÁFICOS
+    # ======================
+    def gerar_graficos_carteira(df: pd.DataFrame):
+        """Gera gráficos interativos com os dados da carteira"""
+        
+        if df.empty:
+            return
+        
+        # ===== GRÁFICO 1: Top 10 Pedidos em Aberto =====
+        st.markdown("---")
+        st.markdown("### 📊 Top 10 Pedidos em Aberto")
+        
+        top10 = df.nlargest(10, 'PEDIDO_EM_ABERTO').copy()
+        
+        if not top10.empty:
+            fig = px.bar(
+                top10,
+                x='REFERENCIA',
+                y='PEDIDO_EM_ABERTO',
+                color='PEDIDO_EM_ABERTO',
+                color_continuous_scale='Oranges',
+                title='Top 10 Referências com Maior Pedido em Aberto',
+                labels={'REFERENCIA': 'Referência', 'PEDIDO_EM_ABERTO': 'Pedido em Aberto'},
+                text='PEDIDO_EM_ABERTO'
+            )
+            
+            fig.update_layout(
+                height=400,
+                xaxis_tickangle=-45,
+                font=dict(size=12),
+                plot_bgcolor='rgba(0,0,0,0)',
+                paper_bgcolor='rgba(0,0,0,0)',
+                coloraxis_showscale=False
+            )
+            
+            fig.update_traces(
+                textposition='outside',
+                textfont=dict(size=11, color='#333')
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+        
+        # ===== GRÁFICO 2: Estoque vs Pedido =====
+        st.markdown("### 📊 Estoque Atual vs Pedido em Aberto")
+        
+        df_graf = df.copy()
+        df_graf['REFERENCIA_TRUNC'] = df_graf['REFERENCIA'].apply(
+            lambda x: x[:15] + '...' if len(str(x)) > 15 else str(x)
+        )
+        
+        fig = go.Figure()
+        
+        fig.add_trace(go.Bar(
+            x=df_graf['REFERENCIA_TRUNC'],
+            y=df_graf['ESTOQUE'],
+            name='Estoque Atual',
+            marker_color='#0078D4',
+            opacity=0.8
+        ))
+        
+        fig.add_trace(go.Bar(
+            x=df_graf['REFERENCIA_TRUNC'],
+            y=df_graf['PEDIDO_EM_ABERTO'],
+            name='Pedido em Aberto',
+            marker_color='#E86C2C',
+            opacity=0.8
+        ))
+        
+        fig.update_layout(
+            title='Comparativo: Estoque Atual vs Pedido em Aberto',
+            height=400,
+            xaxis_tickangle=-45,
+            barmode='group',
+            font=dict(size=11),
+            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor='rgba(0,0,0,0)',
+            legend=dict(
+                orientation='h',
+                yanchor='bottom',
+                y=1.02,
+                xanchor='right',
+                x=1
+            )
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # ===== GRÁFICO 3: Distribuição por Status (Pizza) =====
+        st.markdown("### 📊 Distribuição dos Pedidos")
+        
+        # Classificar itens por necessidade
+        df_status = df.copy()
+        
+        def classificar_necessidade(row):
+            pedido = row.get('PEDIDO_EM_ABERTO', 0)
+            estoque = row.get('ESTOQUE', 0)
+            
+            if pedido == 0:
+                return '✅ Sem Pedidos'
+            elif estoque >= pedido:
+                return '🟢 Estoque Suficiente'
+            elif estoque >= pedido * 0.5:
+                return '🟡 Estoque Parcial'
+            else:
+                return '🔴 Estoque Crítico'
+        
+        df_status['STATUS'] = df_status.apply(classificar_necessidade, axis=1)
+        status_counts = df_status['STATUS'].value_counts()
+        
+        cores = {
+            '✅ Sem Pedidos': '#28a745',
+            '🟢 Estoque Suficiente': '#0078D4',
+            '🟡 Estoque Parcial': '#FFB900',
+            '🔴 Estoque Crítico': '#E81123'
+        }
+        
+        if not status_counts.empty:
+            fig = px.pie(
+                status_counts,
+                values=status_counts.values,
+                names=status_counts.index,
+                title='Classificação dos Pedidos por Necessidade',
+                color=status_counts.index,
+                color_discrete_map=cores,
+                hole=0.4
+            )
+            
+            fig.update_layout(
+                height=350,
+                font=dict(size=12),
+                plot_bgcolor='rgba(0,0,0,0)',
+                paper_bgcolor='rgba(0,0,0,0)',
+                legend=dict(
+                    orientation='v',
+                    yanchor='middle',
+                    y=0.5,
+                    xanchor='left',
+                    x=1.2
+                )
+            )
+            
+            fig.update_traces(
+                textposition='inside',
+                textinfo='percent+label',
+                hovertemplate='<b>%{label}</b><br>Quantidade: %{value}<br>Percentual: %{percent}<extra></extra>'
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+    
+    # ======================
+    # CARREGAR DADOS
+    # ======================
+    with st.spinner("🔄 Carregando dados da carteira de pedidos..."):
+        df_carteira = carregar_carteira_pedidos()
+    
+    # ======================
+    # FILTROS NA INTERFACE
+    # ======================
+    st.markdown("### 🔍 Filtros")
+    
+    col_f1, col_f2, col_f3 = st.columns(3)
+    
+    with col_f1:
+        # Filtro por referência (busca parcial)
+        if not df_carteira.empty and 'REFERENCIA' in df_carteira.columns:
+            opcoes_ref = ["(Todas)"] + sorted(df_carteira['REFERENCIA'].dropna().unique().tolist())
+            filtro_referencia = st.selectbox(
+                "🔎 Referência",
+                options=opcoes_ref,
+                key="filtro_ref_repasses"
+            )
+        else:
+            filtro_referencia = "(Todas)"
+    
+    with col_f2:
+        # Filtro por código
+        if not df_carteira.empty and 'CODIGO' in df_carteira.columns:
+            opcoes_codigo = ["(Todos)"] + sorted(df_carteira['CODIGO'].dropna().unique().tolist())
+            filtro_codigo = st.selectbox(
+                "📋 Código Sistema",
+                options=opcoes_codigo,
+                key="filtro_codigo_repasses"
+            )
+        else:
+            filtro_codigo = "(Todos)"
+    
+    with col_f3:
+        # Filtro por necessidade (estoque vs pedido)
+        opcoes_necessidade = [
+            "(Todos)",
+            "🔴 Estoque Crítico (Pedido > Estoque)",
+            "🟡 Estoque Parcial (Pedido > Estoque/2)",
+            "🟢 Estoque Suficiente (Pedido <= Estoque/2)",
+            "✅ Sem Pedidos (Pedido = 0)"
+        ]
+        filtro_necessidade = st.selectbox(
+            "📊 Classificação",
+            options=opcoes_necessidade,
+            key="filtro_necessidade_repasses"
+        )
+    
+    # ======================
+    # APLICAR FILTROS
+    # ======================
+    df_filtrado = df_carteira.copy()
+    
+    if not df_filtrado.empty:
+        if filtro_referencia != "(Todas)":
+            df_filtrado = df_filtrado[df_filtrado['REFERENCIA'] == filtro_referencia]
+        
+        if filtro_codigo != "(Todos)":
+            df_filtrado = df_filtrado[df_filtrado['CODIGO'] == filtro_codigo]
+        
+        if filtro_necessidade != "(Todos)":
+            if filtro_necessidade == "🔴 Estoque Crítico (Pedido > Estoque)":
+                df_filtrado = df_filtrado[df_filtrado['PEDIDO_EM_ABERTO'] > df_filtrado['ESTOQUE']]
+            elif filtro_necessidade == "🟡 Estoque Parcial (Pedido > Estoque/2)":
+                df_filtrado = df_filtrado[
+                    (df_filtrado['PEDIDO_EM_ABERTO'] > 0) & 
+                    (df_filtrado['PEDIDO_EM_ABERTO'] <= df_filtrado['ESTOQUE'])
+                ]
+            elif filtro_necessidade == "🟢 Estoque Suficiente (Pedido <= Estoque/2)":
+                df_filtrado = df_filtrado[
+                    (df_filtrado['ESTOQUE'] >= df_filtrado['PEDIDO_EM_ABERTO']) &
+                    (df_filtrado['PEDIDO_EM_ABERTO'] > 0)
+                ]
+            elif filtro_necessidade == "✅ Sem Pedidos (Pedido = 0)":
+                df_filtrado = df_filtrado[df_filtrado['PEDIDO_EM_ABERTO'] == 0]
+    
+    # ======================
+    # KPIS
+    # ======================
+    st.markdown("---")
+    
+    total_pedidos = 0
+    total_estoque = 0
+    total_itens = 0
+    itens_criticos = 0
+    
+    if not df_filtrado.empty:
+        total_pedidos = int(df_filtrado['PEDIDO_EM_ABERTO'].sum()) if 'PEDIDO_EM_ABERTO' in df_filtrado.columns else 0
+        total_estoque = int(df_filtrado['ESTOQUE'].sum()) if 'ESTOQUE' in df_filtrado.columns else 0
+        total_itens = len(df_filtrado)
+        itens_criticos = len(df_filtrado[df_filtrado['PEDIDO_EM_ABERTO'] > df_filtrado['ESTOQUE']]) if 'PEDIDO_EM_ABERTO' in df_filtrado.columns and 'ESTOQUE' in df_filtrado.columns else 0
+    
+    col_k1, col_k2, col_k3, col_k4 = st.columns(4)
+    with col_k1:
+        st.metric("📊 Total Pedidos em Aberto", f"{total_pedidos:,.0f}".replace(",", "."))
+    with col_k2:
+        st.metric("📦 Estoque Total", f"{total_estoque:,.0f}".replace(",", "."))
+    with col_k3:
+        st.metric("📋 Itens na Carteira", f"{total_itens:,}".replace(",", "."))
+    with col_k4:
+        cor_critico = "🔴" if itens_criticos > 0 else "🟢"
+        st.metric(f"{cor_critico} Itens Críticos", f"{itens_criticos:,}".replace(",", "."))
+    
+    # ======================
+    # TABELA DE PEDIDOS EM ABERTO
+    # ======================
+    st.markdown("---")
+    st.markdown("### 📋 PEDIDOS EM ABERTO NO SISTEMA LUVIDARTE")
+    
+    if df_filtrado.empty:
+        st.info("📭 Nenhum pedido encontrado com os filtros selecionados.")
+    else:
+        # Preparar dados para exibição
+        df_exibicao = df_filtrado.copy()
+        
+        # Renomear colunas para exibição
+        mapa_exibicao = {
+            'CODIGO': 'CÓDIGO SISTEMA',
+            'REFERENCIA': 'REFERÊNCIA',
+            'DESCRICAO': 'DESCRIÇÃO',
+            'ESTOQUE': 'ESTOQUE ATUAL',
+            'PEDIDO_EM_ABERTO': 'PEDIDO'
+        }
+        df_exibicao = df_exibicao.rename(columns=mapa_exibicao)
+        
+        # Garantir que as colunas estejam na ordem correta
+        colunas_ordem = ['CÓDIGO SISTEMA', 'REFERÊNCIA', 'DESCRIÇÃO', 'ESTOQUE ATUAL', 'PEDIDO']
+        colunas_existentes = [col for col in colunas_ordem if col in df_exibicao.columns]
+        df_exibicao = df_exibicao[colunas_existentes]
+        
+        # Adicionar coluna de status para coloração
+        def definir_status(row):
+            pedido = row.get('PEDIDO', 0)
+            estoque = row.get('ESTOQUE ATUAL', 0)
+            if pedido == 0:
+                return '✅ Sem Pedidos'
+            elif estoque >= pedido:
+                return '🟢 Suficiente'
+            elif estoque >= pedido * 0.5:
+                return '🟡 Parcial'
+            else:
+                return '🔴 Crítico'
+        
+        df_exibicao['STATUS'] = df_exibicao.apply(definir_status, axis=1)
+        
+        # Formatar números
+        for col in ['ESTOQUE ATUAL', 'PEDIDO']:
+            if col in df_exibicao.columns:
+                df_exibicao[col] = df_exibicao[col].apply(lambda x: f"{int(x):,}".replace(",", "."))
+        
+        # Aplicar estilo à tabela
+        def estilo_tabela(row):
+            status = row['STATUS']
+            if '🔴' in status:
+                return ['background-color: #f8d7da; color: #721c24; font-weight: bold;'] * len(row)
+            elif '🟡' in status:
+                return ['background-color: #fff3cd; color: #856404;'] * len(row)
+            elif '🟢' in status:
+                return ['background-color: #d4edda; color: #155724;'] * len(row)
+            else:
+                return [''] * len(row)
+        
+        # Aplicar estilo
+        styled_df = df_exibicao.style.apply(estilo_tabela, axis=1)
+        
+        # Exibir tabela
+        st.dataframe(styled_df, use_container_width=True, height=500, hide_index=True)
+        
+        # ======================
+        # GRÁFICOS (abaixo da tabela)
+        # ======================
+        with st.expander("📊 Ver Gráficos Analíticos", expanded=False):
+            gerar_graficos_carteira(df_filtrado)
+        
+        # ======================
+        # BOTÃO PARA EXPORTAR
+        # ======================
+        st.markdown("---")
+        col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
+        with col_btn2:
+            # Converter para CSV para download
+            csv = df_exibicao.to_csv(index=False, encoding='utf-8-sig')
+            st.download_button(
+                label="📥 Baixar Carteira (CSV)",
+                data=csv,
+                file_name=f"carteira_pedidos_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+                use_container_width=True,
+                type="primary"
+            )
+    
+    # ======================
+    # INFORMAÇÕES ADICIONAIS
+    # ======================
+    with st.expander("ℹ️ Sobre a Carteira de Pedidos", expanded=False):
+        st.markdown("""
+        **📊 O que é esta carteira?**
+        
+        Esta seção exibe todos os pedidos em aberto no sistema Luvidarte, com informações de estoque atual.
+        
+        **📋 Significado das Colunas:**
+        - **CÓDIGO SISTEMA**: Código interno do produto no sistema
+        - **REFERÊNCIA**: Referência/nome do produto
+        - **DESCRIÇÃO**: Descrição detalhada do produto
+        - **ESTOQUE ATUAL**: Quantidade disponível em estoque
+        - **PEDIDO**: Quantidade de pedidos em aberto
+        
+        **🎯 Classificação por Status:**
+        - 🟢 **Suficiente**: Estoque >= Pedido
+        - 🟡 **Parcial**: Estoque >= Pedido/2 e < Pedido
+        - 🔴 **Crítico**: Estoque < Pedido/2
+        
+        **🔄 Atualização:** Os dados são carregados automaticamente a cada 10 minutos.
+        """)
+    
+    st.markdown(f"""
+    <div style="text-align:right;padding:16px 0 8px;
+        font-family:'JetBrains Mono',monospace;font-size:10px;
+        color:{THEME['text_muted']};letter-spacing:.1em;">
+        REPASSES DE PRODUÇÃO · {get_horario_brasilia()}
+    </div>
+    """, unsafe_allow_html=True)
+
 # ==================================================================================================
 # RENDERIZAR FAIXA DE ROLAGEM
 # ==================================================================================================
