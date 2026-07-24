@@ -11594,7 +11594,13 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
     ABA_CARTEIRA = 'CARTEIRA'
     
     # ======================
-    # FUNÇÃO PARA CARREGAR DADOS DA CARTEIRA (VERSÃO MELHORADA)
+    # INICIALIZAR SESSION STATE
+    # ======================
+    if 'visao_repasses' not in st.session_state:
+        st.session_state.visao_repasses = 'PEDIDOS_SISTEMA'  # Opções: PEDIDOS_SISTEMA, REPASSES, ESTOQUE_ATUAL
+    
+    # ======================
+    # FUNÇÃO PARA CARREGAR DADOS DA CARTEIRA
     # ======================
     @retry_on_quota()
     @st.cache_data(ttl=600)
@@ -11637,7 +11643,6 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
             df.columns = df.columns.str.strip()
             
             # ===== MAPEAMENTO INTELIGENTE DE COLUNAS =====
-            # Dicionário para mapear nomes de colunas encontradas para nomes padrão
             mapa_colunas = {}
             
             for col in df.columns:
@@ -11647,7 +11652,7 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
                 # Mapear coluna CODIGO
                 if col_sem_acento in ['CODIGO', 'COD', 'ID', 'CODIGO_SISTEMA']:
                     mapa_colunas[col] = 'CODIGO'
-                # Mapear coluna REFERENCIA (com ou sem acento)
+                # Mapear coluna REFERENCIA
                 elif col_sem_acento in ['REFERENCIA', 'REFERÊNCIA', 'REF', 'PRODUTO', 'NOME']:
                     mapa_colunas[col] = 'REFERENCIA'
                 # Mapear coluna DESCRICAO
@@ -11659,27 +11664,36 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
                 # Mapear coluna PEDIDO_EM_ABERTO
                 elif col_sem_acento in ['PEDIDO_EM_ABERTO', 'PEDIDO', 'PED', 'QTD_PEDIDO', 'ABERTO']:
                     mapa_colunas[col] = 'PEDIDO_EM_ABERTO'
+                # Mapear coluna REPASSE
+                elif col_sem_acento in ['REPASSE', 'QTD_REPASSE', 'REPASSES']:
+                    mapa_colunas[col] = 'REPASSE'
             
             # Aplicar renomeação
             if mapa_colunas:
                 df = df.rename(columns=mapa_colunas)
             
             # Verificar se temos pelo menos as colunas mínimas
-            colunas_minimas = ['CODIGO', 'REFERENCIA', 'ESTOQUE', 'PEDIDO_EM_ABERTO']
+            colunas_minimas = ['CODIGO', 'REFERENCIA', 'ESTOQUE']
             colunas_existentes = [col for col in colunas_minimas if col in df.columns]
             
             if not colunas_existentes:
-                # Se não encontrou as colunas esperadas, mostrar as colunas disponíveis
                 st.warning(f"⚠️ Nenhuma coluna esperada encontrada. Colunas disponíveis: {list(df.columns)}")
                 return pd.DataFrame()
+            
+            # Se não tiver PEDIDO_EM_ABERTO, criar com 0
+            if 'PEDIDO_EM_ABERTO' not in df.columns:
+                df['PEDIDO_EM_ABERTO'] = 0
+            
+            # Se não tiver REPASSE, criar com 0
+            if 'REPASSE' not in df.columns:
+                df['REPASSE'] = 0
             
             # Se a coluna REFERENCIA não foi encontrada, tentar usar DESCRICAO como fallback
             if 'REFERENCIA' not in df.columns and 'DESCRICAO' in df.columns:
                 df['REFERENCIA'] = df['DESCRICAO']
-                st.info("ℹ️ Usando 'DESCRIÇÃO' como 'REFERÊNCIA'")
             
             # Converter colunas numéricas
-            colunas_numericas = ['ESTOQUE', 'PEDIDO_EM_ABERTO']
+            colunas_numericas = ['ESTOQUE', 'PEDIDO_EM_ABERTO', 'REPASSE']
             for col in colunas_numericas:
                 if col in df.columns:
                     # Limpar caracteres especiais
@@ -11695,12 +11709,12 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
                 df = df[df['CODIGO'].astype(str).str.strip() != 'nan']
             
             # Remover linhas onde todos os campos numéricos são zero
-            if 'ESTOQUE' in df.columns and 'PEDIDO_EM_ABERTO' in df.columns:
-                df = df[(df['ESTOQUE'] > 0) | (df['PEDIDO_EM_ABERTO'] > 0)]
+            if 'ESTOQUE' in df.columns:
+                df = df[df['ESTOQUE'] > 0]
             
-            # Ordenar por PEDIDO_EM_ABERTO (maior para menor)
-            if 'PEDIDO_EM_ABERTO' in df.columns:
-                df = df.sort_values('PEDIDO_EM_ABERTO', ascending=False)
+            # Ordenar por CODIGO
+            if 'CODIGO' in df.columns:
+                df = df.sort_values('CODIGO', ascending=True)
             
             return df
             
@@ -11713,7 +11727,7 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
     # ======================
     # FUNÇÃO PARA GERAR GRÁFICOS
     # ======================
-    def gerar_graficos_carteira(df: pd.DataFrame):
+    def gerar_graficos_carteira(df: pd.DataFrame, visao: str = 'PEDIDOS_SISTEMA'):
         """Gera gráficos interativos com os dados da carteira"""
         
         if df.empty:
@@ -11721,49 +11735,68 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
             return
         
         # Verificar se as colunas necessárias existem
-        colunas_necessarias = ['REFERENCIA', 'PEDIDO_EM_ABERTO', 'ESTOQUE']
+        colunas_necessarias = ['REFERENCIA', 'ESTOQUE']
+        if visao == 'PEDIDOS_SISTEMA':
+            colunas_necessarias.append('PEDIDO_EM_ABERTO')
+        elif visao == 'REPASSES':
+            colunas_necessarias.append('REPASSE')
+        
         colunas_faltando = [col for col in colunas_necessarias if col not in df.columns]
         
         if colunas_faltando:
             st.warning(f"⚠️ Colunas necessárias não encontradas: {', '.join(colunas_faltando)}")
-            # Mostrar colunas disponíveis para debug
-            st.write("Colunas disponíveis:", list(df.columns))
             return
         
-        # Converter para numérico e garantir que são números válidos
+        # Converter para numérico
         df = df.copy()
-        df['PEDIDO_EM_ABERTO'] = pd.to_numeric(df['PEDIDO_EM_ABERTO'], errors='coerce').fillna(0)
         df['ESTOQUE'] = pd.to_numeric(df['ESTOQUE'], errors='coerce').fillna(0)
         df['REFERENCIA'] = df['REFERENCIA'].astype(str).fillna('Sem Referência')
         
-        # Filtrar apenas registros com pedidos positivos para os gráficos principais
-        df_com_pedidos = df[df['PEDIDO_EM_ABERTO'] > 0].copy()
+        if visao == 'PEDIDOS_SISTEMA':
+            df['PEDIDO_EM_ABERTO'] = pd.to_numeric(df['PEDIDO_EM_ABERTO'], errors='coerce').fillna(0)
+            coluna_valor = 'PEDIDO_EM_ABERTO'
+            titulo = 'Pedidos em Aberto no Sistema'
+            cor = '#E86C2C'
+            label = 'Pedido Sistema'
+        elif visao == 'REPASSES':
+            df['REPASSE'] = pd.to_numeric(df['REPASSE'], errors='coerce').fillna(0)
+            coluna_valor = 'REPASSE'
+            titulo = 'Repasses de Produção'
+            cor = '#FF6B35'
+            label = 'Repasse'
+        else:  # ESTOQUE_ATUAL
+            coluna_valor = 'ESTOQUE'
+            titulo = 'Estoque Atual'
+            cor = '#0078D4'
+            label = 'Estoque'
         
-        if df_com_pedidos.empty:
-            st.info("📭 Nenhum pedido em aberto para gerar gráficos.")
+        # Filtrar apenas registros com valores positivos para o gráfico
+        df_com_valor = df[df[coluna_valor] > 0].copy()
+        
+        if df_com_valor.empty:
+            st.info(f"📭 Nenhum dado com {label} > 0 para gerar gráficos.")
             return
         
-        # ===== GRÁFICO 1: Top 10 Pedidos em Aberto =====
+        # ===== GRÁFICO 1: Top 10 =====
         st.markdown("---")
-        st.markdown("### 📊 Top 10 Pedidos em Aberto")
+        st.markdown(f"### 📊 Top 10 {titulo}")
         
-        top10 = df_com_pedidos.nlargest(10, 'PEDIDO_EM_ABERTO').copy()
+        top10 = df_com_valor.nlargest(10, coluna_valor).copy()
         
         if not top10.empty and len(top10) > 0:
             try:
-                # Garantir que os dados são do tipo correto
                 top10['REFERENCIA'] = top10['REFERENCIA'].astype(str)
-                top10['PEDIDO_EM_ABERTO'] = top10['PEDIDO_EM_ABERTO'].astype(float)
+                top10[coluna_valor] = top10[coluna_valor].astype(float)
                 
                 fig = px.bar(
                     top10,
                     x='REFERENCIA',
-                    y='PEDIDO_EM_ABERTO',
-                    color='PEDIDO_EM_ABERTO',
-                    color_continuous_scale='Oranges',
-                    title='Top 10 Referências com Maior Pedido em Aberto',
-                    labels={'REFERENCIA': 'Referência', 'PEDIDO_EM_ABERTO': 'Pedido em Aberto'},
-                    text='PEDIDO_EM_ABERTO'
+                    y=coluna_valor,
+                    color=coluna_valor,
+                    color_continuous_scale='Oranges' if visao != 'ESTOQUE_ATUAL' else 'Blues',
+                    title=f'Top 10 Referências com Maior {titulo}',
+                    labels={'REFERENCIA': 'Referência', coluna_valor: label},
+                    text=coluna_valor
                 )
                 
                 fig.update_layout(
@@ -11779,21 +11812,22 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
                 fig.update_traces(
                     textposition='outside',
                     textfont=dict(size=11, color='#333'),
-                    texttemplate='%{text:,.0f}'
+                    texttemplate='%{text:,.0f}',
+                    marker_color=cor
                 )
                 
-                st.plotly_chart(fig, use_container_width=True, key="grafico_top10")
+                st.plotly_chart(fig, use_container_width=True, key=f"grafico_top10_{visao}")
                 
             except Exception as e:
                 st.warning(f"⚠️ Não foi possível gerar o gráfico Top 10: {str(e)}")
         else:
             st.info("📭 Dados insuficientes para o gráfico Top 10.")
         
-        # ===== GRÁFICO 2: Estoque vs Pedido =====
-        st.markdown("### 📊 Estoque Atual vs Pedido em Aberto")
+        # ===== GRÁFICO 2: Comparativo Estoque vs Valor =====
+        st.markdown("### 📊 Estoque Atual vs Valor Selecionado")
         
-        # Limitar a 20 itens para não sobrecarregar o gráfico
-        df_graf = df_com_pedidos.nlargest(20, 'PEDIDO_EM_ABERTO').copy()
+        # Limitar a 20 itens
+        df_graf = df_com_valor.nlargest(20, coluna_valor).copy()
         
         if not df_graf.empty:
             try:
@@ -11801,8 +11835,7 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
                     lambda x: str(x)[:15] + '...' if len(str(x)) > 15 else str(x)
                 )
                 
-                # Ordenar para melhor visualização
-                df_graf = df_graf.sort_values('PEDIDO_EM_ABERTO', ascending=False)
+                df_graf = df_graf.sort_values(coluna_valor, ascending=False)
                 
                 fig = go.Figure()
                 
@@ -11819,17 +11852,17 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
                 
                 fig.add_trace(go.Bar(
                     x=df_graf['REFERENCIA_TRUNC'],
-                    y=df_graf['PEDIDO_EM_ABERTO'],
-                    name='Pedido em Aberto',
-                    marker_color='#E86C2C',
+                    y=df_graf[coluna_valor],
+                    name=label,
+                    marker_color=cor,
                     opacity=0.8,
-                    text=df_graf['PEDIDO_EM_ABERTO'].apply(lambda x: f'{x:,.0f}'),
+                    text=df_graf[coluna_valor].apply(lambda x: f'{x:,.0f}'),
                     textposition='outside',
                     textfont=dict(size=10)
                 ))
                 
                 fig.update_layout(
-                    title='Comparativo: Estoque Atual vs Pedido em Aberto',
+                    title=f'Comparativo: Estoque Atual vs {label}',
                     height=450,
                     xaxis_tickangle=-45,
                     barmode='group',
@@ -11846,45 +11879,45 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
                     margin=dict(l=20, r=20, t=60, b=80)
                 )
                 
-                st.plotly_chart(fig, use_container_width=True, key="grafico_estoque_pedido")
+                st.plotly_chart(fig, use_container_width=True, key=f"grafico_comparativo_{visao}")
                 
             except Exception as e:
                 st.warning(f"⚠️ Não foi possível gerar o gráfico comparativo: {str(e)}")
         else:
             st.info("📭 Dados insuficientes para o gráfico comparativo.")
         
-        # ===== GRÁFICO 3: Distribuição por Status (Pizza) =====
-        st.markdown("### 📊 Distribuição dos Pedidos")
+        # ===== GRÁFICO 3: Distribuição (Pizza) =====
+        st.markdown("### 📊 Distribuição dos Valores")
         
-        # Classificar itens por necessidade (usando todos os dados, incluindo sem pedidos)
-        df_status = df.copy()
-        
-        def classificar_necessidade(row):
-            pedido = row.get('PEDIDO_EM_ABERTO', 0)
+        def classificar_valor(row):
+            valor = row.get(coluna_valor, 0)
             estoque = row.get('ESTOQUE', 0)
             
-            if pedido == 0:
-                return '✅ Sem Pedidos'
-            elif estoque >= pedido:
-                return '🟢 Estoque Suficiente'
-            elif estoque >= pedido * 0.5:
-                return '🟡 Estoque Parcial'
+            if valor == 0:
+                return '✅ Sem Valor'
+            elif valor <= 10:
+                return '🟢 Baixo (1-10)'
+            elif valor <= 50:
+                return '🟡 Médio (11-50)'
+            elif valor <= 100:
+                return '🟠 Alto (51-100)'
             else:
-                return '🔴 Estoque Crítico'
+                return '🔴 Muito Alto (>100)'
         
-        df_status['STATUS'] = df_status.apply(classificar_necessidade, axis=1)
+        df_status = df.copy()
+        df_status['STATUS'] = df_status.apply(classificar_valor, axis=1)
         status_counts = df_status['STATUS'].value_counts()
         
         cores = {
-            '✅ Sem Pedidos': '#28a745',
-            '🟢 Estoque Suficiente': '#0078D4',
-            '🟡 Estoque Parcial': '#FFB900',
-            '🔴 Estoque Crítico': '#E81123'
+            '✅ Sem Valor': '#28a745',
+            '🟢 Baixo (1-10)': '#0078D4',
+            '🟡 Médio (11-50)': '#FFB900',
+            '🟠 Alto (51-100)': '#FF6B35',
+            '🔴 Muito Alto (>100)': '#E81123'
         }
         
         if not status_counts.empty:
             try:
-                # Filtrar apenas categorias com valores > 0
                 status_counts = status_counts[status_counts > 0]
                 
                 if not status_counts.empty:
@@ -11892,7 +11925,7 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
                         status_counts,
                         values=status_counts.values,
                         names=status_counts.index,
-                        title='Classificação dos Pedidos por Necessidade',
+                        title=f'Distribuição dos {label}s',
                         color=status_counts.index,
                         color_discrete_map=cores,
                         hole=0.4
@@ -11920,7 +11953,7 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
                         hovertemplate='<b>%{label}</b><br>Quantidade: %{value}<br>Percentual: %{percent}<extra></extra>'
                     )
                     
-                    st.plotly_chart(fig, use_container_width=True, key="grafico_pizza")
+                    st.plotly_chart(fig, use_container_width=True, key=f"grafico_pizza_{visao}")
                 else:
                     st.info("📭 Nenhuma categoria com dados para o gráfico de pizza.")
                     
@@ -11936,14 +11969,50 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
         df_carteira = carregar_carteira_pedidos()
     
     # ======================
+    # BOTÕES DE NAVEGAÇÃO ENTRE VISÕES
+    # ======================
+    st.markdown("### 📊 Selecione a Visualização")
+    
+    col_b1, col_b2, col_b3 = st.columns(3)
+    
+    with col_b1:
+        if st.button(
+            "📋 Pedidos Sistema", 
+            use_container_width=True,
+            type="primary" if st.session_state.visao_repasses == 'PEDIDOS_SISTEMA' else "secondary"
+        ):
+            st.session_state.visao_repasses = 'PEDIDOS_SISTEMA'
+            st.rerun()
+    
+    with col_b2:
+        if st.button(
+            "🔄 Repasses", 
+            use_container_width=True,
+            type="primary" if st.session_state.visao_repasses == 'REPASSES' else "secondary"
+        ):
+            st.session_state.visao_repasses = 'REPASSES'
+            st.rerun()
+    
+    with col_b3:
+        if st.button(
+            "📦 Estoque Atual", 
+            use_container_width=True,
+            type="primary" if st.session_state.visao_repasses == 'ESTOQUE_ATUAL' else "secondary"
+        ):
+            st.session_state.visao_repasses = 'ESTOQUE_ATUAL'
+            st.rerun()
+    
+    st.markdown("---")
+    
+    # ======================
     # FILTROS NA INTERFACE
     # ======================
     st.markdown("### 🔍 Filtros")
     
-    col_f1, col_f2, col_f3 = st.columns(3)
+    col_f1, col_f2 = st.columns(2)
     
     with col_f1:
-        # Filtro por referência (busca parcial)
+        # Filtro por referência
         if not df_carteira.empty and 'REFERENCIA' in df_carteira.columns:
             opcoes_ref = ["(Todas)"] + sorted(df_carteira['REFERENCIA'].dropna().unique().tolist())
             filtro_referencia = st.selectbox(
@@ -11966,21 +12035,6 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
         else:
             filtro_codigo = "(Todos)"
     
-    with col_f3:
-        # Filtro por necessidade (estoque vs pedido)
-        opcoes_necessidade = [
-            "(Todos)",
-            "🔴 Estoque Crítico (Pedido > Estoque)",
-            "🟡 Estoque Parcial (Pedido > Estoque/2)",
-            "🟢 Estoque Suficiente (Pedido <= Estoque/2)",
-            "✅ Sem Pedidos (Pedido = 0)"
-        ]
-        filtro_necessidade = st.selectbox(
-            "📊 Classificação",
-            options=opcoes_necessidade,
-            key="filtro_necessidade_repasses"
-        )
-    
     # ======================
     # APLICAR FILTROS
     # ======================
@@ -11992,42 +12046,51 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
         
         if filtro_codigo != "(Todos)":
             df_filtrado = df_filtrado[df_filtrado['CODIGO'] == filtro_codigo]
-        
-        if filtro_necessidade != "(Todos)":
-            if filtro_necessidade == "🔴 Estoque Crítico (Pedido > Estoque)":
-                df_filtrado = df_filtrado[df_filtrado['PEDIDO_EM_ABERTO'] > df_filtrado['ESTOQUE']]
-            elif filtro_necessidade == "🟡 Estoque Parcial (Pedido > Estoque/2)":
-                df_filtrado = df_filtrado[
-                    (df_filtrado['PEDIDO_EM_ABERTO'] > 0) & 
-                    (df_filtrado['PEDIDO_EM_ABERTO'] <= df_filtrado['ESTOQUE'])
-                ]
-            elif filtro_necessidade == "🟢 Estoque Suficiente (Pedido <= Estoque/2)":
-                df_filtrado = df_filtrado[
-                    (df_filtrado['ESTOQUE'] >= df_filtrado['PEDIDO_EM_ABERTO']) &
-                    (df_filtrado['PEDIDO_EM_ABERTO'] > 0)
-                ]
-            elif filtro_necessidade == "✅ Sem Pedidos (Pedido = 0)":
-                df_filtrado = df_filtrado[df_filtrado['PEDIDO_EM_ABERTO'] == 0]
+    
+    # ======================
+    # DEFINIR COLUNA DE VALOR CONFORME VISÃO
+    # ======================
+    if st.session_state.visao_repasses == 'PEDIDOS_SISTEMA':
+        coluna_valor = 'PEDIDO_EM_ABERTO'
+        label_valor = 'Pedido Sistema'
+        icone_valor = '📋'
+        cor_valor = '#E86C2C'
+        titulo_tabela = 'PEDIDOS EM ABERTO NO SISTEMA LUVIDARTE'
+    elif st.session_state.visao_repasses == 'REPASSES':
+        coluna_valor = 'REPASSE'
+        label_valor = 'Repasse'
+        icone_valor = '🔄'
+        cor_valor = '#FF6B35'
+        titulo_tabela = 'REPASSES DE PRODUÇÃO'
+    else:  # ESTOQUE_ATUAL
+        coluna_valor = 'ESTOQUE'
+        label_valor = 'Estoque Atual'
+        icone_valor = '📦'
+        cor_valor = '#0078D4'
+        titulo_tabela = 'ESTOQUE ATUAL'
     
     # ======================
     # KPIS
     # ======================
     st.markdown("---")
     
-    total_pedidos = 0
+    total_valor = 0
     total_estoque = 0
     total_itens = 0
     itens_criticos = 0
     
     if not df_filtrado.empty:
-        total_pedidos = int(df_filtrado['PEDIDO_EM_ABERTO'].sum()) if 'PEDIDO_EM_ABERTO' in df_filtrado.columns else 0
+        if coluna_valor in df_filtrado.columns:
+            total_valor = int(df_filtrado[coluna_valor].sum())
         total_estoque = int(df_filtrado['ESTOQUE'].sum()) if 'ESTOQUE' in df_filtrado.columns else 0
         total_itens = len(df_filtrado)
-        itens_criticos = len(df_filtrado[df_filtrado['PEDIDO_EM_ABERTO'] > df_filtrado['ESTOQUE']]) if 'PEDIDO_EM_ABERTO' in df_filtrado.columns and 'ESTOQUE' in df_filtrado.columns else 0
+        
+        if coluna_valor in df_filtrado.columns and 'ESTOQUE' in df_filtrado.columns:
+            itens_criticos = len(df_filtrado[df_filtrado[coluna_valor] > df_filtrado['ESTOQUE']])
     
     col_k1, col_k2, col_k3, col_k4 = st.columns(4)
     with col_k1:
-        st.metric("📊 Total Pedidos em Aberto", f"{total_pedidos:,.0f}".replace(",", "."))
+        st.metric(f"{icone_valor} Total {label_valor}", f"{total_valor:,.0f}".replace(",", "."))
     with col_k2:
         st.metric("📦 Estoque Total", f"{total_estoque:,.0f}".replace(",", "."))
     with col_k3:
@@ -12037,18 +12100,18 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
         st.metric(f"{cor_critico} Itens Críticos", f"{itens_criticos:,}".replace(",", "."))
     
     # ======================
-    # TABELA DE PEDIDOS EM ABERTO (COM REFERÊNCIA)
+    # TABELA DE DADOS
     # ======================
     st.markdown("---")
-    st.markdown("### 📋 PEDIDOS EM ABERTO NO SISTEMA LUVIDARTE")
+    st.markdown(f"### 📋 {titulo_tabela}")
     
     if df_filtrado.empty:
-        st.info("📭 Nenhum pedido encontrado com os filtros selecionados.")
+        st.info("📭 Nenhum dado encontrado com os filtros selecionados.")
     else:
         # Preparar dados para exibição
         df_exibicao = df_filtrado.copy()
         
-        # Verificar se temos REFERENCIA, se não, usar DESCRICAO
+        # Verificar se temos REFERENCIA
         if 'REFERENCIA' not in df_exibicao.columns and 'DESCRICAO' in df_exibicao.columns:
             df_exibicao['REFERENCIA'] = df_exibicao['DESCRICAO']
         
@@ -12058,32 +12121,58 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
             'REFERENCIA': 'REFERÊNCIA',
             'DESCRICAO': 'DESCRIÇÃO',
             'ESTOQUE': 'ESTOQUE ATUAL',
-            'PEDIDO_EM_ABERTO': 'PEDIDO'
+            'PEDIDO_EM_ABERTO': 'PEDIDO SISTEMA',
+            'REPASSE': 'REPASSE'
         }
         df_exibicao = df_exibicao.rename(columns=mapa_exibicao)
         
         # Garantir que as colunas estejam na ordem correta
-        colunas_ordem = ['CÓDIGO SISTEMA', 'REFERÊNCIA', 'DESCRIÇÃO', 'ESTOQUE ATUAL', 'PEDIDO']
+        colunas_base = ['CÓDIGO SISTEMA', 'REFERÊNCIA', 'DESCRIÇÃO', 'ESTOQUE ATUAL']
+        
+        if st.session_state.visao_repasses == 'PEDIDOS_SISTEMA':
+            colunas_ordem = colunas_base + ['PEDIDO SISTEMA']
+        elif st.session_state.visao_repasses == 'REPASSES':
+            colunas_ordem = colunas_base + ['REPASSE']
+        else:
+            colunas_ordem = colunas_base
+        
         colunas_existentes = [col for col in colunas_ordem if col in df_exibicao.columns]
         df_exibicao = df_exibicao[colunas_existentes]
         
         # Adicionar coluna de status para coloração
         def definir_status(row):
-            pedido = row.get('PEDIDO', 0)
-            estoque = row.get('ESTOQUE ATUAL', 0)
-            if pedido == 0:
-                return '✅ Sem Pedidos'
-            elif estoque >= pedido:
-                return '🟢 Suficiente'
-            elif estoque >= pedido * 0.5:
-                return '🟡 Parcial'
+            if coluna_valor == 'ESTOQUE':
+                estoque = row.get('ESTOQUE ATUAL', 0)
+                if estoque == 0:
+                    return '🔴 ZERADO'
+                elif estoque <= 10:
+                    return '🟡 BAIXO'
+                elif estoque <= 50:
+                    return '🟢 NORMAL'
+                else:
+                    return '🟣 ALTO'
             else:
-                return '🔴 Crítico'
+                valor = row.get(label_valor, 0)
+                estoque = row.get('ESTOQUE ATUAL', 0)
+                if valor == 0:
+                    return '✅ ZERADO'
+                elif estoque >= valor:
+                    return '🟢 SUFICIENTE'
+                elif estoque >= valor * 0.5:
+                    return '🟡 PARCIAL'
+                else:
+                    return '🔴 CRÍTICO'
         
         df_exibicao['STATUS'] = df_exibicao.apply(definir_status, axis=1)
         
         # Formatar números
-        for col in ['ESTOQUE ATUAL', 'PEDIDO']:
+        colunas_formatar = ['ESTOQUE ATUAL']
+        if 'PEDIDO SISTEMA' in df_exibicao.columns:
+            colunas_formatar.append('PEDIDO SISTEMA')
+        if 'REPASSE' in df_exibicao.columns:
+            colunas_formatar.append('REPASSE')
+        
+        for col in colunas_formatar:
             if col in df_exibicao.columns:
                 df_exibicao[col] = df_exibicao[col].apply(lambda x: f"{int(x):,}".replace(",", "."))
         
@@ -12096,6 +12185,8 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
                 return ['background-color: #fff3cd; color: #856404;'] * len(row)
             elif '🟢' in status:
                 return ['background-color: #d4edda; color: #155724;'] * len(row)
+            elif '🟣' in status:
+                return ['background-color: #e8d4f8; color: #4a1a6b;'] * len(row)
             else:
                 return [''] * len(row)
         
@@ -12109,7 +12200,7 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
         # GRÁFICOS (abaixo da tabela)
         # ======================
         with st.expander("📊 Ver Gráficos Analíticos", expanded=False):
-            gerar_graficos_carteira(df_filtrado)
+            gerar_graficos_carteira(df_filtrado, st.session_state.visao_repasses)
         
         # ======================
         # BOTÃO PARA EXPORTAR
@@ -12120,9 +12211,9 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
             # Converter para CSV para download
             csv = df_exibicao.to_csv(index=False, encoding='utf-8-sig')
             st.download_button(
-                label="📥 Baixar Carteira (CSV)",
+                label="📥 Baixar Dados (CSV)",
                 data=csv,
-                file_name=f"carteira_pedidos_{datetime.now().strftime('%Y%m%d')}.csv",
+                file_name=f"{st.session_state.visao_repasses.lower()}_{datetime.now().strftime('%Y%m%d')}.csv",
                 mime="text/csv",
                 use_container_width=True,
                 type="primary"
@@ -12135,14 +12226,12 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
         st.markdown("""
         **📊 O que é esta carteira?**
         
-        Esta seção exibe todos os pedidos em aberto no sistema Luvidarte, com informações de estoque atual.
+        Esta seção exibe os dados da carteira de pedidos no sistema Luvidarte.
         
-        **📋 Significado das Colunas:**
-        - **CÓDIGO SISTEMA**: Código interno do produto no sistema
-        - **REFERÊNCIA**: Referência/nome do produto
-        - **DESCRIÇÃO**: Descrição detalhada do produto
-        - **ESTOQUE ATUAL**: Quantidade disponível em estoque
-        - **PEDIDO**: Quantidade de pedidos em aberto
+        **📋 Visões disponíveis:**
+        - **Pedidos Sistema**: Mostra os pedidos em aberto no sistema ERP
+        - **Repasses**: Mostra os repasses de produção planejados
+        - **Estoque Atual**: Mostra o estoque disponível
         
         **🎯 Classificação por Status:**
         - 🟢 **Suficiente**: Estoque >= Pedido
@@ -12159,7 +12248,6 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
         REPASSES DE PRODUÇÃO · {get_horario_brasilia()}
     </div>
     """, unsafe_allow_html=True)
-
 # ==================================================================================================
 # RENDERIZAR FAIXA DE ROLAGEM
 # ==================================================================================================
