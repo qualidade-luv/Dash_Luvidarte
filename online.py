@@ -11580,7 +11580,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
     """, unsafe_allow_html=True)
 
 # ==================================================================================================
-# REPASSES DE PRODUÇÃO - PEDIDOS EM ABERTO (CARTEIRA)
+# REPASSES DE PRODUÇÃO - PEDIDOS EM ABERTO (CARTEIRA) COM CRUD DE REPASSES
 # ==================================================================================================
 elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
     render_page_header("REPASSES DE PRODUÇÃO", 
@@ -11592,127 +11592,116 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
     # ======================
     ID_PLANILHA_URGENCIAS = '1nyMCIeW5_EWkNOU5-6d_QMePq9gilvRaqvtTGekP5dk'
     ABA_CARTEIRA = 'CARTEIRA'
+    ABA_REPASSE = 'REPASSE'
     
     # ======================
     # INICIALIZAR SESSION STATE
     # ======================
     if 'visao_repasses' not in st.session_state:
-        st.session_state.visao_repasses = 'PEDIDOS_SISTEMA'  # Opções: PEDIDOS_SISTEMA, REPASSES, ESTOQUE_ATUAL
+        st.session_state.visao_repasses = 'PEDIDOS_SISTEMA'  # PEDIDOS_SISTEMA, REPASSES, ESTOQUE_ATUAL
+    
+    if 'mostrar_formulario_repasse' not in st.session_state:
+        st.session_state.mostrar_formulario_repasse = False
+    
+    if 'editando_repasse' not in st.session_state:
+        st.session_state.editando_repasse = None
+    
+    if 'excluindo_repasse' not in st.session_state:
+        st.session_state.excluindo_repasse = None
+    
+    if 'termo_busca_referencia' not in st.session_state:
+        st.session_state.termo_busca_referencia = ""
     
     # ======================
-    # FUNÇÃO PARA CARREGAR DADOS DA CARTEIRA
+    # DATACLASS PARA REPASSE
+    # ======================
+    @dataclass
+    class RegistroRepasse:
+        id: Optional[str] = None
+        data: Optional[datetime] = None
+        solicitante: str = ""
+        referencia: str = ""
+        cliente: str = ""
+        quantidade: int = 0
+        data_limite: Optional[datetime] = None
+        status: str = "SOLICITADO"
+    
+    # ======================
+    # FUNÇÕES DE CARREGAMENTO - CARTEIRA
     # ======================
     @retry_on_quota()
     @st.cache_data(ttl=600)
     def carregar_carteira_pedidos() -> pd.DataFrame:
-        """
-        Carrega os dados da aba CARTEIRA da planilha URGÊNCIAS
-        Retorna DataFrame com as colunas padronizadas
-        """
+        """Carrega os dados da aba CARTEIRA da planilha URGÊNCIAS"""
         try:
             client = get_gspread_client()
             if client is None:
                 st.error("❌ Erro ao conectar ao Google Sheets")
                 return pd.DataFrame()
             
-            # Abrir a planilha URGÊNCIAS
             spreadsheet = client.open_by_key(ID_PLANILHA_URGENCIAS)
             
-            # Tentar acessar a aba CARTEIRA
             try:
                 sheet = spreadsheet.worksheet(ABA_CARTEIRA)
             except Exception as e:
-                st.error(f"❌ Aba '{ABA_CARTEIRA}' não encontrada na planilha URGÊNCIAS. Erro: {e}")
+                st.error(f"❌ Aba '{ABA_CARTEIRA}' não encontrada. Erro: {e}")
                 return pd.DataFrame()
             
-            # Ler todos os dados
             todos_dados = sheet.get_all_values()
             
             if len(todos_dados) < 2:
                 st.info("📭 Nenhum dado encontrado na aba CARTEIRA.")
                 return pd.DataFrame()
             
-            # Cabeçalho na primeira linha
             cabecalho = todos_dados[0]
             valores = todos_dados[1:]
-            
-            # Criar DataFrame
             df = pd.DataFrame(valores, columns=cabecalho)
-            
-            # Limpar nomes das colunas (remover espaços e acentos)
             df.columns = df.columns.str.strip()
             
-            # ===== MAPEAMENTO INTELIGENTE DE COLUNAS =====
+            # Mapeamento inteligente de colunas
             mapa_colunas = {}
-            
             for col in df.columns:
                 col_upper = col.upper().strip()
                 col_sem_acento = unicodedata.normalize('NFKD', col_upper).encode('ASCII', 'ignore').decode('ASCII')
                 
-                # Mapear coluna CODIGO
                 if col_sem_acento in ['CODIGO', 'COD', 'ID', 'CODIGO_SISTEMA']:
                     mapa_colunas[col] = 'CODIGO'
-                # Mapear coluna REFERENCIA
                 elif col_sem_acento in ['REFERENCIA', 'REFERÊNCIA', 'REF', 'PRODUTO', 'NOME']:
                     mapa_colunas[col] = 'REFERENCIA'
-                # Mapear coluna DESCRICAO
                 elif col_sem_acento in ['DESCRICAO', 'DESCRIÇÃO', 'DESC', 'DETALHE']:
                     mapa_colunas[col] = 'DESCRICAO'
-                # Mapear coluna ESTOQUE
                 elif col_sem_acento in ['ESTOQUE', 'EST', 'QTD_ESTOQUE', 'SALDO']:
                     mapa_colunas[col] = 'ESTOQUE'
-                # Mapear coluna PEDIDO_EM_ABERTO
                 elif col_sem_acento in ['PEDIDO_EM_ABERTO', 'PEDIDO', 'PED', 'QTD_PEDIDO', 'ABERTO']:
                     mapa_colunas[col] = 'PEDIDO_EM_ABERTO'
-                # Mapear coluna REPASSE
-                elif col_sem_acento in ['REPASSE', 'QTD_REPASSE', 'REPASSES']:
-                    mapa_colunas[col] = 'REPASSE'
             
-            # Aplicar renomeação
             if mapa_colunas:
                 df = df.rename(columns=mapa_colunas)
             
-            # Verificar se temos pelo menos as colunas mínimas
-            colunas_minimas = ['CODIGO', 'REFERENCIA', 'ESTOQUE']
-            colunas_existentes = [col for col in colunas_minimas if col in df.columns]
-            
-            if not colunas_existentes:
-                st.warning(f"⚠️ Nenhuma coluna esperada encontrada. Colunas disponíveis: {list(df.columns)}")
-                return pd.DataFrame()
-            
-            # Se não tiver PEDIDO_EM_ABERTO, criar com 0
-            if 'PEDIDO_EM_ABERTO' not in df.columns:
-                df['PEDIDO_EM_ABERTO'] = 0
-            
-            # Se não tiver REPASSE, criar com 0
-            if 'REPASSE' not in df.columns:
-                df['REPASSE'] = 0
-            
-            # Se a coluna REFERENCIA não foi encontrada, tentar usar DESCRICAO como fallback
+            # Garantir colunas mínimas
             if 'REFERENCIA' not in df.columns and 'DESCRICAO' in df.columns:
                 df['REFERENCIA'] = df['DESCRICAO']
             
+            if 'PEDIDO_EM_ABERTO' not in df.columns:
+                df['PEDIDO_EM_ABERTO'] = 0
+            
             # Converter colunas numéricas
-            colunas_numericas = ['ESTOQUE', 'PEDIDO_EM_ABERTO', 'REPASSE']
+            colunas_numericas = ['ESTOQUE', 'PEDIDO_EM_ABERTO']
             for col in colunas_numericas:
                 if col in df.columns:
-                    # Limpar caracteres especiais
                     df[col] = df[col].astype(str).str.replace('.', '', regex=False)
                     df[col] = df[col].astype(str).str.replace(',', '.', regex=False)
                     df[col] = df[col].astype(str).str.replace(r'[^\d\.]', '', regex=True)
                     df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
                     df[col] = df[col].astype(int)
             
-            # Remover linhas vazias
             if 'CODIGO' in df.columns:
                 df = df[df['CODIGO'].astype(str).str.strip() != '']
                 df = df[df['CODIGO'].astype(str).str.strip() != 'nan']
             
-            # Remover linhas onde todos os campos numéricos são zero
             if 'ESTOQUE' in df.columns:
                 df = df[df['ESTOQUE'] > 0]
             
-            # Ordenar por CODIGO
             if 'CODIGO' in df.columns:
                 df = df.sort_values('CODIGO', ascending=True)
             
@@ -11720,9 +11709,245 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
             
         except Exception as e:
             st.error(f"❌ Erro ao carregar dados da carteira: {str(e)}")
-            import traceback
-            st.error(traceback.format_exc())
             return pd.DataFrame()
+    
+    # ======================
+    # FUNÇÕES DE CARREGAMENTO - REPASSES
+    # ======================
+    def obter_proximo_id_repasse() -> str:
+        """Gera o próximo ID para repasse"""
+        try:
+            client = get_gspread_client()
+            if client is None:
+                return "REP-001"
+            
+            spreadsheet = client.open_by_key(ID_PLANILHA_URGENCIAS)
+            sheet = spreadsheet.worksheet(ABA_REPASSE)
+            todos_dados = sheet.get_all_values()
+            
+            if len(todos_dados) < 2:
+                return "REP-001"
+            
+            ids = []
+            for row in todos_dados[1:]:
+                if row and row[0]:
+                    ids.append(row[0].strip())
+            
+            if not ids:
+                return "REP-001"
+            
+            numeros = []
+            for id_str in ids:
+                if id_str.startswith("REP-"):
+                    try:
+                        num = int(id_str.replace("REP-", ""))
+                        numeros.append(num)
+                    except:
+                        pass
+            
+            if not numeros:
+                return "REP-001"
+            
+            proximo = max(numeros) + 1
+            return f"REP-{proximo:03d}"
+            
+        except:
+            return "REP-001"
+    
+    @retry_on_quota()
+    @st.cache_data(ttl=300)
+    def carregar_referencias_consolidadas() -> List[str]:
+        """Carrega as referências da aba CARTEIRA para o combobox"""
+        try:
+            client = get_gspread_client()
+            if client is None:
+                return []
+            
+            spreadsheet = client.open_by_key(ID_PLANILHA_URGENCIAS)
+            sheet = spreadsheet.worksheet(ABA_CARTEIRA)
+            todos_dados = sheet.get_all_values()
+            
+            if len(todos_dados) < 2:
+                return []
+            
+            cabecalho = todos_dados[0]
+            idx_ref = None
+            
+            for i, col in enumerate(cabecalho):
+                col_clean = str(col).strip().upper()
+                if 'REFERENCIA' in col_clean or 'REFERÊNCIA' in col_clean or 'REF' in col_clean:
+                    idx_ref = i
+                    break
+            
+            if idx_ref is None:
+                return []
+            
+            referencias = set()
+            for row in todos_dados[1:]:
+                if len(row) > idx_ref and row[idx_ref]:
+                    ref = str(row[idx_ref]).strip()
+                    if ref and ref.lower() != 'nan' and ref.lower() != 'none':
+                        referencias.add(ref)
+            
+            return sorted(list(referencias))
+            
+        except Exception as e:
+            print(f"Erro ao carregar referências: {e}")
+            return []
+    
+    @retry_on_quota()
+    @st.cache_data(ttl=300)
+    def carregar_repasse() -> List[RegistroRepasse]:
+        """Carrega todos os registros da aba REPASSE"""
+        registros = []
+        try:
+            client = get_gspread_client()
+            if client is None:
+                return registros
+            
+            spreadsheet = client.open_by_key(ID_PLANILHA_URGENCIAS)
+            
+            try:
+                sheet = spreadsheet.worksheet(ABA_REPASSE)
+            except:
+                sheet = spreadsheet.add_worksheet(title=ABA_REPASSE, rows=1000, cols=20)
+                cabecalho = ["ID", "DATA", "SOLICITANTE", "REFERÊNCIA", "CLIENTE", "QUANTIDADE", "DATA_LIMITE", "STATUS"]
+                sheet.append_row(cabecalho)
+                return registros
+            
+            todos_dados = sheet.get_all_values()
+            
+            if len(todos_dados) < 2:
+                return registros
+            
+            for idx, row in enumerate(todos_dados[1:], start=2):
+                if len(row) < 8:
+                    continue
+                
+                try:
+                    registro = RegistroRepasse()
+                    registro.id = row[0].strip() if row[0] else f"REP-{idx:03d}"
+                    
+                    if len(row) > 1 and row[1]:
+                        try:
+                            registro.data = datetime.strptime(row[1].strip(), "%d/%m/%Y")
+                        except:
+                            registro.data = converter_data_br(row[1])
+                    
+                    registro.solicitante = row[2].strip() if len(row) > 2 else ""
+                    registro.referencia = row[3].strip() if len(row) > 3 else ""
+                    registro.cliente = row[4].strip() if len(row) > 4 else ""
+                    
+                    if len(row) > 5 and row[5]:
+                        try:
+                            registro.quantidade = int(float(str(row[5]).strip().replace(',', '.')))
+                        except:
+                            registro.quantidade = 0
+                    
+                    if len(row) > 6 and row[6]:
+                        try:
+                            registro.data_limite = datetime.strptime(row[6].strip(), "%d/%m/%Y")
+                        except:
+                            registro.data_limite = converter_data_br(row[6])
+                    
+                    registro.status = row[7].strip() if len(row) > 7 else "SOLICITADO"
+                    
+                    registros.append(registro)
+                except:
+                    continue
+            
+            return registros
+            
+        except Exception as e:
+            st.error(f"❌ Erro ao carregar repasses: {str(e)}")
+            return registros
+    
+    # ======================
+    # FUNÇÕES CRUD REPASSE
+    # ======================
+    def salvar_repasse(registro: RegistroRepasse) -> tuple:
+        """Salva um novo repasse na planilha"""
+        try:
+            client = get_gspread_client()
+            if client is None:
+                return False, "❌ Erro ao conectar ao Google Sheets"
+            
+            spreadsheet = client.open_by_key(ID_PLANILHA_URGENCIAS)
+            sheet = spreadsheet.worksheet(ABA_REPASSE)
+            
+            dados = [
+                registro.id,
+                registro.data.strftime("%d/%m/%Y") if registro.data else "",
+                registro.solicitante,
+                registro.referencia,
+                registro.cliente,
+                str(registro.quantidade),
+                registro.data_limite.strftime("%d/%m/%Y") if registro.data_limite else "",
+                registro.status
+            ]
+            
+            sheet.append_row(dados)
+            st.cache_data.clear()
+            return True, "✅ Repasse salvo com sucesso!"
+            
+        except Exception as e:
+            return False, f"❌ Erro ao salvar: {str(e)}"
+    
+    def atualizar_repasse(registro: RegistroRepasse) -> tuple:
+        """Atualiza um repasse existente"""
+        try:
+            client = get_gspread_client()
+            if client is None:
+                return False, "❌ Erro ao conectar ao Google Sheets"
+            
+            spreadsheet = client.open_by_key(ID_PLANILHA_URGENCIAS)
+            sheet = spreadsheet.worksheet(ABA_REPASSE)
+            
+            # Procurar a linha do registro
+            cell = sheet.find(registro.id, in_column=1)
+            if not cell:
+                return False, f"❌ Repasse {registro.id} não encontrado"
+            
+            dados = [
+                registro.id,
+                registro.data.strftime("%d/%m/%Y") if registro.data else "",
+                registro.solicitante,
+                registro.referencia,
+                registro.cliente,
+                str(registro.quantidade),
+                registro.data_limite.strftime("%d/%m/%Y") if registro.data_limite else "",
+                registro.status
+            ]
+            
+            for col, valor in enumerate(dados, start=1):
+                sheet.update_cell(cell.row, col, valor)
+            
+            st.cache_data.clear()
+            return True, "✅ Repasse atualizado com sucesso!"
+            
+        except Exception as e:
+            return False, f"❌ Erro ao atualizar: {str(e)}"
+    
+    def excluir_repasse(id_repasse: str) -> tuple:
+        """Exclui um repasse"""
+        try:
+            client = get_gspread_client()
+            if client is None:
+                return False, "❌ Erro ao conectar ao Google Sheets"
+            
+            spreadsheet = client.open_by_key(ID_PLANILHA_URGENCIAS)
+            sheet = spreadsheet.worksheet(ABA_REPASSE)
+            
+            cell = sheet.find(id_repasse, in_column=1)
+            if not cell:
+                return False, f"❌ Repasse {id_repasse} não encontrado"
+            
+            sheet.delete_rows(cell.row)
+            st.cache_data.clear()
+            return True, "✅ Repasse excluído com sucesso!"
+            
+        except Exception as e:
+            return False, f"❌ Erro ao excluir: {str(e)}"
     
     # ======================
     # FUNÇÃO PARA GERAR GRÁFICOS
@@ -11734,12 +11959,9 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
             st.info("📭 Sem dados para gerar gráficos.")
             return
         
-        # Verificar se as colunas necessárias existem
         colunas_necessarias = ['REFERENCIA', 'ESTOQUE']
         if visao == 'PEDIDOS_SISTEMA':
             colunas_necessarias.append('PEDIDO_EM_ABERTO')
-        elif visao == 'REPASSES':
-            colunas_necessarias.append('REPASSE')
         
         colunas_faltando = [col for col in colunas_necessarias if col not in df.columns]
         
@@ -11747,7 +11969,6 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
             st.warning(f"⚠️ Colunas necessárias não encontradas: {', '.join(colunas_faltando)}")
             return
         
-        # Converter para numérico
         df = df.copy()
         df['ESTOQUE'] = pd.to_numeric(df['ESTOQUE'], errors='coerce').fillna(0)
         df['REFERENCIA'] = df['REFERENCIA'].astype(str).fillna('Sem Referência')
@@ -11758,26 +11979,19 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
             titulo = 'Pedidos em Aberto no Sistema'
             cor = '#E86C2C'
             label = 'Pedido Sistema'
-        elif visao == 'REPASSES':
-            df['REPASSE'] = pd.to_numeric(df['REPASSE'], errors='coerce').fillna(0)
-            coluna_valor = 'REPASSE'
-            titulo = 'Repasses de Produção'
-            cor = '#FF6B35'
-            label = 'Repasse'
-        else:  # ESTOQUE_ATUAL
+        else:
             coluna_valor = 'ESTOQUE'
             titulo = 'Estoque Atual'
             cor = '#0078D4'
             label = 'Estoque'
         
-        # Filtrar apenas registros com valores positivos para o gráfico
         df_com_valor = df[df[coluna_valor] > 0].copy()
         
         if df_com_valor.empty:
             st.info(f"📭 Nenhum dado com {label} > 0 para gerar gráficos.")
             return
         
-        # ===== GRÁFICO 1: Top 10 =====
+        # Gráfico Top 10
         st.markdown("---")
         st.markdown(f"### 📊 Top 10 {titulo}")
         
@@ -11793,7 +12007,7 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
                     x='REFERENCIA',
                     y=coluna_valor,
                     color=coluna_valor,
-                    color_continuous_scale='Oranges' if visao != 'ESTOQUE_ATUAL' else 'Blues',
+                    color_continuous_scale='Oranges' if visao == 'PEDIDOS_SISTEMA' else 'Blues',
                     title=f'Top 10 Referências com Maior {titulo}',
                     labels={'REFERENCIA': 'Referência', coluna_valor: label},
                     text=coluna_valor
@@ -11820,79 +12034,12 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
                 
             except Exception as e:
                 st.warning(f"⚠️ Não foi possível gerar o gráfico Top 10: {str(e)}")
-        else:
-            st.info("📭 Dados insuficientes para o gráfico Top 10.")
         
-        # ===== GRÁFICO 2: Comparativo Estoque vs Valor =====
-        st.markdown("### 📊 Estoque Atual vs Valor Selecionado")
-        
-        # Limitar a 20 itens
-        df_graf = df_com_valor.nlargest(20, coluna_valor).copy()
-        
-        if not df_graf.empty:
-            try:
-                df_graf['REFERENCIA_TRUNC'] = df_graf['REFERENCIA'].apply(
-                    lambda x: str(x)[:15] + '...' if len(str(x)) > 15 else str(x)
-                )
-                
-                df_graf = df_graf.sort_values(coluna_valor, ascending=False)
-                
-                fig = go.Figure()
-                
-                fig.add_trace(go.Bar(
-                    x=df_graf['REFERENCIA_TRUNC'],
-                    y=df_graf['ESTOQUE'],
-                    name='Estoque Atual',
-                    marker_color='#0078D4',
-                    opacity=0.8,
-                    text=df_graf['ESTOQUE'].apply(lambda x: f'{x:,.0f}'),
-                    textposition='outside',
-                    textfont=dict(size=10)
-                ))
-                
-                fig.add_trace(go.Bar(
-                    x=df_graf['REFERENCIA_TRUNC'],
-                    y=df_graf[coluna_valor],
-                    name=label,
-                    marker_color=cor,
-                    opacity=0.8,
-                    text=df_graf[coluna_valor].apply(lambda x: f'{x:,.0f}'),
-                    textposition='outside',
-                    textfont=dict(size=10)
-                ))
-                
-                fig.update_layout(
-                    title=f'Comparativo: Estoque Atual vs {label}',
-                    height=450,
-                    xaxis_tickangle=-45,
-                    barmode='group',
-                    font=dict(size=11),
-                    plot_bgcolor='rgba(0,0,0,0)',
-                    paper_bgcolor='rgba(0,0,0,0)',
-                    legend=dict(
-                        orientation='h',
-                        yanchor='bottom',
-                        y=1.02,
-                        xanchor='right',
-                        x=1
-                    ),
-                    margin=dict(l=20, r=20, t=60, b=80)
-                )
-                
-                st.plotly_chart(fig, use_container_width=True, key=f"grafico_comparativo_{visao}")
-                
-            except Exception as e:
-                st.warning(f"⚠️ Não foi possível gerar o gráfico comparativo: {str(e)}")
-        else:
-            st.info("📭 Dados insuficientes para o gráfico comparativo.")
-        
-        # ===== GRÁFICO 3: Distribuição (Pizza) =====
+        # Gráfico de distribuição
         st.markdown("### 📊 Distribuição dos Valores")
         
         def classificar_valor(row):
             valor = row.get(coluna_valor, 0)
-            estoque = row.get('ESTOQUE', 0)
-            
             if valor == 0:
                 return '✅ Sem Valor'
             elif valor <= 10:
@@ -11954,16 +12101,363 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
                     )
                     
                     st.plotly_chart(fig, use_container_width=True, key=f"grafico_pizza_{visao}")
-                else:
-                    st.info("📭 Nenhuma categoria com dados para o gráfico de pizza.")
                     
             except Exception as e:
                 st.warning(f"⚠️ Não foi possível gerar o gráfico de pizza: {str(e)}")
-        else:
-            st.info("📭 Nenhum dado para classificar no gráfico de pizza.")
     
     # ======================
-    # CARREGAR DADOS
+    # FUNÇÃO PARA RENDERIZAR CRUD DE REPASSES
+    # ======================
+    def renderizar_crud_repasse():
+        """Renderiza o CRUD completo da aba REPASSE"""
+        
+        st.markdown("---")
+        st.markdown("### 📋 Gerenciamento de Repasses")
+        
+        # Botão Novo Repasse
+        col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
+        with col_btn2:
+            if st.button("➕ NOVO REPASSE", type="primary", use_container_width=True):
+                st.session_state.mostrar_formulario_repasse = True
+                st.session_state.editando_repasse = None
+                st.rerun()
+        
+        # ===== FORMULÁRIO NOVO/EDITAR =====
+        if st.session_state.mostrar_formulario_repasse:
+            st.markdown("---")
+            st.markdown("### ✏️ " + ("Editar Repasse" if st.session_state.editando_repasse else "Novo Repasse"))
+            
+            # Carregar referências para o combobox
+            referencias_disponiveis = carregar_referencias_consolidadas()
+            
+            # Se está editando, carregar os dados
+            if st.session_state.editando_repasse:
+                registro_edit = st.session_state.editando_repasse
+                id_edit = registro_edit.id
+                data_edit = registro_edit.data
+                solicitante_edit = registro_edit.solicitante
+                referencia_edit = registro_edit.referencia
+                cliente_edit = registro_edit.cliente
+                quantidade_edit = registro_edit.quantidade
+                data_limite_edit = registro_edit.data_limite
+                status_edit = registro_edit.status
+                titulo_form = f"Editando: {registro_edit.id} - {registro_edit.referencia}"
+            else:
+                id_edit = obter_proximo_id_repasse()
+                data_edit = datetime.now()
+                solicitante_edit = ""
+                referencia_edit = ""
+                cliente_edit = ""
+                quantidade_edit = 0
+                data_limite_edit = None
+                status_edit = "SOLICITADO"
+                titulo_form = "Novo Repasse"
+            
+            st.info(f"📌 ID: {id_edit}")
+            
+            with st.form("form_repasse"):
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    # Data
+                    data_form = st.date_input(
+                        "📅 Data",
+                        value=data_edit if data_edit else datetime.now(),
+                        key="data_repasse"
+                    )
+                    
+                    # Solicitante
+                    solicitante_form = st.text_input(
+                        "👤 Solicitante",
+                        value=solicitante_edit,
+                        key="solicitante_repasse"
+                    )
+                    
+                    # Referência - Combobox com busca
+                    st.markdown("**🔍 Referência***")
+                    
+                    # Campo de busca
+                    termo_busca = st.text_input(
+                        "Pesquisar referência",
+                        value=st.session_state.termo_busca_referencia,
+                        placeholder="Digite para filtrar...",
+                        key="busca_referencia_repasse",
+                        label_visibility="collapsed"
+                    )
+                    st.session_state.termo_busca_referencia = termo_busca
+                    
+                    # Filtrar referências
+                    if termo_busca:
+                        termo_lower = termo_busca.lower()
+                        opcoes_filtradas = [r for r in referencias_disponiveis if termo_lower in r.lower()]
+                    else:
+                        opcoes_filtradas = referencias_disponiveis
+                    
+                    # Selectbox com as opções filtradas
+                    if opcoes_filtradas:
+                        if referencia_edit and referencia_edit in opcoes_filtradas:
+                            idx_default = opcoes_filtradas.index(referencia_edit)
+                        else:
+                            idx_default = 0
+                        
+                        referencia_form = st.selectbox(
+                            "Selecione a referência",
+                            options=opcoes_filtradas,
+                            index=idx_default if referencia_edit in opcoes_filtradas else 0,
+                            key="referencia_repasse_select",
+                            label_visibility="collapsed"
+                        )
+                    else:
+                        referencia_form = st.text_input(
+                            "Referência (digite manualmente)",
+                            value=referencia_edit,
+                            key="referencia_repasse_manual",
+                            label_visibility="collapsed"
+                        )
+                    
+                    # Cliente
+                    cliente_form = st.text_input(
+                        "🏢 Cliente",
+                        value=cliente_edit,
+                        key="cliente_repasse"
+                    )
+                
+                with col2:
+                    # Quantidade
+                    quantidade_form = st.number_input(
+                        "📦 Quantidade",
+                        min_value=0,
+                        value=quantidade_edit,
+                        step=1,
+                        key="quantidade_repasse"
+                    )
+                    
+                    # Data Limite
+                    data_limite_form = st.date_input(
+                        "⏰ Data Limite",
+                        value=data_limite_edit if data_limite_edit else datetime.now() + timedelta(days=7),
+                        key="data_limite_repasse"
+                    )
+                    
+                    # Status
+                    status_form = st.selectbox(
+                        "📊 Status",
+                        options=["SOLICITADO", "PROGRAMADO", "PRODUZIDO"],
+                        index=["SOLICITADO", "PROGRAMADO", "PRODUZIDO"].index(status_edit) if status_edit in ["SOLICITADO", "PROGRAMADO", "PRODUZIDO"] else 0,
+                        key="status_repasse"
+                    )
+                    
+                    # Mostrar informações adicionais
+                    if status_form == "SOLICITADO":
+                        st.info("🟡 Aguardando programação")
+                    elif status_form == "PROGRAMADO":
+                        st.info("🟢 Programado para produção")
+                    else:
+                        st.success("✅ Produzido / Finalizado")
+                
+                st.markdown("---")
+                col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
+                with col_btn2:
+                    submitted = st.form_submit_button(
+                        "💾 SALVAR REPASSE",
+                        type="primary",
+                        use_container_width=True
+                    )
+                
+                if submitted:
+                    if not referencia_form or not referencia_form.strip():
+                        st.error("❌ A referência é obrigatória!")
+                    elif quantidade_form <= 0:
+                        st.error("❌ A quantidade deve ser maior que zero!")
+                    else:
+                        # Criar registro
+                        novo_registro = RegistroRepasse(
+                            id=id_edit,
+                            data=datetime.combine(data_form, datetime.min.time()),
+                            solicitante=solicitante_form,
+                            referencia=referencia_form.strip(),
+                            cliente=cliente_form,
+                            quantidade=quantidade_form,
+                            data_limite=datetime.combine(data_limite_form, datetime.min.time()),
+                            status=status_form
+                        )
+                        
+                        if st.session_state.editando_repasse:
+                            sucesso, msg = atualizar_repasse(novo_registro)
+                        else:
+                            sucesso, msg = salvar_repasse(novo_registro)
+                        
+                        if sucesso:
+                            st.success(msg)
+                            st.balloons()
+                            st.session_state.mostrar_formulario_repasse = False
+                            st.session_state.editando_repasse = None
+                            st.session_state.termo_busca_referencia = ""
+                            st.rerun()
+                        else:
+                            st.error(msg)
+            
+            # Botão Cancelar
+            if st.button("❌ Cancelar", use_container_width=True):
+                st.session_state.mostrar_formulario_repasse = False
+                st.session_state.editando_repasse = None
+                st.session_state.termo_busca_referencia = ""
+                st.rerun()
+        
+        # ===== LISTA DE REPASSES =====
+        st.markdown("---")
+        st.markdown("### 📋 Lista de Repasses")
+        
+        with st.spinner("Carregando repasses..."):
+            repasses = carregar_repasse()
+        
+        if not repasses:
+            st.info("📭 Nenhum repasse cadastrado.")
+            return
+        
+        # Filtros da lista
+        col_f1, col_f2, col_f3 = st.columns(3)
+        with col_f1:
+            filtro_status = st.selectbox(
+                "Filtrar por Status",
+                ["(Todos)", "SOLICITADO", "PROGRAMADO", "PRODUZIDO"],
+                key="filtro_status_repasse"
+            )
+        with col_f2:
+            filtro_referencia_lista = st.text_input(
+                "Filtrar por Referência",
+                placeholder="Digite parte da referência...",
+                key="filtro_ref_repasse"
+            )
+        with col_f3:
+            filtro_solicitante = st.text_input(
+                "Filtrar por Solicitante",
+                placeholder="Digite o nome...",
+                key="filtro_solicitante_repasse"
+            )
+        
+        # Aplicar filtros
+        repasses_filtrados = repasses.copy()
+        if filtro_status != "(Todos)":
+            repasses_filtrados = [r for r in repasses_filtrados if r.status == filtro_status]
+        if filtro_referencia_lista:
+            repasses_filtrados = [r for r in repasses_filtrados if filtro_referencia_lista.lower() in r.referencia.lower()]
+        if filtro_solicitante:
+            repasses_filtrados = [r for r in repasses_filtrados if filtro_solicitante.lower() in r.solicitante.lower()]
+        
+        # ===== CARDS DE ESTATÍSTICAS =====
+        total_repasses = len(repasses_filtrados)
+        total_solicitado = sum(r.quantidade for r in repasses_filtrados if r.status == "SOLICITADO")
+        total_programado = sum(r.quantidade for r in repasses_filtrados if r.status == "PROGRAMADO")
+        total_produzido = sum(r.quantidade for r in repasses_filtrados if r.status == "PRODUZIDO")
+        
+        col_c1, col_c2, col_c3, col_c4 = st.columns(4)
+        with col_c1:
+            st.metric("📋 Total de Repasses", f"{total_repasses:,}")
+        with col_c2:
+            st.metric("🟡 Solicitado", f"{total_solicitado:,}")
+        with col_c3:
+            st.metric("🟢 Programado", f"{total_programado:,}")
+        with col_c4:
+            st.metric("✅ Produzido", f"{total_produzido:,}")
+        
+        st.markdown("---")
+        
+        # ===== TABELA DE REPASSES =====
+        if repasses_filtrados:
+            dados_tabela = []
+            for r in repasses_filtrados:
+                status_icons = {
+                    "SOLICITADO": "🟡",
+                    "PROGRAMADO": "🟢",
+                    "PRODUZIDO": "✅"
+                }
+                
+                # Definir cor do status
+                if r.status == "PRODUZIDO":
+                    status_color = "#28a745"
+                elif r.status == "PROGRAMADO":
+                    status_color = "#FFB900"
+                else:
+                    status_color = "#E86C2C"
+                
+                dados_tabela.append({
+                    "ID": r.id,
+                    "Data": r.data.strftime("%d/%m/%Y") if r.data else "-",
+                    "Solicitante": r.solicitante,
+                    "Referência": r.referencia,
+                    "Cliente": r.cliente,
+                    "Quantidade": f"{r.quantidade:,}".replace(",", "."),
+                    "Data Limite": r.data_limite.strftime("%d/%m/%Y") if r.data_limite else "-",
+                    "Status": f"{status_icons.get(r.status, '📌')} {r.status}",
+                    "_status_raw": r.status
+                })
+            
+            df_repasses = pd.DataFrame(dados_tabela)
+            
+            # Aplicar estilo
+            def estilo_status(row):
+                status = row['_status_raw']
+                if status == "PRODUZIDO":
+                    return ['background-color: #d4edda; color: #155724; font-weight: bold;'] * len(row)
+                elif status == "PROGRAMADO":
+                    return ['background-color: #fff3cd; color: #856404;'] * len(row)
+                else:
+                    return ['background-color: #f8d7da; color: #721c24;'] * len(row)
+            
+            df_display = df_repasses.drop(columns=['_status_raw'])
+            styled_df = df_display.style.apply(estilo_status, axis=1)
+            
+            st.dataframe(styled_df, use_container_width=True, height=400, hide_index=True)
+            
+            # ===== AÇÕES POR LINHA =====
+            st.markdown("---")
+            st.markdown("### 🔧 Ações")
+            
+            # Select para escolher o registro
+            opcoes_ids = [f"{r.id} - {r.referencia}" for r in repasses_filtrados]
+            if opcoes_ids:
+                selecao = st.selectbox(
+                    "Selecione um repasse para editar ou excluir:",
+                    options=opcoes_ids,
+                    key="select_repasse_acao"
+                )
+                
+                if selecao:
+                    id_selecionado = selecao.split(" - ")[0]
+                    registro_selecionado = next((r for r in repasses_filtrados if r.id == id_selecionado), None)
+                    
+                    if registro_selecionado:
+                        col_btn1, col_btn2 = st.columns(2)
+                        
+                        with col_btn1:
+                            if st.button("✏️ Editar", use_container_width=True):
+                                st.session_state.editando_repasse = registro_selecionado
+                                st.session_state.mostrar_formulario_repasse = True
+                                st.session_state.termo_busca_referencia = registro_selecionado.referencia
+                                st.rerun()
+                        
+                        with col_btn2:
+                            if st.button("🗑️ Excluir", type="secondary", use_container_width=True):
+                                if st.session_state.excluindo_repasse == id_selecionado:
+                                    # Confirmar exclusão
+                                    if st.button("⚠️ CONFIRMAR EXCLUSÃO", type="primary", use_container_width=True):
+                                        sucesso, msg = excluir_repasse(id_selecionado)
+                                        if sucesso:
+                                            st.success(msg)
+                                            st.session_state.excluindo_repasse = None
+                                            st.rerun()
+                                        else:
+                                            st.error(msg)
+                                else:
+                                    st.session_state.excluindo_repasse = id_selecionado
+                                    st.warning(f"⚠️ Clique novamente em 'Excluir' para confirmar a exclusão de {id_selecionado}")
+                                    st.rerun()
+        else:
+            st.info("📭 Nenhum repasse encontrado com os filtros selecionados.")
+    
+    # ======================
+    # CARREGAR DADOS DA CARTEIRA
     # ======================
     with st.spinner("🔄 Carregando dados da carteira de pedidos..."):
         df_carteira = carregar_carteira_pedidos()
@@ -12005,219 +12499,183 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
     st.markdown("---")
     
     # ======================
-    # FILTROS NA INTERFACE
+    # RENDERIZAR CONTEÚDO CONFORME VISÃO
     # ======================
-    st.markdown("### 🔍 Filtros")
+    if st.session_state.visao_repasses == 'REPASSES':
+        # Renderizar CRUD de Repasses
+        renderizar_crud_repasse()
     
-    col_f1, col_f2 = st.columns(2)
-    
-    with col_f1:
-        # Filtro por referência
-        if not df_carteira.empty and 'REFERENCIA' in df_carteira.columns:
-            opcoes_ref = ["(Todas)"] + sorted(df_carteira['REFERENCIA'].dropna().unique().tolist())
-            filtro_referencia = st.selectbox(
-                "🔎 Referência",
-                options=opcoes_ref,
-                key="filtro_ref_repasses"
-            )
-        else:
-            filtro_referencia = "(Todas)"
-    
-    with col_f2:
-        # Filtro por código
-        if not df_carteira.empty and 'CODIGO' in df_carteira.columns:
-            opcoes_codigo = ["(Todos)"] + sorted(df_carteira['CODIGO'].dropna().unique().tolist())
-            filtro_codigo = st.selectbox(
-                "📋 Código Sistema",
-                options=opcoes_codigo,
-                key="filtro_codigo_repasses"
-            )
-        else:
-            filtro_codigo = "(Todos)"
-    
-    # ======================
-    # APLICAR FILTROS
-    # ======================
-    df_filtrado = df_carteira.copy()
-    
-    if not df_filtrado.empty:
-        if filtro_referencia != "(Todas)":
-            df_filtrado = df_filtrado[df_filtrado['REFERENCIA'] == filtro_referencia]
-        
-        if filtro_codigo != "(Todos)":
-            df_filtrado = df_filtrado[df_filtrado['CODIGO'] == filtro_codigo]
-    
-    # ======================
-    # DEFINIR COLUNA DE VALOR CONFORME VISÃO
-    # ======================
-    if st.session_state.visao_repasses == 'PEDIDOS_SISTEMA':
-        coluna_valor = 'PEDIDO_EM_ABERTO'
-        label_valor = 'Pedido Sistema'
-        icone_valor = '📋'
-        cor_valor = '#E86C2C'
-        titulo_tabela = 'PEDIDOS EM ABERTO NO SISTEMA LUVIDARTE'
-    elif st.session_state.visao_repasses == 'REPASSES':
-        coluna_valor = 'REPASSE'
-        label_valor = 'Repasse'
-        icone_valor = '🔄'
-        cor_valor = '#FF6B35'
-        titulo_tabela = 'REPASSES DE PRODUÇÃO'
-    else:  # ESTOQUE_ATUAL
-        coluna_valor = 'ESTOQUE'
-        label_valor = 'Estoque Atual'
-        icone_valor = '📦'
-        cor_valor = '#0078D4'
-        titulo_tabela = 'ESTOQUE ATUAL'
-    
-    # ======================
-    # KPIS
-    # ======================
-    st.markdown("---")
-    
-    total_valor = 0
-    total_estoque = 0
-    total_itens = 0
-    itens_criticos = 0
-    
-    if not df_filtrado.empty:
-        if coluna_valor in df_filtrado.columns:
-            total_valor = int(df_filtrado[coluna_valor].sum())
-        total_estoque = int(df_filtrado['ESTOQUE'].sum()) if 'ESTOQUE' in df_filtrado.columns else 0
-        total_itens = len(df_filtrado)
-        
-        if coluna_valor in df_filtrado.columns and 'ESTOQUE' in df_filtrado.columns:
-            itens_criticos = len(df_filtrado[df_filtrado[coluna_valor] > df_filtrado['ESTOQUE']])
-    
-    col_k1, col_k2, col_k3, col_k4 = st.columns(4)
-    with col_k1:
-        st.metric(f"{icone_valor} Total {label_valor}", f"{total_valor:,.0f}".replace(",", "."))
-    with col_k2:
-        st.metric("📦 Estoque Total", f"{total_estoque:,.0f}".replace(",", "."))
-    with col_k3:
-        st.metric("📋 Itens na Carteira", f"{total_itens:,}".replace(",", "."))
-    with col_k4:
-        cor_critico = "🔴" if itens_criticos > 0 else "🟢"
-        st.metric(f"{cor_critico} Itens Críticos", f"{itens_criticos:,}".replace(",", "."))
-    
-    # ======================
-    # TABELA DE DADOS
-    # ======================
-    st.markdown("---")
-    st.markdown(f"### 📋 {titulo_tabela}")
-    
-    if df_filtrado.empty:
-        st.info("📭 Nenhum dado encontrado com os filtros selecionados.")
     else:
-        # Preparar dados para exibição
-        df_exibicao = df_filtrado.copy()
+        # ===== VISÕES PEDIDOS_SISTEMA e ESTOQUE_ATUAL =====
+        st.markdown("### 🔍 Filtros")
         
-        # Verificar se temos REFERENCIA
-        if 'REFERENCIA' not in df_exibicao.columns and 'DESCRICAO' in df_exibicao.columns:
-            df_exibicao['REFERENCIA'] = df_exibicao['DESCRICAO']
+        col_f1, col_f2 = st.columns(2)
         
-        # Renomear colunas para exibição
-        mapa_exibicao = {
-            'CODIGO': 'CÓDIGO SISTEMA',
-            'REFERENCIA': 'REFERÊNCIA',
-            'DESCRICAO': 'DESCRIÇÃO',
-            'ESTOQUE': 'ESTOQUE ATUAL',
-            'PEDIDO_EM_ABERTO': 'PEDIDO SISTEMA',
-            'REPASSE': 'REPASSE'
-        }
-        df_exibicao = df_exibicao.rename(columns=mapa_exibicao)
+        with col_f1:
+            if not df_carteira.empty and 'REFERENCIA' in df_carteira.columns:
+                opcoes_ref = ["(Todas)"] + sorted(df_carteira['REFERENCIA'].dropna().unique().tolist())
+                filtro_referencia = st.selectbox(
+                    "🔎 Referência",
+                    options=opcoes_ref,
+                    key="filtro_ref_repasses"
+                )
+            else:
+                filtro_referencia = "(Todas)"
         
-        # Garantir que as colunas estejam na ordem correta
-        colunas_base = ['CÓDIGO SISTEMA', 'REFERÊNCIA', 'DESCRIÇÃO', 'ESTOQUE ATUAL']
+        with col_f2:
+            if not df_carteira.empty and 'CODIGO' in df_carteira.columns:
+                opcoes_codigo = ["(Todos)"] + sorted(df_carteira['CODIGO'].dropna().unique().tolist())
+                filtro_codigo = st.selectbox(
+                    "📋 Código Sistema",
+                    options=opcoes_codigo,
+                    key="filtro_codigo_repasses"
+                )
+            else:
+                filtro_codigo = "(Todos)"
         
+        # Aplicar filtros
+        df_filtrado = df_carteira.copy()
+        
+        if not df_filtrado.empty:
+            if filtro_referencia != "(Todas)":
+                df_filtrado = df_filtrado[df_filtrado['REFERENCIA'] == filtro_referencia]
+            
+            if filtro_codigo != "(Todos)":
+                df_filtrado = df_filtrado[df_filtrado['CODIGO'] == filtro_codigo]
+        
+        # Definir coluna de valor conforme visão
         if st.session_state.visao_repasses == 'PEDIDOS_SISTEMA':
-            colunas_ordem = colunas_base + ['PEDIDO SISTEMA']
-        elif st.session_state.visao_repasses == 'REPASSES':
-            colunas_ordem = colunas_base + ['REPASSE']
+            coluna_valor = 'PEDIDO_EM_ABERTO'
+            label_valor = 'Pedido Sistema'
+            icone_valor = '📋'
+            titulo_tabela = 'PEDIDOS EM ABERTO NO SISTEMA LUVIDARTE'
         else:
-            colunas_ordem = colunas_base
+            coluna_valor = 'ESTOQUE'
+            label_valor = 'Estoque Atual'
+            icone_valor = '📦'
+            titulo_tabela = 'ESTOQUE ATUAL'
         
-        colunas_existentes = [col for col in colunas_ordem if col in df_exibicao.columns]
-        df_exibicao = df_exibicao[colunas_existentes]
-        
-        # Adicionar coluna de status para coloração
-        def definir_status(row):
-            if coluna_valor == 'ESTOQUE':
-                estoque = row.get('ESTOQUE ATUAL', 0)
-                if estoque == 0:
-                    return '🔴 ZERADO'
-                elif estoque <= 10:
-                    return '🟡 BAIXO'
-                elif estoque <= 50:
-                    return '🟢 NORMAL'
-                else:
-                    return '🟣 ALTO'
-            else:
-                valor = row.get(label_valor, 0)
-                estoque = row.get('ESTOQUE ATUAL', 0)
-                if valor == 0:
-                    return '✅ ZERADO'
-                elif estoque >= valor:
-                    return '🟢 SUFICIENTE'
-                elif estoque >= valor * 0.5:
-                    return '🟡 PARCIAL'
-                else:
-                    return '🔴 CRÍTICO'
-        
-        df_exibicao['STATUS'] = df_exibicao.apply(definir_status, axis=1)
-        
-        # Formatar números
-        colunas_formatar = ['ESTOQUE ATUAL']
-        if 'PEDIDO SISTEMA' in df_exibicao.columns:
-            colunas_formatar.append('PEDIDO SISTEMA')
-        if 'REPASSE' in df_exibicao.columns:
-            colunas_formatar.append('REPASSE')
-        
-        for col in colunas_formatar:
-            if col in df_exibicao.columns:
-                df_exibicao[col] = df_exibicao[col].apply(lambda x: f"{int(x):,}".replace(",", "."))
-        
-        # Aplicar estilo à tabela
-        def estilo_tabela(row):
-            status = row['STATUS']
-            if '🔴' in status:
-                return ['background-color: #f8d7da; color: #721c24; font-weight: bold;'] * len(row)
-            elif '🟡' in status:
-                return ['background-color: #fff3cd; color: #856404;'] * len(row)
-            elif '🟢' in status:
-                return ['background-color: #d4edda; color: #155724;'] * len(row)
-            elif '🟣' in status:
-                return ['background-color: #e8d4f8; color: #4a1a6b;'] * len(row)
-            else:
-                return [''] * len(row)
-        
-        # Aplicar estilo
-        styled_df = df_exibicao.style.apply(estilo_tabela, axis=1)
-        
-        # Exibir tabela
-        st.dataframe(styled_df, use_container_width=True, height=500, hide_index=True)
-        
-        # ======================
-        # GRÁFICOS (abaixo da tabela)
-        # ======================
-        with st.expander("📊 Ver Gráficos Analíticos", expanded=False):
-            gerar_graficos_carteira(df_filtrado, st.session_state.visao_repasses)
-        
-        # ======================
-        # BOTÃO PARA EXPORTAR
-        # ======================
+        # KPIs
         st.markdown("---")
-        col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
-        with col_btn2:
-            # Converter para CSV para download
-            csv = df_exibicao.to_csv(index=False, encoding='utf-8-sig')
-            st.download_button(
-                label="📥 Baixar Dados (CSV)",
-                data=csv,
-                file_name=f"{st.session_state.visao_repasses.lower()}_{datetime.now().strftime('%Y%m%d')}.csv",
-                mime="text/csv",
-                use_container_width=True,
-                type="primary"
-            )
+        
+        total_valor = 0
+        total_estoque = 0
+        total_itens = 0
+        itens_criticos = 0
+        
+        if not df_filtrado.empty:
+            if coluna_valor in df_filtrado.columns:
+                total_valor = int(df_filtrado[coluna_valor].sum())
+            total_estoque = int(df_filtrado['ESTOQUE'].sum()) if 'ESTOQUE' in df_filtrado.columns else 0
+            total_itens = len(df_filtrado)
+            
+            if coluna_valor in df_filtrado.columns and 'ESTOQUE' in df_filtrado.columns:
+                itens_criticos = len(df_filtrado[df_filtrado[coluna_valor] > df_filtrado['ESTOQUE']])
+        
+        col_k1, col_k2, col_k3, col_k4 = st.columns(4)
+        with col_k1:
+            st.metric(f"{icone_valor} Total {label_valor}", f"{total_valor:,.0f}".replace(",", "."))
+        with col_k2:
+            st.metric("📦 Estoque Total", f"{total_estoque:,.0f}".replace(",", "."))
+        with col_k3:
+            st.metric("📋 Itens na Carteira", f"{total_itens:,}".replace(",", "."))
+        with col_k4:
+            cor_critico = "🔴" if itens_criticos > 0 else "🟢"
+            st.metric(f"{cor_critico} Itens Críticos", f"{itens_criticos:,}".replace(",", "."))
+        
+        # Tabela
+        st.markdown("---")
+        st.markdown(f"### 📋 {titulo_tabela}")
+        
+        if df_filtrado.empty:
+            st.info("📭 Nenhum dado encontrado com os filtros selecionados.")
+        else:
+            df_exibicao = df_filtrado.copy()
+            
+            if 'REFERENCIA' not in df_exibicao.columns and 'DESCRICAO' in df_exibicao.columns:
+                df_exibicao['REFERENCIA'] = df_exibicao['DESCRICAO']
+            
+            mapa_exibicao = {
+                'CODIGO': 'CÓDIGO SISTEMA',
+                'REFERENCIA': 'REFERÊNCIA',
+                'DESCRICAO': 'DESCRIÇÃO',
+                'ESTOQUE': 'ESTOQUE ATUAL',
+                'PEDIDO_EM_ABERTO': 'PEDIDO SISTEMA'
+            }
+            df_exibicao = df_exibicao.rename(columns=mapa_exibicao)
+            
+            if st.session_state.visao_repasses == 'PEDIDOS_SISTEMA':
+                colunas_ordem = ['CÓDIGO SISTEMA', 'REFERÊNCIA', 'DESCRIÇÃO', 'ESTOQUE ATUAL', 'PEDIDO SISTEMA']
+            else:
+                colunas_ordem = ['CÓDIGO SISTEMA', 'REFERÊNCIA', 'DESCRIÇÃO', 'ESTOQUE ATUAL']
+            
+            colunas_existentes = [col for col in colunas_ordem if col in df_exibicao.columns]
+            df_exibicao = df_exibicao[colunas_existentes]
+            
+            def definir_status(row):
+                if coluna_valor == 'ESTOQUE':
+                    estoque = row.get('ESTOQUE ATUAL', 0)
+                    if estoque == 0:
+                        return '🔴 ZERADO'
+                    elif estoque <= 10:
+                        return '🟡 BAIXO'
+                    elif estoque <= 50:
+                        return '🟢 NORMAL'
+                    else:
+                        return '🟣 ALTO'
+                else:
+                    valor = row.get('PEDIDO SISTEMA', 0) if 'PEDIDO SISTEMA' in row else 0
+                    estoque = row.get('ESTOQUE ATUAL', 0)
+                    if valor == 0:
+                        return '✅ ZERADO'
+                    elif estoque >= valor:
+                        return '🟢 SUFICIENTE'
+                    elif estoque >= valor * 0.5:
+                        return '🟡 PARCIAL'
+                    else:
+                        return '🔴 CRÍTICO'
+            
+            df_exibicao['STATUS'] = df_exibicao.apply(definir_status, axis=1)
+            
+            colunas_formatar = ['ESTOQUE ATUAL']
+            if 'PEDIDO SISTEMA' in df_exibicao.columns:
+                colunas_formatar.append('PEDIDO SISTEMA')
+            
+            for col in colunas_formatar:
+                if col in df_exibicao.columns:
+                    df_exibicao[col] = df_exibicao[col].apply(lambda x: f"{int(x):,}".replace(",", "."))
+            
+            def estilo_tabela(row):
+                status = row['STATUS']
+                if '🔴' in status:
+                    return ['background-color: #f8d7da; color: #721c24; font-weight: bold;'] * len(row)
+                elif '🟡' in status:
+                    return ['background-color: #fff3cd; color: #856404;'] * len(row)
+                elif '🟢' in status:
+                    return ['background-color: #d4edda; color: #155724;'] * len(row)
+                elif '🟣' in status:
+                    return ['background-color: #e8d4f8; color: #4a1a6b;'] * len(row)
+                else:
+                    return [''] * len(row)
+            
+            styled_df = df_exibicao.style.apply(estilo_tabela, axis=1)
+            st.dataframe(styled_df, use_container_width=True, height=500, hide_index=True)
+            
+            with st.expander("📊 Ver Gráficos Analíticos", expanded=False):
+                gerar_graficos_carteira(df_filtrado, st.session_state.visao_repasses)
+            
+            st.markdown("---")
+            col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
+            with col_btn2:
+                csv = df_exibicao.to_csv(index=False, encoding='utf-8-sig')
+                st.download_button(
+                    label="📥 Baixar Dados (CSV)",
+                    data=csv,
+                    file_name=f"{st.session_state.visao_repasses.lower()}_{datetime.now().strftime('%Y%m%d')}.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    type="primary"
+                )
     
     # ======================
     # INFORMAÇÕES ADICIONAIS
@@ -12230,7 +12688,7 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
         
         **📋 Visões disponíveis:**
         - **Pedidos Sistema**: Mostra os pedidos em aberto no sistema ERP
-        - **Repasses**: Mostra os repasses de produção planejados
+        - **Repasses**: CRUD completo para gerenciar repasses de produção
         - **Estoque Atual**: Mostra o estoque disponível
         
         **🎯 Classificação por Status:**
@@ -12248,6 +12706,7 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
         REPASSES DE PRODUÇÃO · {get_horario_brasilia()}
     </div>
     """, unsafe_allow_html=True)
+    
 # ==================================================================================================
 # RENDERIZAR FAIXA DE ROLAGEM
 # ==================================================================================================
