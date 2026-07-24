@@ -11594,14 +11594,14 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
     ABA_CARTEIRA = 'CARTEIRA'
     
     # ======================
-    # FUNÇÃO PARA CARREGAR DADOS DA CARTEIRA
+    # FUNÇÃO PARA CARREGAR DADOS DA CARTEIRA (VERSÃO MELHORADA)
     # ======================
     @retry_on_quota()
     @st.cache_data(ttl=600)
     def carregar_carteira_pedidos() -> pd.DataFrame:
         """
         Carrega os dados da aba CARTEIRA da planilha URGÊNCIAS
-        Retorna DataFrame com as colunas renomeadas para o dashboard
+        Retorna DataFrame com as colunas padronizadas
         """
         try:
             client = get_gspread_client()
@@ -11633,55 +11633,50 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
             # Criar DataFrame
             df = pd.DataFrame(valores, columns=cabecalho)
             
-            # Limpar nomes das colunas
-            df.columns = df.columns.str.strip().str.upper()
-            df.columns = df.columns.str.replace(' ', '_')
-            df.columns = df.columns.str.replace('Ç', 'C')
-            df.columns = df.columns.str.replace('Ã', 'A')
-            df.columns = df.columns.str.replace('Á', 'A')
-            df.columns = df.columns.str.replace('É', 'E')
-            df.columns = df.columns.str.replace('Í', 'I')
-            df.columns = df.columns.str.replace('Ó', 'O')
-            df.columns = df.columns.str.replace('Ú', 'U')
+            # Limpar nomes das colunas (remover espaços e acentos)
+            df.columns = df.columns.str.strip()
             
-            # Mapeamento de colunas esperadas
-            colunas_esperadas = ['CODIGO', 'REFERENCIA', 'DESCRICAO', 'ESTOQUE', 'PEDIDO_EM_ABERTO']
+            # ===== MAPEAMENTO INTELIGENTE DE COLUNAS =====
+            # Dicionário para mapear nomes de colunas encontradas para nomes padrão
+            mapa_colunas = {}
             
-            # Verificar quais colunas existem
-            colunas_existentes = []
-            for col in colunas_esperadas:
-                col_encontrada = None
-                for col_df in df.columns:
-                    if col in col_df or col_df in col:
-                        col_encontrada = col_df
-                        break
-                if col_encontrada:
-                    colunas_existentes.append(col_encontrada)
+            for col in df.columns:
+                col_upper = col.upper().strip()
+                col_sem_acento = unicodedata.normalize('NFKD', col_upper).encode('ASCII', 'ignore').decode('ASCII')
+                
+                # Mapear coluna CODIGO
+                if col_sem_acento in ['CODIGO', 'COD', 'ID', 'CODIGO_SISTEMA']:
+                    mapa_colunas[col] = 'CODIGO'
+                # Mapear coluna REFERENCIA (com ou sem acento)
+                elif col_sem_acento in ['REFERENCIA', 'REFERÊNCIA', 'REF', 'PRODUTO', 'NOME']:
+                    mapa_colunas[col] = 'REFERENCIA'
+                # Mapear coluna DESCRICAO
+                elif col_sem_acento in ['DESCRICAO', 'DESCRIÇÃO', 'DESC', 'DETALHE']:
+                    mapa_colunas[col] = 'DESCRICAO'
+                # Mapear coluna ESTOQUE
+                elif col_sem_acento in ['ESTOQUE', 'EST', 'QTD_ESTOQUE', 'SALDO']:
+                    mapa_colunas[col] = 'ESTOQUE'
+                # Mapear coluna PEDIDO_EM_ABERTO
+                elif col_sem_acento in ['PEDIDO_EM_ABERTO', 'PEDIDO', 'PED', 'QTD_PEDIDO', 'ABERTO']:
+                    mapa_colunas[col] = 'PEDIDO_EM_ABERTO'
+            
+            # Aplicar renomeação
+            if mapa_colunas:
+                df = df.rename(columns=mapa_colunas)
+            
+            # Verificar se temos pelo menos as colunas mínimas
+            colunas_minimas = ['CODIGO', 'REFERENCIA', 'ESTOQUE', 'PEDIDO_EM_ABERTO']
+            colunas_existentes = [col for col in colunas_minimas if col in df.columns]
             
             if not colunas_existentes:
-                st.error("❌ Nenhuma coluna esperada encontrada na planilha.")
-                st.write("Colunas encontradas:", list(df.columns))
+                # Se não encontrou as colunas esperadas, mostrar as colunas disponíveis
+                st.warning(f"⚠️ Nenhuma coluna esperada encontrada. Colunas disponíveis: {list(df.columns)}")
                 return pd.DataFrame()
             
-            # Manter apenas colunas existentes
-            df = df[colunas_existentes]
-            
-            # Renomear colunas para o padrão esperado
-            mapa_renomeacao = {}
-            for col in df.columns:
-                col_upper = col.upper()
-                if 'CODIGO' in col_upper:
-                    mapa_renomeacao[col] = 'CODIGO'
-                elif 'REFERENCIA' in col_upper or 'REFERÊNCIA' in col_upper:
-                    mapa_renomeacao[col] = 'REFERENCIA'
-                elif 'DESCRICAO' in col_upper or 'DESCRIÇÃO' in col_upper:
-                    mapa_renomeacao[col] = 'DESCRICAO'
-                elif 'ESTOQUE' in col_upper:
-                    mapa_renomeacao[col] = 'ESTOQUE'
-                elif 'PEDIDO_EM_ABERTO' in col_upper or 'PEDIDO' in col_upper:
-                    mapa_renomeacao[col] = 'PEDIDO_EM_ABERTO'
-            
-            df = df.rename(columns=mapa_renomeacao)
+            # Se a coluna REFERENCIA não foi encontrada, tentar usar DESCRICAO como fallback
+            if 'REFERENCIA' not in df.columns and 'DESCRICAO' in df.columns:
+                df['REFERENCIA'] = df['DESCRICAO']
+                st.info("ℹ️ Usando 'DESCRIÇÃO' como 'REFERÊNCIA'")
             
             # Converter colunas numéricas
             colunas_numericas = ['ESTOQUE', 'PEDIDO_EM_ABERTO']
@@ -11711,10 +11706,12 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
             
         except Exception as e:
             st.error(f"❌ Erro ao carregar dados da carteira: {str(e)}")
+            import traceback
+            st.error(traceback.format_exc())
             return pd.DataFrame()
     
     # ======================
-    # FUNÇÃO PARA GERAR GRÁFICOS (VERSÃO ROBUSTA)
+    # FUNÇÃO PARA GERAR GRÁFICOS
     # ======================
     def gerar_graficos_carteira(df: pd.DataFrame):
         """Gera gráficos interativos com os dados da carteira"""
@@ -11729,6 +11726,8 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
         
         if colunas_faltando:
             st.warning(f"⚠️ Colunas necessárias não encontradas: {', '.join(colunas_faltando)}")
+            # Mostrar colunas disponíveis para debug
+            st.write("Colunas disponíveis:", list(df.columns))
             return
         
         # Converter para numérico e garantir que são números válidos
@@ -12038,7 +12037,7 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
         st.metric(f"{cor_critico} Itens Críticos", f"{itens_criticos:,}".replace(",", "."))
     
     # ======================
-    # TABELA DE PEDIDOS EM ABERTO
+    # TABELA DE PEDIDOS EM ABERTO (COM REFERÊNCIA)
     # ======================
     st.markdown("---")
     st.markdown("### 📋 PEDIDOS EM ABERTO NO SISTEMA LUVIDARTE")
@@ -12048,6 +12047,10 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
     else:
         # Preparar dados para exibição
         df_exibicao = df_filtrado.copy()
+        
+        # Verificar se temos REFERENCIA, se não, usar DESCRICAO
+        if 'REFERENCIA' not in df_exibicao.columns and 'DESCRICAO' in df_exibicao.columns:
+            df_exibicao['REFERENCIA'] = df_exibicao['DESCRICAO']
         
         # Renomear colunas para exibição
         mapa_exibicao = {
@@ -12155,7 +12158,8 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
         color:{THEME['text_muted']};letter-spacing:.1em;">
         REPASSES DE PRODUÇÃO · {get_horario_brasilia()}
     </div>
-    """, unsafe_allow_html=True)    
+    """, unsafe_allow_html=True)
+
 # ==================================================================================================
 # RENDERIZAR FAIXA DE ROLAGEM
 # ==================================================================================================
