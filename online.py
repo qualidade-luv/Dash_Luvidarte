@@ -11588,7 +11588,7 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
                        THEME['accent_orange'])
     
     # ======================
-    # CONFIGURAÇÃO DA PLANILHA URGÊNCIAS
+    # CONFIGURAÇÃO DA PLANILHA
     # ======================
     ID_PLANILHA_URGENCIAS = '1nyMCIeW5_EWkNOU5-6d_QMePq9gilvRaqvtTGekP5dk'
     ABA_CARTEIRA = 'CARTEIRA'
@@ -11597,7 +11597,7 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
     # FUNÇÃO PARA CARREGAR DADOS DA CARTEIRA
     # ======================
     @retry_on_quota()
-    @st.cache_data(ttl=600)  # Atualiza a cada 10 minutos
+    @st.cache_data(ttl=600)
     def carregar_carteira_pedidos() -> pd.DataFrame:
         """
         Carrega os dados da aba CARTEIRA da planilha URGÊNCIAS
@@ -11687,6 +11687,7 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
             colunas_numericas = ['ESTOQUE', 'PEDIDO_EM_ABERTO']
             for col in colunas_numericas:
                 if col in df.columns:
+                    # Limpar caracteres especiais
                     df[col] = df[col].astype(str).str.replace('.', '', regex=False)
                     df[col] = df[col].astype(str).str.replace(',', '.', regex=False)
                     df[col] = df[col].astype(str).str.replace(r'[^\d\.]', '', regex=True)
@@ -11713,97 +11714,150 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
             return pd.DataFrame()
     
     # ======================
-    # FUNÇÃO PARA GERAR GRÁFICOS
+    # FUNÇÃO PARA GERAR GRÁFICOS (VERSÃO ROBUSTA)
     # ======================
     def gerar_graficos_carteira(df: pd.DataFrame):
         """Gera gráficos interativos com os dados da carteira"""
         
         if df.empty:
+            st.info("📭 Sem dados para gerar gráficos.")
+            return
+        
+        # Verificar se as colunas necessárias existem
+        colunas_necessarias = ['REFERENCIA', 'PEDIDO_EM_ABERTO', 'ESTOQUE']
+        colunas_faltando = [col for col in colunas_necessarias if col not in df.columns]
+        
+        if colunas_faltando:
+            st.warning(f"⚠️ Colunas necessárias não encontradas: {', '.join(colunas_faltando)}")
+            return
+        
+        # Converter para numérico e garantir que são números válidos
+        df = df.copy()
+        df['PEDIDO_EM_ABERTO'] = pd.to_numeric(df['PEDIDO_EM_ABERTO'], errors='coerce').fillna(0)
+        df['ESTOQUE'] = pd.to_numeric(df['ESTOQUE'], errors='coerce').fillna(0)
+        df['REFERENCIA'] = df['REFERENCIA'].astype(str).fillna('Sem Referência')
+        
+        # Filtrar apenas registros com pedidos positivos para os gráficos principais
+        df_com_pedidos = df[df['PEDIDO_EM_ABERTO'] > 0].copy()
+        
+        if df_com_pedidos.empty:
+            st.info("📭 Nenhum pedido em aberto para gerar gráficos.")
             return
         
         # ===== GRÁFICO 1: Top 10 Pedidos em Aberto =====
         st.markdown("---")
         st.markdown("### 📊 Top 10 Pedidos em Aberto")
         
-        top10 = df.nlargest(10, 'PEDIDO_EM_ABERTO').copy()
+        top10 = df_com_pedidos.nlargest(10, 'PEDIDO_EM_ABERTO').copy()
         
-        if not top10.empty:
-            fig = px.bar(
-                top10,
-                x='REFERENCIA',
-                y='PEDIDO_EM_ABERTO',
-                color='PEDIDO_EM_ABERTO',
-                color_continuous_scale='Oranges',
-                title='Top 10 Referências com Maior Pedido em Aberto',
-                labels={'REFERENCIA': 'Referência', 'PEDIDO_EM_ABERTO': 'Pedido em Aberto'},
-                text='PEDIDO_EM_ABERTO'
-            )
-            
-            fig.update_layout(
-                height=400,
-                xaxis_tickangle=-45,
-                font=dict(size=12),
-                plot_bgcolor='rgba(0,0,0,0)',
-                paper_bgcolor='rgba(0,0,0,0)',
-                coloraxis_showscale=False
-            )
-            
-            fig.update_traces(
-                textposition='outside',
-                textfont=dict(size=11, color='#333')
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
+        if not top10.empty and len(top10) > 0:
+            try:
+                # Garantir que os dados são do tipo correto
+                top10['REFERENCIA'] = top10['REFERENCIA'].astype(str)
+                top10['PEDIDO_EM_ABERTO'] = top10['PEDIDO_EM_ABERTO'].astype(float)
+                
+                fig = px.bar(
+                    top10,
+                    x='REFERENCIA',
+                    y='PEDIDO_EM_ABERTO',
+                    color='PEDIDO_EM_ABERTO',
+                    color_continuous_scale='Oranges',
+                    title='Top 10 Referências com Maior Pedido em Aberto',
+                    labels={'REFERENCIA': 'Referência', 'PEDIDO_EM_ABERTO': 'Pedido em Aberto'},
+                    text='PEDIDO_EM_ABERTO'
+                )
+                
+                fig.update_layout(
+                    height=400,
+                    xaxis_tickangle=-45,
+                    font=dict(size=12),
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    coloraxis_showscale=False,
+                    margin=dict(l=20, r=20, t=40, b=80)
+                )
+                
+                fig.update_traces(
+                    textposition='outside',
+                    textfont=dict(size=11, color='#333'),
+                    texttemplate='%{text:,.0f}'
+                )
+                
+                st.plotly_chart(fig, use_container_width=True, key="grafico_top10")
+                
+            except Exception as e:
+                st.warning(f"⚠️ Não foi possível gerar o gráfico Top 10: {str(e)}")
+        else:
+            st.info("📭 Dados insuficientes para o gráfico Top 10.")
         
         # ===== GRÁFICO 2: Estoque vs Pedido =====
         st.markdown("### 📊 Estoque Atual vs Pedido em Aberto")
         
-        df_graf = df.copy()
-        df_graf['REFERENCIA_TRUNC'] = df_graf['REFERENCIA'].apply(
-            lambda x: x[:15] + '...' if len(str(x)) > 15 else str(x)
-        )
+        # Limitar a 20 itens para não sobrecarregar o gráfico
+        df_graf = df_com_pedidos.nlargest(20, 'PEDIDO_EM_ABERTO').copy()
         
-        fig = go.Figure()
-        
-        fig.add_trace(go.Bar(
-            x=df_graf['REFERENCIA_TRUNC'],
-            y=df_graf['ESTOQUE'],
-            name='Estoque Atual',
-            marker_color='#0078D4',
-            opacity=0.8
-        ))
-        
-        fig.add_trace(go.Bar(
-            x=df_graf['REFERENCIA_TRUNC'],
-            y=df_graf['PEDIDO_EM_ABERTO'],
-            name='Pedido em Aberto',
-            marker_color='#E86C2C',
-            opacity=0.8
-        ))
-        
-        fig.update_layout(
-            title='Comparativo: Estoque Atual vs Pedido em Aberto',
-            height=400,
-            xaxis_tickangle=-45,
-            barmode='group',
-            font=dict(size=11),
-            plot_bgcolor='rgba(0,0,0,0)',
-            paper_bgcolor='rgba(0,0,0,0)',
-            legend=dict(
-                orientation='h',
-                yanchor='bottom',
-                y=1.02,
-                xanchor='right',
-                x=1
-            )
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
+        if not df_graf.empty:
+            try:
+                df_graf['REFERENCIA_TRUNC'] = df_graf['REFERENCIA'].apply(
+                    lambda x: str(x)[:15] + '...' if len(str(x)) > 15 else str(x)
+                )
+                
+                # Ordenar para melhor visualização
+                df_graf = df_graf.sort_values('PEDIDO_EM_ABERTO', ascending=False)
+                
+                fig = go.Figure()
+                
+                fig.add_trace(go.Bar(
+                    x=df_graf['REFERENCIA_TRUNC'],
+                    y=df_graf['ESTOQUE'],
+                    name='Estoque Atual',
+                    marker_color='#0078D4',
+                    opacity=0.8,
+                    text=df_graf['ESTOQUE'].apply(lambda x: f'{x:,.0f}'),
+                    textposition='outside',
+                    textfont=dict(size=10)
+                ))
+                
+                fig.add_trace(go.Bar(
+                    x=df_graf['REFERENCIA_TRUNC'],
+                    y=df_graf['PEDIDO_EM_ABERTO'],
+                    name='Pedido em Aberto',
+                    marker_color='#E86C2C',
+                    opacity=0.8,
+                    text=df_graf['PEDIDO_EM_ABERTO'].apply(lambda x: f'{x:,.0f}'),
+                    textposition='outside',
+                    textfont=dict(size=10)
+                ))
+                
+                fig.update_layout(
+                    title='Comparativo: Estoque Atual vs Pedido em Aberto',
+                    height=450,
+                    xaxis_tickangle=-45,
+                    barmode='group',
+                    font=dict(size=11),
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    legend=dict(
+                        orientation='h',
+                        yanchor='bottom',
+                        y=1.02,
+                        xanchor='right',
+                        x=1
+                    ),
+                    margin=dict(l=20, r=20, t=60, b=80)
+                )
+                
+                st.plotly_chart(fig, use_container_width=True, key="grafico_estoque_pedido")
+                
+            except Exception as e:
+                st.warning(f"⚠️ Não foi possível gerar o gráfico comparativo: {str(e)}")
+        else:
+            st.info("📭 Dados insuficientes para o gráfico comparativo.")
         
         # ===== GRÁFICO 3: Distribuição por Status (Pizza) =====
         st.markdown("### 📊 Distribuição dos Pedidos")
         
-        # Classificar itens por necessidade
+        # Classificar itens por necessidade (usando todos os dados, incluindo sem pedidos)
         df_status = df.copy()
         
         def classificar_necessidade(row):
@@ -11830,37 +11884,51 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
         }
         
         if not status_counts.empty:
-            fig = px.pie(
-                status_counts,
-                values=status_counts.values,
-                names=status_counts.index,
-                title='Classificação dos Pedidos por Necessidade',
-                color=status_counts.index,
-                color_discrete_map=cores,
-                hole=0.4
-            )
-            
-            fig.update_layout(
-                height=350,
-                font=dict(size=12),
-                plot_bgcolor='rgba(0,0,0,0)',
-                paper_bgcolor='rgba(0,0,0,0)',
-                legend=dict(
-                    orientation='v',
-                    yanchor='middle',
-                    y=0.5,
-                    xanchor='left',
-                    x=1.2
-                )
-            )
-            
-            fig.update_traces(
-                textposition='inside',
-                textinfo='percent+label',
-                hovertemplate='<b>%{label}</b><br>Quantidade: %{value}<br>Percentual: %{percent}<extra></extra>'
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
+            try:
+                # Filtrar apenas categorias com valores > 0
+                status_counts = status_counts[status_counts > 0]
+                
+                if not status_counts.empty:
+                    fig = px.pie(
+                        status_counts,
+                        values=status_counts.values,
+                        names=status_counts.index,
+                        title='Classificação dos Pedidos por Necessidade',
+                        color=status_counts.index,
+                        color_discrete_map=cores,
+                        hole=0.4
+                    )
+                    
+                    fig.update_layout(
+                        height=380,
+                        font=dict(size=12),
+                        plot_bgcolor='rgba(0,0,0,0)',
+                        paper_bgcolor='rgba(0,0,0,0)',
+                        legend=dict(
+                            orientation='v',
+                            yanchor='middle',
+                            y=0.5,
+                            xanchor='left',
+                            x=1.1
+                        ),
+                        margin=dict(l=20, r=120, t=40, b=20)
+                    )
+                    
+                    fig.update_traces(
+                        textposition='inside',
+                        textinfo='percent+label',
+                        textfont=dict(size=11, color='white'),
+                        hovertemplate='<b>%{label}</b><br>Quantidade: %{value}<br>Percentual: %{percent}<extra></extra>'
+                    )
+                    
+                    st.plotly_chart(fig, use_container_width=True, key="grafico_pizza")
+                else:
+                    st.info("📭 Nenhuma categoria com dados para o gráfico de pizza.")
+                    
+            except Exception as e:
+                st.warning(f"⚠️ Não foi possível gerar o gráfico de pizza: {str(e)}")
+        else:
+            st.info("📭 Nenhum dado para classificar no gráfico de pizza.")
     
     # ======================
     # CARREGAR DADOS
@@ -12087,8 +12155,7 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
         color:{THEME['text_muted']};letter-spacing:.1em;">
         REPASSES DE PRODUÇÃO · {get_horario_brasilia()}
     </div>
-    """, unsafe_allow_html=True)
-    
+    """, unsafe_allow_html=True)    
 # ==================================================================================================
 # RENDERIZAR FAIXA DE ROLAGEM
 # ==================================================================================================
