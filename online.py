@@ -22,6 +22,8 @@ import time
 import json
 from datetime import datetime, timedelta, date, time as dt_time
 from functools import wraps
+import plotly.express as px
+import plotly.graph_objects as go
 
 # ======================
 # FUNÇÃO PARA LIMPAR CACHE E RECARREGAR
