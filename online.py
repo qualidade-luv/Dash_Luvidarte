@@ -11580,7 +11580,7 @@ elif aba_selecionada == 'FERRAMENTARIA':
     """, unsafe_allow_html=True)
 
 # ==================================================================================================
-# REPASSES DE PRODUÇÃO - PEDIDOS EM ABERTO (CARTEIRA) COM CRUD DE REPASSES
+# REPASSES DE PRODUÇÃO - PEDIDOS EM ABERTO (CARTEIRA) COM CRUD DE REPASSES - VERSÃO CORRIGIDA
 # ==================================================================================================
 elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
     render_page_header("REPASSES DE PRODUÇÃO", 
@@ -11598,7 +11598,7 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
     # INICIALIZAR SESSION STATE
     # ======================
     if 'visao_repasses' not in st.session_state:
-        st.session_state.visao_repasses = 'PEDIDOS_SISTEMA'  # PEDIDOS_SISTEMA, REPASSES, ESTOQUE_ATUAL
+        st.session_state.visao_repasses = 'PEDIDOS_SISTEMA'
     
     if 'mostrar_formulario_repasse' not in st.session_state:
         st.session_state.mostrar_formulario_repasse = False
@@ -12106,7 +12106,7 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
                 st.warning(f"⚠️ Não foi possível gerar o gráfico de pizza: {str(e)}")
     
     # ======================
-    # FUNÇÃO PARA RENDERIZAR CRUD DE REPASSES
+    # FUNÇÃO PARA RENDERIZAR CRUD DE REPASSES (CORRIGIDA)
     # ======================
     def renderizar_crud_repasse():
         """Renderiza o CRUD completo da aba REPASSE"""
@@ -12127,10 +12127,8 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
             st.markdown("---")
             st.markdown("### ✏️ " + ("Editar Repasse" if st.session_state.editando_repasse else "Novo Repasse"))
             
-            # Carregar referências para o combobox
             referencias_disponiveis = carregar_referencias_consolidadas()
             
-            # Se está editando, carregar os dados
             if st.session_state.editando_repasse:
                 registro_edit = st.session_state.editando_repasse
                 id_edit = registro_edit.id
@@ -12141,7 +12139,6 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
                 quantidade_edit = registro_edit.quantidade
                 data_limite_edit = registro_edit.data_limite
                 status_edit = registro_edit.status
-                titulo_form = f"Editando: {registro_edit.id} - {registro_edit.referencia}"
             else:
                 id_edit = obter_proximo_id_repasse()
                 data_edit = datetime.now()
@@ -12151,7 +12148,6 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
                 quantidade_edit = 0
                 data_limite_edit = None
                 status_edit = "SOLICITADO"
-                titulo_form = "Novo Repasse"
             
             st.info(f"📌 ID: {id_edit}")
             
@@ -12159,24 +12155,20 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
                 col1, col2 = st.columns(2)
                 
                 with col1:
-                    # Data
                     data_form = st.date_input(
                         "📅 Data",
                         value=data_edit if data_edit else datetime.now(),
                         key="data_repasse"
                     )
                     
-                    # Solicitante
                     solicitante_form = st.text_input(
                         "👤 Solicitante",
                         value=solicitante_edit,
                         key="solicitante_repasse"
                     )
                     
-                    # Referência - Combobox com busca
                     st.markdown("**🔍 Referência***")
                     
-                    # Campo de busca
                     termo_busca = st.text_input(
                         "Pesquisar referência",
                         value=st.session_state.termo_busca_referencia,
@@ -12186,14 +12178,12 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
                     )
                     st.session_state.termo_busca_referencia = termo_busca
                     
-                    # Filtrar referências
                     if termo_busca:
                         termo_lower = termo_busca.lower()
                         opcoes_filtradas = [r for r in referencias_disponiveis if termo_lower in r.lower()]
                     else:
                         opcoes_filtradas = referencias_disponiveis
                     
-                    # Selectbox com as opções filtradas
                     if opcoes_filtradas:
                         if referencia_edit and referencia_edit in opcoes_filtradas:
                             idx_default = opcoes_filtradas.index(referencia_edit)
@@ -12203,7 +12193,7 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
                         referencia_form = st.selectbox(
                             "Selecione a referência",
                             options=opcoes_filtradas,
-                            index=idx_default if referencia_edit in opcoes_filtradas else 0,
+                            index=idx_default if referencia_edit and referencia_edit in opcoes_filtradas else 0,
                             key="referencia_repasse_select",
                             label_visibility="collapsed"
                         )
@@ -12215,7 +12205,6 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
                             label_visibility="collapsed"
                         )
                     
-                    # Cliente
                     cliente_form = st.text_input(
                         "🏢 Cliente",
                         value=cliente_edit,
@@ -12223,7 +12212,6 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
                     )
                 
                 with col2:
-                    # Quantidade
                     quantidade_form = st.number_input(
                         "📦 Quantidade",
                         min_value=0,
@@ -12232,14 +12220,12 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
                         key="quantidade_repasse"
                     )
                     
-                    # Data Limite
                     data_limite_form = st.date_input(
                         "⏰ Data Limite",
                         value=data_limite_edit if data_limite_edit else datetime.now() + timedelta(days=7),
                         key="data_limite_repasse"
                     )
                     
-                    # Status
                     status_form = st.selectbox(
                         "📊 Status",
                         options=["SOLICITADO", "PROGRAMADO", "PRODUZIDO"],
@@ -12247,7 +12233,6 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
                         key="status_repasse"
                     )
                     
-                    # Mostrar informações adicionais
                     if status_form == "SOLICITADO":
                         st.info("🟡 Aguardando programação")
                     elif status_form == "PROGRAMADO":
@@ -12270,7 +12255,6 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
                     elif quantidade_form <= 0:
                         st.error("❌ A quantidade deve ser maior que zero!")
                     else:
-                        # Criar registro
                         novo_registro = RegistroRepasse(
                             id=id_edit,
                             data=datetime.combine(data_form, datetime.min.time()),
@@ -12297,7 +12281,6 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
                         else:
                             st.error(msg)
             
-            # Botão Cancelar
             if st.button("❌ Cancelar", use_container_width=True):
                 st.session_state.mostrar_formulario_repasse = False
                 st.session_state.editando_repasse = None
@@ -12315,7 +12298,7 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
             st.info("📭 Nenhum repasse cadastrado.")
             return
         
-        # Filtros da lista
+        # Filtros
         col_f1, col_f2, col_f3 = st.columns(3)
         with col_f1:
             filtro_status = st.selectbox(
@@ -12345,7 +12328,7 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
         if filtro_solicitante:
             repasses_filtrados = [r for r in repasses_filtrados if filtro_solicitante.lower() in r.solicitante.lower()]
         
-        # ===== CARDS DE ESTATÍSTICAS =====
+        # CARDS
         total_repasses = len(repasses_filtrados)
         total_solicitado = sum(r.quantidade for r in repasses_filtrados if r.status == "SOLICITADO")
         total_programado = sum(r.quantidade for r in repasses_filtrados if r.status == "PROGRAMADO")
@@ -12363,7 +12346,7 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
         
         st.markdown("---")
         
-        # ===== TABELA DE REPASSES =====
+        # ===== TABELA DE REPASSES - CORRIGIDA =====
         if repasses_filtrados:
             dados_tabela = []
             for r in repasses_filtrados:
@@ -12372,14 +12355,6 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
                     "PROGRAMADO": "🟢",
                     "PRODUZIDO": "✅"
                 }
-                
-                # Definir cor do status
-                if r.status == "PRODUZIDO":
-                    status_color = "#28a745"
-                elif r.status == "PROGRAMADO":
-                    status_color = "#FFB900"
-                else:
-                    status_color = "#E86C2C"
                 
                 dados_tabela.append({
                     "ID": r.id,
@@ -12395,8 +12370,9 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
             
             df_repasses = pd.DataFrame(dados_tabela)
             
-            # Aplicar estilo
+            # Aplicar estilo SEM remover a coluna _status_raw
             def estilo_status(row):
+                # Acessar a coluna _status_raw que ainda está no DataFrame
                 status = row['_status_raw']
                 if status == "PRODUZIDO":
                     return ['background-color: #d4edda; color: #155724; font-weight: bold;'] * len(row)
@@ -12405,16 +12381,16 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
                 else:
                     return ['background-color: #f8d7da; color: #721c24;'] * len(row)
             
-            df_display = df_repasses.drop(columns=['_status_raw'])
-            styled_df = df_display.style.apply(estilo_status, axis=1)
+            # Aplicar estilo mantendo a coluna _status_raw
+            styled_df = df_repasses.style.apply(estilo_status, axis=1)
             
+            # Exibir a tabela com todas as colunas
             st.dataframe(styled_df, use_container_width=True, height=400, hide_index=True)
             
-            # ===== AÇÕES POR LINHA =====
+            # ===== AÇÕES =====
             st.markdown("---")
             st.markdown("### 🔧 Ações")
             
-            # Select para escolher o registro
             opcoes_ids = [f"{r.id} - {r.referencia}" for r in repasses_filtrados]
             if opcoes_ids:
                 selecao = st.selectbox(
@@ -12438,9 +12414,8 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
                                 st.rerun()
                         
                         with col_btn2:
-                            if st.button("🗑️ Excluir", type="secondary", use_container_width=True):
+                            if st.button("🗑️ Excluir", use_container_width=True):
                                 if st.session_state.excluindo_repasse == id_selecionado:
-                                    # Confirmar exclusão
                                     if st.button("⚠️ CONFIRMAR EXCLUSÃO", type="primary", use_container_width=True):
                                         sucesso, msg = excluir_repasse(id_selecionado)
                                         if sucesso:
@@ -12451,7 +12426,7 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
                                             st.error(msg)
                                 else:
                                     st.session_state.excluindo_repasse = id_selecionado
-                                    st.warning(f"⚠️ Clique novamente em 'Excluir' para confirmar a exclusão de {id_selecionado}")
+                                    st.warning(f"⚠️ Clique novamente em 'Excluir' para confirmar")
                                     st.rerun()
         else:
             st.info("📭 Nenhum repasse encontrado com os filtros selecionados.")
@@ -12463,7 +12438,7 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
         df_carteira = carregar_carteira_pedidos()
     
     # ======================
-    # BOTÕES DE NAVEGAÇÃO ENTRE VISÕES
+    # BOTÕES DE NAVEGAÇÃO
     # ======================
     st.markdown("### 📊 Selecione a Visualização")
     
@@ -12499,14 +12474,12 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
     st.markdown("---")
     
     # ======================
-    # RENDERIZAR CONTEÚDO CONFORME VISÃO
+    # RENDERIZAR CONTEÚDO
     # ======================
     if st.session_state.visao_repasses == 'REPASSES':
-        # Renderizar CRUD de Repasses
         renderizar_crud_repasse()
-    
     else:
-        # ===== VISÕES PEDIDOS_SISTEMA e ESTOQUE_ATUAL =====
+        # ===== PEDIDOS_SISTEMA e ESTOQUE_ATUAL =====
         st.markdown("### 🔍 Filtros")
         
         col_f1, col_f2 = st.columns(2)
@@ -12533,17 +12506,14 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
             else:
                 filtro_codigo = "(Todos)"
         
-        # Aplicar filtros
         df_filtrado = df_carteira.copy()
         
         if not df_filtrado.empty:
             if filtro_referencia != "(Todas)":
                 df_filtrado = df_filtrado[df_filtrado['REFERENCIA'] == filtro_referencia]
-            
             if filtro_codigo != "(Todos)":
                 df_filtrado = df_filtrado[df_filtrado['CODIGO'] == filtro_codigo]
         
-        # Definir coluna de valor conforme visão
         if st.session_state.visao_repasses == 'PEDIDOS_SISTEMA':
             coluna_valor = 'PEDIDO_EM_ABERTO'
             label_valor = 'Pedido Sistema'
@@ -12554,9 +12524,6 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
             label_valor = 'Estoque Atual'
             icone_valor = '📦'
             titulo_tabela = 'ESTOQUE ATUAL'
-        
-        # KPIs
-        st.markdown("---")
         
         total_valor = 0
         total_estoque = 0
@@ -12572,6 +12539,8 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
             if coluna_valor in df_filtrado.columns and 'ESTOQUE' in df_filtrado.columns:
                 itens_criticos = len(df_filtrado[df_filtrado[coluna_valor] > df_filtrado['ESTOQUE']])
         
+        st.markdown("---")
+        
         col_k1, col_k2, col_k3, col_k4 = st.columns(4)
         with col_k1:
             st.metric(f"{icone_valor} Total {label_valor}", f"{total_valor:,.0f}".replace(",", "."))
@@ -12583,7 +12552,6 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
             cor_critico = "🔴" if itens_criticos > 0 else "🟢"
             st.metric(f"{cor_critico} Itens Críticos", f"{itens_criticos:,}".replace(",", "."))
         
-        # Tabela
         st.markdown("---")
         st.markdown(f"### 📋 {titulo_tabela}")
         
@@ -12663,19 +12631,6 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
             
             with st.expander("📊 Ver Gráficos Analíticos", expanded=False):
                 gerar_graficos_carteira(df_filtrado, st.session_state.visao_repasses)
-            
-            st.markdown("---")
-            col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
-            with col_btn2:
-                csv = df_exibicao.to_csv(index=False, encoding='utf-8-sig')
-                st.download_button(
-                    label="📥 Baixar Dados (CSV)",
-                    data=csv,
-                    file_name=f"{st.session_state.visao_repasses.lower()}_{datetime.now().strftime('%Y%m%d')}.csv",
-                    mime="text/csv",
-                    use_container_width=True,
-                    type="primary"
-                )
     
     # ======================
     # INFORMAÇÕES ADICIONAIS
@@ -12705,7 +12660,7 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
         color:{THEME['text_muted']};letter-spacing:.1em;">
         REPASSES DE PRODUÇÃO · {get_horario_brasilia()}
     </div>
-    """, unsafe_allow_html=True)
+    """, unsafe_allow_html=True)  
     
 # ==================================================================================================
 # RENDERIZAR FAIXA DE ROLAGEM
