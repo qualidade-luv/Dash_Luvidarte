@@ -577,10 +577,11 @@ ABAS = {
     'REQUISIÇÃO MANUTENÇÃO': 'RM',
     'FECHAMENTO TURNO': 'FT',
     'MANUTENÇÃO PREVENTIVA': 'MP',
-    'MAPEAMENTO DE HABILIDADES': 'MH',   # <-- CORRIGIDO: antes era 'MP'
+    'MAPEAMENTO DE HABILIDADES': 'MH',
     'FERRAMENTARIA': 'FM',
     'PRÊMIO PRENSADOS': 'PP',
-    'REPASSES DE PRODUÇÃO': 'RP'         # <-- NOVO
+    'REPASSES DE PRODUÇÃO': 'RP',
+    'ENFORNADEIRA': 'EN'  # <-- NOVO
 }
 
 CAMINHO_PDF_AR = r"\\srv-luvidarte\dados\DOC\Engenharia_Luvidarte\SGQ - LUVIDARTE - ALTERADAS\0-AVISO DE REJEIÇÃO\1-PDF"
@@ -11806,6 +11807,9 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
     if 'termo_busca_referencia' not in st.session_state:
         st.session_state.termo_busca_referencia = ""
     
+    if 'unificar_codigo_base' not in st.session_state:
+        st.session_state.unificar_codigo_base = False
+    
     # ======================
     # DATACLASS PARA REPASSE
     # ======================
@@ -11819,6 +11823,100 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
         quantidade: int = 0
         data_limite: Optional[datetime] = None
         status: str = "SOLICITADO"
+    
+    # ======================
+    # FUNÇÃO PARA UNIFICAR CÓDIGO BASE (NOVA ABORDAGEM)
+    # ======================
+    def unificar_codigo_base(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Unifica os registros com base no CÓDIGO_BASE.
+        
+        Regras:
+        1. Para cada CÓDIGO_BASE que aparece mais de uma vez, cria uma linha agregada
+        2. CÓDIGO SISTEMA: mantém o valor original do código sistema que tem correspondência
+        3. CÓDIGO BASE: mantém o valor do código base
+        4. REFERÊNCIA: herda do código sistema
+        5. DESCRIÇÃO: herda do código sistema
+        6. ESTOQUE ATUAL: APENAS o valor do código sistema (NÃO soma)
+        7. PEDIDO SISTEMA: SOMA de todos os registros (código sistema + código base)
+        """
+        if df.empty:
+            return df
+        
+        # Garantir que as colunas necessárias existam
+        if 'CODIGO_BASE' not in df.columns:
+            df['CODIGO_BASE'] = df['CODIGO'] if 'CODIGO' in df.columns else ''
+        
+        if 'PEDIDO_EM_ABERTO' not in df.columns:
+            df['PEDIDO_EM_ABERTO'] = 0
+        
+        if 'ESTOQUE' not in df.columns:
+            df['ESTOQUE'] = 0
+        
+        # Normalizar CÓDIGO_BASE
+        df['CODIGO_BASE_NORM'] = df['CODIGO_BASE'].astype(str).str.strip()
+        df['CODIGO_BASE_NORM'] = df['CODIGO_BASE_NORM'].replace(['', 'nan', 'None', '0'], '')
+        
+        # Identificar quais CODIGO_BASE aparecem mais de uma vez
+        counts = df['CODIGO_BASE_NORM'].value_counts()
+        codigos_para_unificar = counts[counts > 1].index.tolist()
+        codigos_para_unificar = [c for c in codigos_para_unificar if c != '']
+        
+        if not codigos_para_unificar:
+            # Se não há códigos para unificar, retorna o dataframe original
+            return df
+        
+        # Separar registros que serão unificados
+        df_para_unificar = df[df['CODIGO_BASE_NORM'].isin(codigos_para_unificar)].copy()
+        df_nao_unificar = df[~df['CODIGO_BASE_NORM'].isin(codigos_para_unificar)].copy()
+        
+        df_resultado = []
+        
+        # ===== PROCESSAR REGISTROS PARA UNIFICAR =====
+        if not df_para_unificar.empty:
+            # Para cada código base que será unificado
+            for codigo_base in codigos_para_unificar:
+                subset = df_para_unificar[df_para_unificar['CODIGO_BASE_NORM'] == codigo_base].copy()
+                
+                # Encontrar o registro principal (com CODIGO igual ao CODIGO_BASE)
+                reg_principal = subset[subset['CODIGO'].astype(str).str.strip() == codigo_base]
+                
+                if reg_principal.empty:
+                    # Se não encontrar, pega o primeiro registro
+                    reg_principal = subset.iloc[0:1]
+                
+                # Registros secundários (CODIGO diferente do CODIGO_BASE)
+                reg_secundarios = subset[subset['CODIGO'].astype(str).str.strip() != codigo_base]
+                
+                # Criar linha agregada
+                nova_linha = {
+                    'CODIGO': reg_principal.iloc[0]['CODIGO'] if not reg_principal.empty else codigo_base,
+                    'CODIGO_BASE': codigo_base,
+                    'REFERENCIA': reg_principal.iloc[0].get('REFERENCIA', codigo_base) if not reg_principal.empty else codigo_base,
+                    'DESCRICAO': reg_principal.iloc[0].get('DESCRICAO', '') if not reg_principal.empty else '',
+                    'ESTOQUE': reg_principal.iloc[0].get('ESTOQUE', 0) if not reg_principal.empty else 0,  # APENAS o valor do principal
+                    'PEDIDO_EM_ABERTO': int(subset['PEDIDO_EM_ABERTO'].sum()),  # SOMA DE TODOS
+                }
+                
+                df_resultado.append(pd.DataFrame([nova_linha]))
+        
+        # ===== ADICIONAR REGISTROS QUE NÃO FORAM UNIFICADOS =====
+        if not df_nao_unificar.empty:
+            df_resultado.append(df_nao_unificar)
+        
+        if df_resultado:
+            df_final = pd.concat(df_resultado, ignore_index=True)
+            
+            # Remover coluna auxiliar
+            if 'CODIGO_BASE_NORM' in df_final.columns:
+                df_final = df_final.drop(columns=['CODIGO_BASE_NORM'])
+            
+            # Ordenar
+            df_final = df_final.sort_values('CODIGO', ascending=True)
+            
+            return df_final
+        
+        return df
     
     # ======================
     # FUNÇÕES DE CARREGAMENTO - CARTEIRA
@@ -11860,6 +11958,8 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
                 
                 if col_sem_acento in ['CODIGO', 'COD', 'ID', 'CODIGO_SISTEMA']:
                     mapa_colunas[col] = 'CODIGO'
+                elif col_sem_acento in ['CODIGO_BASE', 'COD_BASE', 'BASE', 'CODIGOBASE']:
+                    mapa_colunas[col] = 'CODIGO_BASE'
                 elif col_sem_acento in ['REFERENCIA', 'REFERÊNCIA', 'REF', 'PRODUTO', 'NOME']:
                     mapa_colunas[col] = 'REFERENCIA'
                 elif col_sem_acento in ['DESCRICAO', 'DESCRIÇÃO', 'DESC', 'DETALHE']:
@@ -11878,6 +11978,10 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
             
             if 'PEDIDO_EM_ABERTO' not in df.columns:
                 df['PEDIDO_EM_ABERTO'] = 0
+            
+            # Garantir coluna CODIGO_BASE
+            if 'CODIGO_BASE' not in df.columns:
+                df['CODIGO_BASE'] = df['CODIGO'] if 'CODIGO' in df.columns else ''
             
             # Converter colunas numéricas
             colunas_numericas = ['ESTOQUE', 'PEDIDO_EM_ABERTO']
@@ -12193,17 +12297,24 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
         
         if not top10.empty and len(top10) > 0:
             try:
-                top10['REFERENCIA'] = top10['REFERENCIA'].astype(str)
+                # Usar CODIGO_BASE se disponível, senão REFERENCIA
+                if 'CODIGO_BASE' in top10.columns and st.session_state.unificar_codigo_base:
+                    label_x = 'CODIGO_BASE'
+                    top10[label_x] = top10[label_x].astype(str).fillna('-')
+                else:
+                    label_x = 'REFERENCIA'
+                    top10[label_x] = top10[label_x].astype(str)
+                
                 top10[coluna_valor] = top10[coluna_valor].astype(float)
                 
                 fig = px.bar(
                     top10,
-                    x='REFERENCIA',
+                    x=label_x,
                     y=coluna_valor,
                     color=coluna_valor,
                     color_continuous_scale='Oranges' if visao == 'PEDIDOS_SISTEMA' else 'Blues',
-                    title=f'Top 10 Referências com Maior {titulo}',
-                    labels={'REFERENCIA': 'Referência', coluna_valor: label},
+                    title=f'Top 10 com Maior {titulo}',
+                    labels={label_x: 'Código Base' if label_x == 'CODIGO_BASE' else 'Referência', coluna_valor: label},
                     text=coluna_valor
                 )
                 
@@ -12300,7 +12411,7 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
                 st.warning(f"⚠️ Não foi possível gerar o gráfico de pizza: {str(e)}")
     
     # ======================
-    # FUNÇÃO PARA RENDERIZAR CRUD DE REPASSES (CORRIGIDA)
+    # FUNÇÃO PARA RENDERIZAR CRUD DE REPASSES
     # ======================
     def renderizar_crud_repasse():
         """Renderiza o CRUD completo da aba REPASSE"""
@@ -12540,7 +12651,7 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
         
         st.markdown("---")
         
-        # ===== TABELA DE REPASSES - CORRIGIDA =====
+        # ===== TABELA DE REPASSES =====
         if repasses_filtrados:
             dados_tabela = []
             for r in repasses_filtrados:
@@ -12564,9 +12675,8 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
             
             df_repasses = pd.DataFrame(dados_tabela)
             
-            # Aplicar estilo SEM remover a coluna _status_raw
+            # Aplicar estilo
             def estilo_status(row):
-                # Acessar a coluna _status_raw que ainda está no DataFrame
                 status = row['_status_raw']
                 if status == "PRODUZIDO":
                     return ['background-color: #d4edda; color: #155724; font-weight: bold;'] * len(row)
@@ -12575,10 +12685,7 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
                 else:
                     return ['background-color: #f8d7da; color: #721c24;'] * len(row)
             
-            # Aplicar estilo mantendo a coluna _status_raw
             styled_df = df_repasses.style.apply(estilo_status, axis=1)
-            
-            # Exibir a tabela com todas as colunas
             st.dataframe(styled_df, use_container_width=True, height=400, hide_index=True)
             
             # ===== AÇÕES =====
@@ -12676,7 +12783,7 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
         # ===== PEDIDOS_SISTEMA e ESTOQUE_ATUAL =====
         st.markdown("### 🔍 Filtros")
         
-        col_f1, col_f2 = st.columns(2)
+        col_f1, col_f2, col_f3 = st.columns(3)
         
         with col_f1:
             if not df_carteira.empty and 'REFERENCIA' in df_carteira.columns:
@@ -12700,6 +12807,21 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
             else:
                 filtro_codigo = "(Todos)"
         
+        with col_f3:
+            # Checkbox para unificar CÓDIGO BASE
+            if 'CODIGO_BASE' in df_carteira.columns and not df_carteira.empty:
+                unificar = st.checkbox(
+                    "🔗 Unificar por CÓDIGO BASE",
+                    value=st.session_state.unificar_codigo_base,
+                    key="chk_unificar_base",
+                    help="Unifica registros com mesmo CÓDIGO_BASE somando PEDIDO SISTEMA"
+                )
+                if unificar != st.session_state.unificar_codigo_base:
+                    st.session_state.unificar_codigo_base = unificar
+                    st.rerun()
+            else:
+                st.caption("ℹ️ Coluna CÓDIGO_BASE não encontrada")
+        
         df_filtrado = df_carteira.copy()
         
         if not df_filtrado.empty:
@@ -12707,6 +12829,10 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
                 df_filtrado = df_filtrado[df_filtrado['REFERENCIA'] == filtro_referencia]
             if filtro_codigo != "(Todos)":
                 df_filtrado = df_filtrado[df_filtrado['CODIGO'] == filtro_codigo]
+        
+        # Aplicar unificação se ativado
+        if st.session_state.unificar_codigo_base and 'CODIGO_BASE' in df_filtrado.columns and not df_filtrado.empty:
+            df_filtrado = unificar_codigo_base(df_filtrado)
         
         if st.session_state.visao_repasses == 'PEDIDOS_SISTEMA':
             coluna_valor = 'PEDIDO_EM_ABERTO'
@@ -12725,13 +12851,20 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
         itens_criticos = 0
         
         if not df_filtrado.empty:
+            # Verificar se a coluna de valor existe
             if coluna_valor in df_filtrado.columns:
                 total_valor = int(df_filtrado[coluna_valor].sum())
-            total_estoque = int(df_filtrado['ESTOQUE'].sum()) if 'ESTOQUE' in df_filtrado.columns else 0
+            
+            # Estoque
+            estoque_col = 'ESTOQUE' if 'ESTOQUE' in df_filtrado.columns else 'ESTOQUE ATUAL'
+            if estoque_col in df_filtrado.columns:
+                total_estoque = int(df_filtrado[estoque_col].sum())
+            
             total_itens = len(df_filtrado)
             
-            if coluna_valor in df_filtrado.columns and 'ESTOQUE' in df_filtrado.columns:
-                itens_criticos = len(df_filtrado[df_filtrado[coluna_valor] > df_filtrado['ESTOQUE']])
+            # Itens críticos: quando pedido > estoque
+            if coluna_valor in df_filtrado.columns and estoque_col in df_filtrado.columns:
+                itens_criticos = len(df_filtrado[df_filtrado[coluna_valor] > df_filtrado[estoque_col]])
         
         st.markdown("---")
         
@@ -12754,39 +12887,33 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
         else:
             df_exibicao = df_filtrado.copy()
             
-            if 'REFERENCIA' not in df_exibicao.columns and 'DESCRICAO' in df_exibicao.columns:
-                df_exibicao['REFERENCIA'] = df_exibicao['DESCRICAO']
-            
+            # Mapeamento de colunas para exibição
             mapa_exibicao = {
                 'CODIGO': 'CÓDIGO SISTEMA',
+                'CODIGO_BASE': 'CÓDIGO BASE',
                 'REFERENCIA': 'REFERÊNCIA',
                 'DESCRICAO': 'DESCRIÇÃO',
                 'ESTOQUE': 'ESTOQUE ATUAL',
                 'PEDIDO_EM_ABERTO': 'PEDIDO SISTEMA'
             }
-            df_exibicao = df_exibicao.rename(columns=mapa_exibicao)
             
-            if st.session_state.visao_repasses == 'PEDIDOS_SISTEMA':
-                colunas_ordem = ['CÓDIGO SISTEMA', 'REFERÊNCIA', 'DESCRIÇÃO', 'ESTOQUE ATUAL', 'PEDIDO SISTEMA']
-            else:
-                colunas_ordem = ['CÓDIGO SISTEMA', 'REFERÊNCIA', 'DESCRIÇÃO', 'ESTOQUE ATUAL']
+            # Renomear apenas colunas que existem
+            for old, new in mapa_exibicao.items():
+                if old in df_exibicao.columns:
+                    df_exibicao = df_exibicao.rename(columns={old: new})
             
-            colunas_existentes = [col for col in colunas_ordem if col in df_exibicao.columns]
+            # Determinar colunas para exibição (incluindo CÓDIGO BASE após CÓDIGO SISTEMA)
+            colunas_base = ['CÓDIGO SISTEMA', 'CÓDIGO BASE', 'REFERÊNCIA', 'DESCRIÇÃO', 'ESTOQUE ATUAL']
+            if 'PEDIDO SISTEMA' in df_exibicao.columns and st.session_state.visao_repasses == 'PEDIDOS_SISTEMA':
+                colunas_base.append('PEDIDO SISTEMA')
+            
+            colunas_existentes = [col for col in colunas_base if col in df_exibicao.columns]
             df_exibicao = df_exibicao[colunas_existentes]
             
             def definir_status(row):
-                if coluna_valor == 'ESTOQUE':
-                    estoque = row.get('ESTOQUE ATUAL', 0)
-                    if estoque == 0:
-                        return '🔴 ZERADO'
-                    elif estoque <= 10:
-                        return '🟡 BAIXO'
-                    elif estoque <= 50:
-                        return '🟢 NORMAL'
-                    else:
-                        return '🟣 ALTO'
-                else:
-                    valor = row.get('PEDIDO SISTEMA', 0) if 'PEDIDO SISTEMA' in row else 0
+                # Usar os nomes das colunas já renomeados
+                if 'PEDIDO SISTEMA' in row:
+                    valor = row.get('PEDIDO SISTEMA', 0)
                     estoque = row.get('ESTOQUE ATUAL', 0)
                     if valor == 0:
                         return '✅ ZERADO'
@@ -12796,9 +12923,21 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
                         return '🟡 PARCIAL'
                     else:
                         return '🔴 CRÍTICO'
+                else:
+                    # Modo Estoque
+                    estoque = row.get('ESTOQUE ATUAL', 0)
+                    if estoque == 0:
+                        return '🔴 ZERADO'
+                    elif estoque <= 10:
+                        return '🟡 BAIXO'
+                    elif estoque <= 50:
+                        return '🟢 NORMAL'
+                    else:
+                        return '🟣 ALTO'
             
             df_exibicao['STATUS'] = df_exibicao.apply(definir_status, axis=1)
             
+            # Formatar colunas numéricas
             colunas_formatar = ['ESTOQUE ATUAL']
             if 'PEDIDO SISTEMA' in df_exibicao.columns:
                 colunas_formatar.append('PEDIDO SISTEMA')
@@ -12840,6 +12979,12 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
         - **Repasses**: CRUD completo para gerenciar repasses de produção
         - **Estoque Atual**: Mostra o estoque disponível
         
+        **🔗 Unificação por CÓDIGO BASE:**
+        - Quando ativado, registros com mesmo CÓDIGO_BASE são unificados
+        - **ESTOQUE ATUAL**: Mantém o valor do CÓDIGO SISTEMA (NÃO soma)
+        - **PEDIDO SISTEMA**: SOMA de todos os registros com mesmo CÓDIGO_BASE
+        - **REFERÊNCIA/DESCRIÇÃO**: Herdadas do CÓDIGO SISTEMA
+        
         **🎯 Classificação por Status:**
         - 🟢 **Suficiente**: Estoque >= Pedido
         - 🟡 **Parcial**: Estoque >= Pedido/2 e < Pedido
@@ -12854,7 +12999,786 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
         color:{THEME['text_muted']};letter-spacing:.1em;">
         REPASSES DE PRODUÇÃO · {get_horario_brasilia()}
     </div>
-    """, unsafe_allow_html=True)  
+    """, unsafe_allow_html=True)
+
+# ==================================================================================================
+# ENFORNADEIRA - CONTROLE DO FORNO DE FUSÃO
+# ==================================================================================================
+elif aba_selecionada == 'ENFORNADEIRA':
+    render_page_header("ENFORNADEIRA", 
+                       f"Controle do Forno de Fusão · Atualizado {get_horario_brasilia()}", 
+                       THEME['accent_red'])
+    
+    # ======================
+    # CONFIGURAÇÃO DA PLANILHA
+    # ======================
+    ID_PLANILHA_ENFORNADEIRA = '1Gfaf_J5OA0nHLMR2nPUPnEmIltfOoXA7j_7ARoD_U8Q'
+    ABA_ENFORNADEIRA = 'ENFORNADEIRA'
+    
+    # ======================
+    # CONSTANTES - ALARMES E METAS
+    # ======================
+    ALARMES_CONFIG = {
+        'nivel_min': 75,
+        'nivel_max': 85,
+        'tiragem_meta': 350,  # kg/h
+        'relacao_o2_gas_min': 0.60,
+        'relacao_o2_gas_max': 1.00,
+        'consumo_gas_alerta': 500,  # m³
+        'consumo_oxi_alerta': 400,  # m³
+    }
+    
+    # ======================
+    # INICIALIZAR SESSION STATE
+    # ======================
+    if 'enfornadeira_filtro_data' not in st.session_state:
+        st.session_state.enfornadeira_filtro_data = datetime.now().date()
+    
+    if 'enfornadeira_periodo' not in st.session_state:
+        st.session_state.enfornadeira_periodo = 'DIA'
+    
+    # ======================
+    # FUNÇÃO PARA CONVERTER HORA
+    # ======================
+    def converter_hora_str(valor):
+        """Converte string de hora para objeto time"""
+        if pd.isna(valor) or valor is None:
+            return None
+        try:
+            valor_str = str(valor).strip()
+            if ':' in valor_str:
+                partes = valor_str.split(':')
+                if len(partes) >= 2:
+                    h = int(partes[0])
+                    m = int(partes[1])
+                    s = int(partes[2]) if len(partes) > 2 else 0
+                    return dt_time(h, m, s)
+            return None
+        except:
+            return None
+    
+    # ======================
+    # FUNÇÕES DE CARREGAMENTO
+    # ======================
+    @retry_on_quota()
+    @st.cache_data(ttl=300)
+    def carregar_dados_enfornadeira() -> pd.DataFrame:
+        """Carrega os dados da planilha ENFORNADEIRA"""
+        try:
+            client = get_gspread_client()
+            if client is None:
+                st.error("❌ Erro ao conectar ao Google Sheets")
+                return pd.DataFrame()
+            
+            spreadsheet = client.open_by_key(ID_PLANILHA_ENFORNADEIRA)
+            
+            try:
+                sheet = spreadsheet.worksheet(ABA_ENFORNADEIRA)
+            except Exception as e:
+                st.error(f"❌ Aba '{ABA_ENFORNADEIRA}' não encontrada. Erro: {e}")
+                return pd.DataFrame()
+            
+            todos_dados = sheet.get_all_values()
+            
+            if len(todos_dados) < 2:
+                st.info("📭 Nenhum dado encontrado na aba ENFORNADEIRA.")
+                return pd.DataFrame()
+            
+            cabecalho = todos_dados[0]
+            valores = todos_dados[1:]
+            df = pd.DataFrame(valores, columns=cabecalho)
+            
+            # Limpar nomes das colunas
+            df.columns = df.columns.str.strip().str.upper()
+            df.columns = df.columns.str.replace(' ', '_')
+            df.columns = df.columns.str.replace('Ç', 'C')
+            df.columns = df.columns.str.replace('Ã', 'A')
+            df.columns = df.columns.str.replace('Á', 'A')
+            df.columns = df.columns.str.replace('É', 'E')
+            df.columns = df.columns.str.replace('Í', 'I')
+            df.columns = df.columns.str.replace('Ó', 'O')
+            df.columns = df.columns.str.replace('Ú', 'U')
+            
+            # Mapeamento de colunas
+            mapa_colunas = {
+                'DATA': 'DATA',
+                'HORA': 'HORA',
+                'NIVEL': 'NIVEL',
+                'CICLO': 'CICLO',
+                'VOLTAS': 'VOLTAS',
+                'TIRAGEM_KG': 'TIRAGEM_KG',
+                'OXI_M3_-_1': 'OXI_1',
+                'GAS_M3_-_1': 'GAS_1',
+                'OXI_M3_-_2': 'OXI_2',
+                'GAS_M3_-_2': 'GAS_2'
+            }
+            
+            # Renomear colunas que existem
+            for col in df.columns:
+                col_sem_acento = unicodedata.normalize('NFKD', col).encode('ASCII', 'ignore').decode('ASCII')
+                for key, value in mapa_colunas.items():
+                    if col_sem_acento == key or col == key:
+                        df = df.rename(columns={col: value})
+                        break
+            
+            # Converter DATA
+            if 'DATA' in df.columns:
+                df['DATA'] = df['DATA'].apply(converter_data_br)
+                df = df.dropna(subset=['DATA'])
+            
+            # Converter HORA
+            if 'HORA' in df.columns:
+                df['HORA_OBJ'] = df['HORA'].apply(converter_hora_str)
+                df['HORA_DEC'] = df['HORA_OBJ'].apply(lambda x: x.hour + x.minute/60 if x else 0)
+            
+            # Converter colunas numéricas
+            colunas_numericas = ['NIVEL', 'CICLO', 'VOLTAS', 'TIRAGEM_KG', 'OXI_1', 'GAS_1', 'OXI_2', 'GAS_2']
+            for col in colunas_numericas:
+                if col in df.columns:
+                    df[col] = df[col].astype(str).str.replace(',', '.')
+                    df[col] = df[col].astype(str).str.replace(r'[^\d\.]', '', regex=True)
+                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+            
+            # Calcular colunas derivadas
+            if 'OXI_1' in df.columns and 'OXI_2' in df.columns:
+                df['OXI_TOTAL'] = df['OXI_1'] + df['OXI_2']
+            
+            if 'GAS_1' in df.columns and 'GAS_2' in df.columns:
+                df['GAS_TOTAL'] = df['GAS_1'] + df['GAS_2']
+            
+            if 'OXI_TOTAL' in df.columns and 'GAS_TOTAL' in df.columns:
+                df['ENERGIA_TOTAL'] = df['OXI_TOTAL'] + df['GAS_TOTAL']
+                df['RELACAO_O2_GAS'] = df['OXI_TOTAL'] / df['GAS_TOTAL'].replace(0, 1)
+            
+            # Consumo por tonelada (kg)
+            if 'TIRAGEM_KG' in df.columns:
+                df['TIRAGEM_TON'] = df['TIRAGEM_KG'] / 1000
+                if 'OXI_TOTAL' in df.columns:
+                    df['OXI_POR_TON'] = df['OXI_TOTAL'] / df['TIRAGEM_TON'].replace(0, 1)
+                if 'GAS_TOTAL' in df.columns:
+                    df['GAS_POR_TON'] = df['GAS_TOTAL'] / df['TIRAGEM_TON'].replace(0, 1)
+                if 'ENERGIA_TOTAL' in df.columns:
+                    df['ENERGIA_POR_TON'] = df['ENERGIA_TOTAL'] / df['TIRAGEM_TON'].replace(0, 1)
+            
+            # Índice de Alimentação
+            if 'CICLO' in df.columns and 'VOLTAS' in df.columns:
+                df['INDICE_ALIMENTACAO'] = df['CICLO'] / df['VOLTAS'].replace(0, 1)
+            
+            # Eficiência da Alimentação
+            if 'VOLTAS' in df.columns and 'TIRAGEM_KG' in df.columns:
+                df['EFICIENCIA_ALIMENTACAO'] = df['TIRAGEM_KG'] / df['VOLTAS'].replace(0, 1)
+            
+            # Extrair turno da hora
+            if 'HORA_DEC' in df.columns:
+                def classificar_turno(hora):
+                    if pd.isna(hora):
+                        return 'N/A'
+                    if 6 <= hora < 14:
+                        return 'MANHÃ'
+                    elif 14 <= hora < 22:
+                        return 'TARDE'
+                    else:
+                        return 'NOITE'
+                df['TURNO'] = df['HORA_DEC'].apply(classificar_turno)
+            
+            # Data/Hora para ordenação
+            if 'DATA' in df.columns and 'HORA_OBJ' in df.columns:
+                df['DATETIME'] = pd.to_datetime(df['DATA'].astype(str) + ' ' + df['HORA'].astype(str), errors='coerce')
+            
+            # Ordenar por data/hora
+            if 'DATETIME' in df.columns:
+                df = df.sort_values('DATETIME', ascending=True)
+            
+            return df
+            
+        except Exception as e:
+            st.error(f"❌ Erro ao carregar dados da Enfornadeira: {str(e)}")
+            return pd.DataFrame()
+    
+    # ======================
+    # FUNÇÕES DE ANÁLISE
+    # ======================
+    def calcular_indicadores(df: pd.DataFrame) -> Dict:
+        """Calcula todos os indicadores do forno"""
+        indicadores = {}
+        
+        if df.empty:
+            return indicadores
+        
+        # ===== PRODUÇÃO =====
+        if 'TIRAGEM_KG' in df.columns:
+            tiragem = df['TIRAGEM_KG']
+            indicadores['tiragem_media'] = tiragem.mean()
+            indicadores['tiragem_max'] = tiragem.max()
+            indicadores['tiragem_min'] = tiragem.min()
+            indicadores['tiragem_std'] = tiragem.std()
+            indicadores['tiragem_total'] = tiragem.sum()
+            
+            # Horas por dia (assumindo que cada registro representa 1 hora)
+            horas = len(df)
+            indicadores['producao_diaria'] = tiragem.sum() / (horas / 24) if horas > 0 else 0
+        
+        # ===== NÍVEL =====
+        if 'NIVEL' in df.columns:
+            nivel = df['NIVEL']
+            indicadores['nivel_atual'] = nivel.iloc[-1] if not nivel.empty else 0
+            indicadores['nivel_media'] = nivel.mean()
+            indicadores['nivel_max'] = nivel.max()
+            indicadores['nivel_min'] = nivel.min()
+            indicadores['nivel_osc'] = nivel.max() - nivel.min()
+            indicadores['nivel_std'] = nivel.std()
+        
+        # ===== ALIMENTAÇÃO =====
+        if 'CICLO' in df.columns:
+            indicadores['ciclo_media'] = df['CICLO'].mean()
+            indicadores['ciclo_atual'] = df['CICLO'].iloc[-1] if not df.empty else 0
+        
+        if 'VOLTAS' in df.columns:
+            indicadores['voltas_media'] = df['VOLTAS'].mean()
+            indicadores['voltas_atual'] = df['VOLTAS'].iloc[-1] if not df.empty else 0
+        
+        if 'INDICE_ALIMENTACAO' in df.columns:
+            indicadores['indice_alimentacao_media'] = df['INDICE_ALIMENTACAO'].mean()
+            indicadores['indice_alimentacao_atual'] = df['INDICE_ALIMENTACAO'].iloc[-1] if not df.empty else 0
+        
+        if 'EFICIENCIA_ALIMENTACAO' in df.columns:
+            indicadores['eficiencia_alimentacao_media'] = df['EFICIENCIA_ALIMENTACAO'].mean()
+        
+        # ===== COMBUSTÍVEL =====
+        if 'OXI_TOTAL' in df.columns:
+            indicadores['oxi_media'] = df['OXI_TOTAL'].mean()
+            indicadores['oxi_max'] = df['OXI_TOTAL'].max()
+            indicadores['oxi_min'] = df['OXI_TOTAL'].min()
+            indicadores['oxi_total'] = df['OXI_TOTAL'].sum()
+        
+        if 'GAS_TOTAL' in df.columns:
+            indicadores['gas_media'] = df['GAS_TOTAL'].mean()
+            indicadores['gas_max'] = df['GAS_TOTAL'].max()
+            indicadores['gas_min'] = df['GAS_TOTAL'].min()
+            indicadores['gas_total'] = df['GAS_TOTAL'].sum()
+        
+        if 'ENERGIA_TOTAL' in df.columns:
+            indicadores['energia_media'] = df['ENERGIA_TOTAL'].mean()
+            indicadores['energia_total'] = df['ENERGIA_TOTAL'].sum()
+        
+        if 'RELACAO_O2_GAS' in df.columns:
+            indicadores['relacao_o2_gas_media'] = df['RELACAO_O2_GAS'].mean()
+            indicadores['relacao_o2_gas_atual'] = df['RELACAO_O2_GAS'].iloc[-1] if not df.empty else 0
+            indicadores['relacao_o2_gas_max'] = df['RELACAO_O2_GAS'].max()
+            indicadores['relacao_o2_gas_min'] = df['RELACAO_O2_GAS'].min()
+        
+        # ===== CONSUMO POR TONELADA =====
+        if 'OXI_POR_TON' in df.columns:
+            indicadores['oxi_por_ton_media'] = df['OXI_POR_TON'].replace([np.inf, -np.inf], 0).mean()
+        
+        if 'GAS_POR_TON' in df.columns:
+            indicadores['gas_por_ton_media'] = df['GAS_POR_TON'].replace([np.inf, -np.inf], 0).mean()
+        
+        if 'ENERGIA_POR_TON' in df.columns:
+            indicadores['energia_por_ton_media'] = df['ENERGIA_POR_TON'].replace([np.inf, -np.inf], 0).mean()
+        
+        # ===== BALANÇO DO TANQUE (estimativa) =====
+        # Assumindo que cada volta deposita uma quantidade fixa de material
+        # Este valor deve ser calibrado com dados reais
+        FATOR_CALIBRACAO = 1.0  # kg por volta (ajustável)
+        if 'VOLTAS' in df.columns and 'CICLO' in df.columns:
+            # Estimativa de alimentação: voltas * fator / ciclo
+            df['ALIMENTACAO_EST'] = df['VOLTAS'] * FATOR_CALIBRACAO / df['CICLO'].replace(0, 1)
+            indicadores['alimentacao_media'] = df['ALIMENTACAO_EST'].mean()
+            indicadores['alimentacao_atual'] = df['ALIMENTACAO_EST'].iloc[-1] if not df.empty else 0
+            
+            # Balanço: alimentação - tiragem
+            if 'TIRAGEM_KG' in df.columns:
+                df['BALANCO'] = df['ALIMENTACAO_EST'] - df['TIRAGEM_KG']
+                indicadores['balanco_media'] = df['BALANCO'].mean()
+                indicadores['balanco_atual'] = df['BALANCO'].iloc[-1] if not df.empty else 0
+        
+        return indicadores
+    
+    def identificar_alarmes(df: pd.DataFrame, indicadores: Dict) -> List[Dict]:
+        """Identifica alarmes baseados nos dados"""
+        alarmes = []
+        
+        if df.empty or not indicadores:
+            return alarmes
+        
+        # Nível baixo
+        if 'nivel_atual' in indicadores and indicadores['nivel_atual'] < ALARMES_CONFIG['nivel_min']:
+            alarmes.append({
+                'tipo': 'CRÍTICO',
+                'mensagem': f"NÍVEL BAIXO: {indicadores['nivel_atual']:.1f} cm (meta: >{ALARMES_CONFIG['nivel_min']} cm)",
+                'cor': '#E81123'
+            })
+        
+        # Nível alto
+        if 'nivel_atual' in indicadores and indicadores['nivel_atual'] > ALARMES_CONFIG['nivel_max']:
+            alarmes.append({
+                'tipo': 'ALERTA',
+                'mensagem': f"NÍVEL ALTO: {indicadores['nivel_atual']:.1f} cm (meta: <{ALARMES_CONFIG['nivel_max']} cm)",
+                'cor': '#FFB900'
+            })
+        
+        # Tiragem abaixo da meta
+        if 'tiragem_media' in indicadores and indicadores['tiragem_media'] < ALARMES_CONFIG['tiragem_meta']:
+            alarmes.append({
+                'tipo': 'ALERTA',
+                'mensagem': f"TIRAGEM ABAIXO DA META: {indicadores['tiragem_media']:.1f} kg/h (meta: {ALARMES_CONFIG['tiragem_meta']} kg/h)",
+                'cor': '#FFB900'
+            })
+        
+        # Relação O2/Gás fora da faixa
+        if 'relacao_o2_gas_atual' in indicadores:
+            rel = indicadores['relacao_o2_gas_atual']
+            if rel < ALARMES_CONFIG['relacao_o2_gas_min']:
+                alarmes.append({
+                    'tipo': 'CRÍTICO',
+                    'mensagem': f"RELAÇÃO O₂/GÁS BAIXA: {rel:.2f} (ideal: {ALARMES_CONFIG['relacao_o2_gas_min']}-{ALARMES_CONFIG['relacao_o2_gas_max']})",
+                    'cor': '#E81123'
+                })
+            elif rel > ALARMES_CONFIG['relacao_o2_gas_max']:
+                alarmes.append({
+                    'tipo': 'ALERTA',
+                    'mensagem': f"RELAÇÃO O₂/GÁS ALTA: {rel:.2f} (ideal: {ALARMES_CONFIG['relacao_o2_gas_min']}-{ALARMES_CONFIG['relacao_o2_gas_max']})",
+                    'cor': '#FFB900'
+                })
+        
+        # Consumo de gás acima do alerta
+        if 'gas_media' in indicadores and indicadores['gas_media'] > ALARMES_CONFIG['consumo_gas_alerta']:
+            alarmes.append({
+                'tipo': 'ALERTA',
+                'mensagem': f"CONSUMO DE GÁS ELEVADO: {indicadores['gas_media']:.1f} m³ (alerta: {ALARMES_CONFIG['consumo_gas_alerta']} m³)",
+                'cor': '#FFB900'
+            })
+        
+        # Consumo de oxigênio acima do alerta
+        if 'oxi_media' in indicadores and indicadores['oxi_media'] > ALARMES_CONFIG['consumo_oxi_alerta']:
+            alarmes.append({
+                'tipo': 'ALERTA',
+                'mensagem': f"CONSUMO DE OXIGÊNIO ELEVADO: {indicadores['oxi_media']:.1f} m³ (alerta: {ALARMES_CONFIG['consumo_oxi_alerta']} m³)",
+                'cor': '#FFB900'
+            })
+        
+        # Oscilação do nível
+        if 'nivel_osc' in indicadores and indicadores['nivel_osc'] > 10:
+            alarmes.append({
+                'tipo': 'ALERTA',
+                'mensagem': f"OSCILAÇÃO DO NÍVEL ELEVADA: {indicadores['nivel_osc']:.1f} cm",
+                'cor': '#FFB900'
+            })
+        
+        return alarmes
+    
+    # ======================
+    # FUNÇÃO PARA GERAR GRÁFICOS
+    # ======================
+    def criar_grafico_linha(df: pd.DataFrame, coluna: str, titulo: str, cor: str, 
+                            meta: float = None, meta_label: str = None):
+        """Cria gráfico de linha com Plotly"""
+        if df.empty or coluna not in df.columns:
+            return None
+        
+        df_plot = df.dropna(subset=[coluna])
+        if df_plot.empty:
+            return None
+        
+        fig = px.line(
+            df_plot,
+            x='DATETIME' if 'DATETIME' in df_plot.columns else df_plot.index,
+            y=coluna,
+            title=titulo,
+            labels={'x': 'Data/Hora', coluna: titulo},
+            color_discrete_sequence=[cor]
+        )
+        
+        if meta:
+            fig.add_hline(y=meta, line_dash="dash", line_color="red", annotation_text=meta_label or f"Meta: {meta}")
+        
+        fig.update_layout(
+            height=300,
+            margin=dict(l=20, r=20, t=40, b=40),
+            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor='rgba(0,0,0,0)',
+            font=dict(size=11)
+        )
+        
+        fig.update_xaxes(showgrid=True, gridcolor='#e0e0e0')
+        fig.update_yaxes(showgrid=True, gridcolor='#e0e0e0')
+        
+        return fig
+    
+    def criar_grafico_barras(df: pd.DataFrame, colunas: List[str], titulo: str, cores: List[str]):
+        """Cria gráfico de barras agrupadas"""
+        if df.empty:
+            return None
+        
+        df_plot = df.copy()
+        
+        # Agrupar por turno se existir
+        if 'TURNO' in df_plot.columns:
+            df_agg = df_plot.groupby('TURNO')[colunas].mean().reset_index()
+        else:
+            # Usar períodos
+            df_plot['PERIODO'] = df_plot['DATETIME'].dt.strftime('%H:00') if 'DATETIME' in df_plot.columns else df_plot.index
+            df_agg = df_plot.groupby('PERIODO')[colunas].mean().reset_index()
+        
+        fig = px.bar(
+            df_agg,
+            x=df_agg.columns[0],
+            y=colunas,
+            title=titulo,
+            barmode='group',
+            color_discrete_sequence=cores,
+            labels={df_agg.columns[0]: ''}
+        )
+        
+        fig.update_layout(
+            height=300,
+            margin=dict(l=20, r=20, t=40, b=40),
+            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor='rgba(0,0,0,0)',
+            font=dict(size=11),
+            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1)
+        )
+        
+        fig.update_xaxes(showgrid=True, gridcolor='#e0e0e0')
+        fig.update_yaxes(showgrid=True, gridcolor='#e0e0e0')
+        
+        return fig
+    
+    # ======================
+    # CARREGAR DADOS
+    # ======================
+    with st.spinner("🔄 Carregando dados da Enfornadeira..."):
+        df = carregar_dados_enfornadeira()
+    
+    if df.empty:
+        st.warning("⚠️ Não foi possível carregar os dados da Enfornadeira.")
+        st.stop()
+    
+    # ======================
+    # FILTROS
+    # ======================
+    st.markdown("### 🔍 Filtros")
+    
+    col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+    
+    with col_f1:
+        periodos = ['DIA', 'SEMANA', 'MÊS', 'PERSONALIZADO']
+        periodo = st.selectbox("📅 Período", periodos, key="enfornadeira_periodo_select")
+    
+    with col_f2:
+        if periodo == 'PERSONALIZADO':
+            data_ini = st.date_input("Data Inicial", key="enfornadeira_data_ini")
+        else:
+            data_ini = None
+    
+    with col_f3:
+        if periodo == 'PERSONALIZADO':
+            data_fim = st.date_input("Data Final", key="enfornadeira_data_fim")
+        else:
+            data_fim = None
+    
+    with col_f4:
+        turnos = ["(Todos)", "MANHÃ", "TARDE", "NOITE"]
+        turno_filtro = st.selectbox("🕐 Turno", turnos, key="enfornadeira_turno")
+    
+    # ===== APLICAR FILTROS =====
+    df_filtrado = df.copy()
+    
+    # Filtro de data
+    if periodo == 'DIA':
+        data_ref = datetime.now().date()
+        df_filtrado = df_filtrado[df_filtrado['DATA'].dt.date == data_ref]
+    elif periodo == 'SEMANA':
+        data_ref = datetime.now().date()
+        inicio_semana = data_ref - timedelta(days=data_ref.weekday())
+        df_filtrado = df_filtrado[df_filtrado['DATA'].dt.date >= inicio_semana]
+    elif periodo == 'MÊS':
+        data_ref = datetime.now().date()
+        inicio_mes = data_ref.replace(day=1)
+        df_filtrado = df_filtrado[df_filtrado['DATA'].dt.date >= inicio_mes]
+    elif periodo == 'PERSONALIZADO' and data_ini and data_fim:
+        df_filtrado = df_filtrado[df_filtrado['DATA'].dt.date >= data_ini]
+        df_filtrado = df_filtrado[df_filtrado['DATA'].dt.date <= data_fim]
+    
+    # Filtro de turno
+    if turno_filtro != "(Todos)" and 'TURNO' in df_filtrado.columns:
+        df_filtrado = df_filtrado[df_filtrado['TURNO'] == turno_filtro]
+    
+    if df_filtrado.empty:
+        st.warning("⚠️ Nenhum dado encontrado com os filtros selecionados.")
+        st.stop()
+    
+    # ===== CALCULAR INDICADORES =====
+    indicadores = calcular_indicadores(df_filtrado)
+    alarmes = identificar_alarmes(df_filtrado, indicadores)
+    
+    # ===== HEADER =====
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, {THEME['bg_card']} 0%, {THEME['bg_card2']} 100%); 
+                padding: 15px 20px; border-radius: 10px; 
+                border-left: 4px solid {THEME['accent_red']}; margin: 10px 0 20px 0;">
+        <span style="font-size: 18px; margin-right: 10px;">🔥</span>
+        <span style="font-family: 'Rajdhani', sans-serif; font-size: 16px; font-weight: bold; color: {THEME['accent_red']};">
+            ENFORNADEIRA - Controle do Forno de Fusão
+        </span>
+        <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: {THEME['text_muted']}; margin-left: 15px;">
+            {len(df_filtrado)} registros carregados
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # ===== KPIs =====
+    st.markdown("### 📊 Indicadores do Forno")
+    
+    # Linha 1 - Produção
+    col1, col2, col3, col4, col5 = st.columns(5)
+    
+    with col1:
+        valor = indicadores.get('tiragem_media', 0)
+        st.metric("📦 Tiragem Média", f"{valor:.1f} kg/h")
+    
+    with col2:
+        valor = indicadores.get('produção_diaria', 0)
+        st.metric("📊 Produção Diária", f"{valor:,.0f} kg")
+    
+    with col3:
+        valor = indicadores.get('nivel_atual', 0)
+        meta = f"meta: {ALARMES_CONFIG['nivel_min']}-{ALARMES_CONFIG['nivel_max']} cm"
+        cor = "normal" if ALARMES_CONFIG['nivel_min'] <= valor <= ALARMES_CONFIG['nivel_max'] else "inverse"
+        st.metric("📈 Nível Atual", f"{valor:.1f} cm", delta=meta, delta_color=cor)
+    
+    with col4:
+        valor = indicadores.get('nivel_osc', 0)
+        st.metric("📉 Oscilação Nível", f"{valor:.1f} cm")
+    
+    with col5:
+        valor = indicadores.get('nivel_std', 0)
+        st.metric("📊 Estabilidade Nível", f"{valor:.2f}")
+    
+    # Linha 2 - Alimentação e Combustível
+    col1, col2, col3, col4, col5 = st.columns(5)
+    
+    with col1:
+        ciclo = indicadores.get('ciclo_media', 0)
+        voltas = indicadores.get('voltas_media', 0)
+        st.metric("🔄 Ciclo/Voltas", f"{ciclo:.1f}s / {voltas:.1f} v")
+    
+    with col2:
+        valor = indicadores.get('indice_alimentacao_media', 0)
+        st.metric("📊 Índice Alimentação", f"{valor:.3f}")
+    
+    with col3:
+        valor = indicadores.get('oxi_media', 0)
+        st.metric("💨 O₂ Médio", f"{valor:.1f} m³")
+    
+    with col4:
+        valor = indicadores.get('gas_media', 0)
+        st.metric("🔥 Gás Médio", f"{valor:.1f} m³")
+    
+    with col5:
+        valor = indicadores.get('relacao_o2_gas_media', 0)
+        st.metric("⚖️ Relação O₂/Gás", f"{valor:.2f}")
+    
+    # Linha 3 - Eficiência
+    col1, col2, col3, col4, col5 = st.columns(5)
+    
+    with col1:
+        valor = indicadores.get('gas_por_ton_media', 0)
+        st.metric("📉 Gás/ton", f"{valor:.1f} m³/ton")
+    
+    with col2:
+        valor = indicadores.get('oxi_por_ton_media', 0)
+        st.metric("📉 O₂/ton", f"{valor:.1f} m³/ton")
+    
+    with col3:
+        valor = indicadores.get('energia_por_ton_media', 0)
+        st.metric("📉 Energia/ton", f"{valor:.1f} m³/ton")
+    
+    with col4:
+        valor = indicadores.get('balanco_media', 0)
+        cor = "normal" if abs(valor) < 1 else "inverse"
+        st.metric("⚖️ Balanço Tanque", f"{valor:.1f} kg", delta_color=cor)
+    
+    with col5:
+        valor = indicadores.get('eficiencia_alimentacao_media', 0)
+        st.metric("🎯 Eficiência Alimentação", f"{valor:.1f}")
+    
+    st.markdown("---")
+    
+    # ===== ALARMES =====
+    if alarmes:
+        st.markdown("### 🚨 Alarmes")
+        for alarme in alarmes:
+            cor = alarme.get('cor', '#E81123')
+            st.markdown(f"""
+            <div style="background: {cor}10; padding: 10px 15px; border-radius: 8px; 
+                        border-left: 4px solid {cor}; margin: 5px 0;">
+                <span style="font-weight: bold; color: {cor};">{alarme['tipo']}</span>
+                <span style="color: {THEME['text_primary']};">{alarme['mensagem']}</span>
+            </div>
+            """, unsafe_allow_html=True)
+        st.markdown("---")
+    
+    # ===== GRÁFICOS =====
+    st.markdown("### 📈 Gráficos Analíticos")
+    
+    # Nível e Tiragem
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        fig = criar_grafico_linha(
+            df_filtrado, 'NIVEL', 'Nível do Tanque (cm)', THEME['accent_cyan'],
+            meta=ALARMES_CONFIG['nivel_min'], meta_label='Meta Mínima'
+        )
+        if fig:
+            st.plotly_chart(fig, use_container_width=True, key="grafico_nivel")
+        else:
+            st.info("📭 Dados de Nível insuficientes")
+    
+    with col2:
+        fig = criar_grafico_linha(
+            df_filtrado, 'TIRAGEM_KG', 'Tiragem (kg/h)', THEME['accent_lime'],
+            meta=ALARMES_CONFIG['tiragem_meta'], meta_label='Meta'
+        )
+        if fig:
+            st.plotly_chart(fig, use_container_width=True, key="grafico_tiragem")
+        else:
+            st.info("📭 Dados de Tiragem insuficientes")
+    
+    # Consumo de Combustível
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if 'OXI_TOTAL' in df_filtrado.columns and 'GAS_TOTAL' in df_filtrado.columns:
+            fig = criar_grafico_linha(
+                df_filtrado, 'OXI_TOTAL', 'Consumo de Oxigênio (m³)', THEME['accent_purple']
+            )
+            if fig:
+                st.plotly_chart(fig, use_container_width=True, key="grafico_oxi")
+            else:
+                st.info("📭 Dados de Oxigênio insuficientes")
+        else:
+            st.info("📭 Dados de Oxigênio não disponíveis")
+    
+    with col2:
+        if 'GAS_TOTAL' in df_filtrado.columns:
+            fig = criar_grafico_linha(
+                df_filtrado, 'GAS_TOTAL', 'Consumo de Gás (m³)', THEME['accent_red']
+            )
+            if fig:
+                st.plotly_chart(fig, use_container_width=True, key="grafico_gas")
+            else:
+                st.info("📭 Dados de Gás insuficientes")
+        else:
+            st.info("📭 Dados de Gás não disponíveis")
+    
+    # Relação O2/Gás e Energia por tonelada
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if 'RELACAO_O2_GAS' in df_filtrado.columns:
+            fig = criar_grafico_linha(
+                df_filtrado, 'RELACAO_O2_GAS', 'Relação O₂/Gás', THEME['accent_yellow'],
+                meta=ALARMES_CONFIG['relacao_o2_gas_min'], meta_label='Limite Mínimo'
+            )
+            if fig:
+                fig.add_hline(y=ALARMES_CONFIG['relacao_o2_gas_max'], line_dash="dash", line_color="orange", annotation_text="Limite Máximo")
+                st.plotly_chart(fig, use_container_width=True, key="grafico_relacao")
+            else:
+                st.info("📭 Dados de Relação insuficientes")
+        else:
+            st.info("📭 Dados de Relação O₂/Gás não disponíveis")
+    
+    with col2:
+        if 'ENERGIA_POR_TON' in df_filtrado.columns:
+            fig = criar_grafico_linha(
+                df_filtrado, 'ENERGIA_POR_TON', 'Energia por Tonelada (m³/ton)', THEME['accent_orange']
+            )
+            if fig:
+                st.plotly_chart(fig, use_container_width=True, key="grafico_energia_ton")
+            else:
+                st.info("📭 Dados de Energia insuficientes")
+        else:
+            st.info("📭 Dados de Energia por tonelada não disponíveis")
+    
+    # ===== GRÁFICO POR TURNO =====
+    st.markdown("---")
+    st.markdown("### 📊 Desempenho por Turno")
+    
+    if 'TURNO' in df_filtrado.columns:
+        # Médias por turno
+        colunas_turno = ['TIRAGEM_KG', 'NIVEL', 'OXI_TOTAL', 'GAS_TOTAL', 'ENERGIA_TOTAL']
+        colunas_existentes = [c for c in colunas_turno if c in df_filtrado.columns]
+        
+        if colunas_existentes:
+            cores = ['#0078D4', '#107C10', '#E86C2C', '#E81123', '#6B46C1']
+            
+            fig = criar_grafico_barras(
+                df_filtrado, colunas_existentes, 'Médias por Turno', cores[:len(colunas_existentes)]
+            )
+            if fig:
+                st.plotly_chart(fig, use_container_width=True, key="grafico_turno")
+            else:
+                st.info("📭 Dados insuficientes para gráfico por turno")
+    
+    # ===== TABELA DE DADOS =====
+    with st.expander("📋 Ver dados detalhados", expanded=False):
+        df_exibicao = df_filtrado.copy()
+        
+        colunas_exibir = ['DATA', 'HORA', 'TURNO', 'NIVEL', 'CICLO', 'VOLTAS', 'TIRAGEM_KG', 
+                         'OXI_1', 'GAS_1', 'OXI_2', 'GAS_2', 'OXI_TOTAL', 'GAS_TOTAL', 
+                         'ENERGIA_TOTAL', 'RELACAO_O2_GAS', 'GAS_POR_TON', 'OXI_POR_TON']
+        
+        colunas_existentes = [c for c in colunas_exibir if c in df_exibicao.columns]
+        df_exibicao = df_exibicao[colunas_existentes]
+        
+        # Formatar
+        if 'DATA' in df_exibicao.columns:
+            df_exibicao['DATA'] = pd.to_datetime(df_exibicao['DATA']).dt.strftime('%d/%m/%Y')
+        
+        # Renomear colunas
+        rename_map = {
+            'DATA': 'Data',
+            'HORA': 'Hora',
+            'TURNO': 'Turno',
+            'NIVEL': 'Nível (cm)',
+            'CICLO': 'Ciclo (s)',
+            'VOLTAS': 'Voltas',
+            'TIRAGEM_KG': 'Tiragem (kg/h)',
+            'OXI_1': 'O₂ Maç.1 (m³)',
+            'GAS_1': 'Gás Maç.1 (m³)',
+            'OXI_2': 'O₂ Maç.2 (m³)',
+            'GAS_2': 'Gás Maç.2 (m³)',
+            'OXI_TOTAL': 'O₂ Total (m³)',
+            'GAS_TOTAL': 'Gás Total (m³)',
+            'ENERGIA_TOTAL': 'Energia Total (m³)',
+            'RELACAO_O2_GAS': 'Relação O₂/Gás',
+            'GAS_POR_TON': 'Gás/ton (m³)',
+            'OXI_POR_TON': 'O₂/ton (m³)'
+        }
+        
+        for old, new in rename_map.items():
+            if old in df_exibicao.columns:
+                df_exibicao = df_exibicao.rename(columns={old: new})
+        
+        # Formatar números
+        for col in df_exibicao.columns:
+            if col not in ['Data', 'Hora', 'Turno']:
+                try:
+                    df_exibicao[col] = df_exibicao[col].apply(lambda x: f"{x:.1f}" if pd.notnull(x) else "-")
+                except:
+                    pass
+        
+        st.dataframe(df_exibicao, use_container_width=True, height=400)
+    
+    st.markdown(f"""
+    <div style="text-align:right;padding:16px 0 8px;
+        font-family:'JetBrains Mono',monospace;font-size:10px;
+        color:{THEME['text_muted']};letter-spacing:.1em;">
+        🔥 ENFORNADEIRA · {get_horario_brasilia()}
+    </div>
+    """, unsafe_allow_html=True)    
     
 # ==================================================================================================
 # RENDERIZAR FAIXA DE ROLAGEM
