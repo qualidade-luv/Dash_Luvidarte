@@ -13002,7 +13002,7 @@ elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
     """, unsafe_allow_html=True)
 
 # ==================================================================================================
-# CONTROLE DO FORNO - CONTROLE DO FORNO DE FUSÃO (VERSÃO COMPLETA E ORGANIZADA)
+# CONTROLE DO FORNO - CONTROLE DO FORNO DE FUSÃO (VERSÃO COMPLETA - CORRIGIDA HH:MM:SS)
 # ==================================================================================================
 elif aba_selecionada == 'CONTROLE DO FORNO':
     render_page_header("CONTROLE DO FORNO", 
@@ -13063,9 +13063,10 @@ elif aba_selecionada == 'CONTROLE DO FORNO':
         st.session_state.enfornadeira_alertas_mostrar = False
     
     # ======================
-    # FUNÇÃO PARA CONVERTER HORA
+    # FUNÇÃO PARA CONVERTER HORA (CORRIGIDA - ACEITA HH:MM E HH:MM:SS)
     # ======================
     def converter_hora_str(valor):
+        """Converte string de hora para objeto time (aceita HH:MM ou HH:MM:SS)"""
         if pd.isna(valor) or valor is None:
             return None
         try:
@@ -13076,10 +13077,47 @@ elif aba_selecionada == 'CONTROLE DO FORNO':
                     h = int(partes[0])
                     m = int(partes[1])
                     s = int(partes[2]) if len(partes) > 2 else 0
-                    return dt_time(h, m, s)
+                    if 0 <= h <= 23 and 0 <= m <= 59 and 0 <= s <= 59:
+                        return dt_time(h, m, s)
             return None
         except:
             return None
+    
+    # ======================
+    # FUNÇÃO PARA CONVERTER DATA/HORA COMPLETA
+    # ======================
+    def converter_datetime_completo(data_val, hora_val):
+        """Converte data e hora para datetime completo"""
+        if pd.isna(data_val) or pd.isna(hora_val):
+            return pd.NaT
+        
+        try:
+            # Converter data
+            if isinstance(data_val, (datetime, pd.Timestamp)):
+                data_obj = data_val
+            elif isinstance(data_val, date):
+                data_obj = datetime.combine(data_val, dt_time.min)
+            else:
+                data_obj = converter_data_br(data_val)
+                if data_obj is None:
+                    return pd.NaT
+            
+            # Converter hora
+            hora_str = str(hora_val).strip()
+            if ':' in hora_str:
+                partes = hora_str.split(':')
+                if len(partes) >= 2:
+                    h = int(partes[0])
+                    m = int(partes[1])
+                    s = int(partes[2]) if len(partes) > 2 else 0
+                    if 0 <= h <= 23 and 0 <= m <= 59 and 0 <= s <= 59:
+                        return datetime(data_obj.year, data_obj.month, data_obj.day, h, m, s)
+            
+            # Se não conseguiu converter, retorna apenas a data
+            return data_obj
+            
+        except:
+            return pd.NaT
     
     # ======================
     # FUNÇÃO PARA OBTER FAIXA IDEAL DA BOQUETA
@@ -13272,7 +13310,7 @@ elif aba_selecionada == 'CONTROLE DO FORNO':
             return False, f"❌ Erro ao salvar: {str(e)}"
     
     # ======================
-    # FUNÇÃO DE CARREGAMENTO
+    # FUNÇÃO DE CARREGAMENTO (CORRIGIDA - ACEITA HH:MM:SS E CRIA DATETIME CORRETO)
     # ======================
     @retry_on_quota()
     @st.cache_data(ttl=300)
@@ -13352,10 +13390,22 @@ elif aba_selecionada == 'CONTROLE DO FORNO':
                 df['DATA'] = df['DATA'].apply(converter_data_br)
                 df = df.dropna(subset=['DATA'])
             
-            # Converter HORA
+            # ===== CONVERTER HORA (CORRIGIDO - ACEITA HH:MM E HH:MM:SS) =====
             if 'HORA' in df.columns:
+                # Converter para objeto time
                 df['HORA_OBJ'] = df['HORA'].apply(converter_hora_str)
-                df['HORA_DEC'] = df['HORA_OBJ'].apply(lambda x: x.hour + x.minute/60 if x else 0)
+                
+                # Para valores que não converteram, tentar extrair apenas a hora
+                mask_invalida = df['HORA_OBJ'].isna()
+                if mask_invalida.any():
+                    df.loc[mask_invalida, 'HORA_OBJ'] = df.loc[mask_invalida, 'HORA'].apply(
+                        lambda x: converter_hora_str(str(x).strip())
+                    )
+                
+                # Calcular hora decimal para ordenação
+                df['HORA_DEC'] = df['HORA_OBJ'].apply(
+                    lambda x: x.hour + x.minute/60 + x.second/3600 if x else 0
+                )
             
             # Converter colunas numéricas
             colunas_numericas = ['NIVEL', 'CICLO', 'VOLTAS', 'TIRAGEM_KG', 
@@ -13418,12 +13468,20 @@ elif aba_selecionada == 'CONTROLE DO FORNO':
                         return 'NOITE'
                 df['TURNO'] = df['HORA_DEC'].apply(classificar_turno)
             
+            # ===== CRIAÇÃO DO DATETIME CORRIGIDA =====
             if 'DATA' in df.columns and 'HORA' in df.columns:
-                try:
-                    df['DATETIME'] = pd.to_datetime(df['DATA'].astype(str) + ' ' + df['HORA'].astype(str), errors='coerce')
-                except:
-                    df['DATETIME'] = df['DATA']
+                # Tentar criar datetime combinando data e hora
+                df['DATETIME'] = df.apply(
+                    lambda row: converter_datetime_completo(row['DATA'], row['HORA']),
+                    axis=1
+                )
+                
+                # Se ainda houver valores inválidos, usar apenas a data
+                mask_invalid = df['DATETIME'].isna()
+                if mask_invalid.any():
+                    df.loc[mask_invalid, 'DATETIME'] = df.loc[mask_invalid, 'DATA']
             
+            # Ordenar por data/hora
             if 'DATETIME' in df.columns:
                 df = df.sort_values('DATETIME', ascending=True)
             
