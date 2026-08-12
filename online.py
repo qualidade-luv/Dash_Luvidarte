@@ -14259,7 +14259,7 @@ elif aba_selecionada == 'CONTROLE DO FORNO':
         recomendacoes = analise['recomendacoes']
         
         if recomendacoes:
-            st.markdown("#### 🛠️ Recomendações de Setup e Ajustes")
+            st.markdown("#### 🛠️ Recomendações de Setup e Ajustes (EM DESENVOLVIMENTO, AINDA NÃO RELEVANTE AO PROCESSO")
             st.caption("Ajustes sugeridos baseados nos 10 últimos registros para aproximar do padrão de excelência")
             
             recomendacoes_alta = [r for r in recomendacoes if r['prioridade'] == 'ALTA']
