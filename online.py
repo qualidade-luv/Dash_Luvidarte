@@ -2508,7 +2508,7 @@ with st.sidebar:
     st.markdown(f"""
     <div style="text-align: center; padding: 20px 0 16px; border-bottom: 1px solid {THEME['border_bright']}; margin-bottom: 20px;">
         <div style="font-family: 'Rajdhani', sans-serif; font-size: 24px; font-weight: 700; color: {THEME['accent_cyan']}; letter-spacing: 0.2em;">⚙ ERP - Luvidarte</div>
-        <div style="font-family: 'JetBrains Mono', monospace; font-size: 9px; color: {THEME['text_muted']}; letter-spacing: 0.2em; text-transform: uppercase;">Aqui tem Café no bule Versão Oficial</div>
+        <div style="font-family: 'JetBrains Mono', monospace; font-size: 9px; color: {THEME['text_muted']}; letter-spacing: 0.2em; text-transform: uppercase;">Aqui tem Café no bule Versão Teste</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -15719,7 +15719,8 @@ elif aba_selecionada == 'CONTROLE DO FORNO':
     </div>
     """, unsafe_allow_html=True)    
 # ==================================================================================================
-# ALMOXARIFADO - CONTROLE DE ESTOQUE COM LISTA TEMPORÁRIA DE MOVIMENTAÇÕES
+# ALMOXARIFADO - CONTROLE DE ESTOQUE COM SUPABASE (USANDO REQUESTS)
+# VERSÃO COMPLETA - PRIORIDADE ABSOLUTA SUPABASE
 # ==================================================================================================
 elif aba_selecionada == 'ALMOXARIFADO':
     render_page_header("ALMOXARIFADO", 
@@ -15727,518 +15728,452 @@ elif aba_selecionada == 'ALMOXARIFADO':
                        THEME['accent_cyan'])
     
     # ======================
-    # CONFIGURAÇÃO DA PLANILHA
+    # IMPORTAÇÕES
+    # ======================
+    import requests
+    import json
+    from datetime import datetime, date, time as dt_time
+    
+    # ======================
+    # CONFIGURAÇÃO
     # ======================
     ID_PLANILHA_ALMOXARIFADO = '1vbWzYuCXJOY1paZpQXSFomvN1Zj_xviK8UgR8Td4Tag'
     ABA_BASE = 'BASE'
     ABA_MOVIMENTACAO = 'MOVIMENTAÇÃO'
     
-    # ======================
-    # INICIALIZAR SESSION STATE
-    # ======================
-    if 'almoxarifado_aba' not in st.session_state:
-        st.session_state.almoxarifado_aba = 'ESTOQUE'
+    SUPABASE_URL = "https://bfvrfttanbhkewrfvfdf.supabase.co"
+    SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJmdnJmdHRhbmJoa2V3cmZ2ZmRmIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3OTc1OTY4MywiZXhwIjoyMDk1MzM1NjgzfQ.SrCLv4E4Vz1DXk5hme0lrT5aanpEOaO9UajGfqCdHdA"
     
-    if 'almoxarifado_editando' not in st.session_state:
-        st.session_state.almoxarifado_editando = None
-    
-    if 'almoxarifado_termo_busca' not in st.session_state:
-        st.session_state.almoxarifado_termo_busca = ""
-    
-    # ===== NOVOS STATES PARA LISTA TEMPORÁRIA =====
-    if 'almoxarifado_lista_temporaria' not in st.session_state:
-        st.session_state.almoxarifado_lista_temporaria = []
-    
-    if 'almoxarifado_editando_item' not in st.session_state:
-        st.session_state.almoxarifado_editando_item = None
-    
-    if 'almoxarifado_mostrar_confirmacao' not in st.session_state:
-        st.session_state.almoxarifado_mostrar_confirmacao = False
+    SUPABASE_HEADERS = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json"
+    }
     
     # ======================
-    # FUNÇÃO PARA GERAR ID AUTOMÁTICO
+    # FUNÇÕES DE CARREGAMENTO DO SUPABASE
     # ======================
-    def gerar_id_produto(produtos_dict: List[Dict]) -> str:
-        if not produtos_dict:
-            return "PROD-001"
-        
-        ids = []
-        for p in produtos_dict:
-            id_val = p.get('id', '')
-            if id_val and id_val.startswith("PROD-"):
-                try:
-                    num = int(id_val.replace("PROD-", ""))
-                    ids.append(num)
-                except:
-                    pass
-        
-        if not ids:
-            return "PROD-001"
-        
-        proximo = max(ids) + 1
-        return f"PROD-{proximo:03d}"
     
-    def gerar_id_movimentacao(movimentacoes_dict: List[Dict]) -> str:
-        if not movimentacoes_dict:
-            return "MOV-001"
-        
-        ids = []
-        for m in movimentacoes_dict:
-            id_val = m.get('id', '')
-            if id_val and id_val.startswith("MOV-"):
-                try:
-                    num = int(id_val.replace("MOV-", ""))
-                    ids.append(num)
-                except:
-                    pass
-        
-        if not ids:
-            return "MOV-001"
-        
-        proximo = max(ids) + 1
-        return f"MOV-{proximo:03d}"
-    
-    # ======================
-    # FUNÇÃO PARA CALCULAR PREVISÃO DE DIAS
-    # ======================
-    def calcular_previsao_dias(produto: str, quantidade_atual: float, movimentacoes_dict: List[Dict]) -> str:
-        if quantidade_atual <= 0:
-            return "🔴 ZERADO"
-        
-        saidas_produto = [m for m in movimentacoes_dict 
-                         if m.get('produto', '') == produto 
-                         and m.get('tipo', '').upper() == 'SAÍDA'
-                         and m.get('data') is not None]
-        
-        if not saidas_produto:
-            return "-----"
-        
-        saidas_produto = sorted(saidas_produto, key=lambda x: x.get('data'))
-        data_inicio = saidas_produto[0].get('data')
-        data_fim = saidas_produto[-1].get('data')
-        
-        if data_inicio is None or data_fim is None or data_fim == data_inicio:
-            total_saidas = sum(m.get('quantidade', 0) for m in saidas_produto)
-            if total_saidas <= 0:
-                return "-----"
-            dias_estimados = quantidade_atual / total_saidas
-        else:
-            dias_periodo = (data_fim - data_inicio).days
-            if dias_periodo <= 0:
-                dias_periodo = 1
-            total_saidas = sum(m.get('quantidade', 0) for m in saidas_produto)
-            if total_saidas <= 0:
-                return "-----"
-            media_diaria = total_saidas / dias_periodo
-            if media_diaria <= 0:
-                return "-----"
-            dias_estimados = quantidade_atual / media_diaria
-        
-        if dias_estimados < 1:
-            return f"⚠️ {dias_estimados * 24:.0f}h"
-        elif dias_estimados < 7:
-            return f"🟡 {dias_estimados:.0f} dias"
-        elif dias_estimados < 30:
-            return f"🟢 {dias_estimados:.0f} dias"
-        else:
-            meses = dias_estimados / 30
-            return f"🔵 {meses:.1f} meses"
-    
-    # ======================
-    # FUNÇÕES DE CARREGAMENTO
-    # ======================
-    @retry_on_quota()
     @st.cache_data(ttl=300)
-    def carregar_produtos_estoque() -> List[Dict]:
+    def carregar_produtos_supabase() -> List[Dict]:
+        """Carrega produtos do Supabase usando requests - FONTE PRINCIPAL"""
+        try:
+            print("🔄 Carregando produtos do Supabase via requests...")
+            
+            response = requests.get(
+                f"{SUPABASE_URL}/rest/v1/almoxarifado_base?select=*&order=produto.asc",
+                headers=SUPABASE_HEADERS,
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                dados = response.json()
+                if dados:
+                    produtos = []
+                    for item in dados:
+                        produtos.append({
+                            'id': item.get('produto_id', ''),
+                            'categoria': item.get('categoria', ''),
+                            'produto': item.get('produto', ''),
+                            'ca': float(item.get('ca', 0)),
+                            'base': float(item.get('base', 0)),
+                            'quantidade': float(item.get('quantidade', 0))
+                        })
+                    print(f"✅ {len(produtos)} produtos carregados do Supabase")
+                    return produtos
+                else:
+                    print("⚠️ Nenhum produto encontrado no Supabase")
+                    return []
+            else:
+                print(f"❌ Erro {response.status_code}: {response.text[:200]}")
+                return []
+                
+        except Exception as e:
+            print(f"❌ Erro ao carregar produtos: {e}")
+            return []
+    
+    @st.cache_data(ttl=300)
+    def carregar_movimentacoes_supabase() -> List[Dict]:
+        """Carrega movimentações do Supabase usando requests - FONTE PRINCIPAL"""
+        try:
+            print("🔄 Carregando movimentações do Supabase via requests...")
+            
+            response = requests.get(
+                f"{SUPABASE_URL}/rest/v1/almoxarifado_movimentacao?select=*&order=data.desc",
+                headers=SUPABASE_HEADERS,
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                dados = response.json()
+                if dados:
+                    movimentacoes = []
+                    for item in dados:
+                        data_val = item.get('data')
+                        if data_val and isinstance(data_val, str):
+                            try:
+                                data_val = datetime.strptime(data_val, '%Y-%m-%d')
+                            except:
+                                data_val = None
+                        
+                        movimentacoes.append({
+                            'id': item.get('mov_id', ''),
+                            'data': data_val,
+                            'produto': item.get('produto', ''),
+                            'categoria': item.get('categoria', ''),
+                            'colaborador': item.get('colaborador', ''),
+                            'quantidade': float(item.get('quantidade', 0)),
+                            'obs': item.get('obs', ''),
+                            'responsavel': item.get('responsavel', ''),
+                            'tipo': item.get('tipo', 'SAÍDA')
+                        })
+                    print(f"✅ {len(movimentacoes)} movimentações carregadas do Supabase")
+                    return movimentacoes
+                else:
+                    print("⚠️ Nenhuma movimentação encontrada no Supabase")
+                    return []
+            else:
+                print(f"❌ Erro {response.status_code}: {response.text[:200]}")
+                return []
+                
+        except Exception as e:
+            print(f"❌ Erro ao carregar movimentações: {e}")
+            return []
+    
+    # ======================
+    # FUNÇÃO PARA TESTAR CONEXÃO COM SUPABASE
+    # ======================
+    
+    def testar_supabase() -> tuple:
+        """Testa a conexão com o Supabase"""
+        try:
+            print("🔄 Testando conexão com Supabase...")
+            response = requests.get(
+                f"{SUPABASE_URL}/rest/v1/almoxarifado_base?select=count&limit=1",
+                headers=SUPABASE_HEADERS,
+                timeout=5
+            )
+            
+            if response.status_code == 200:
+                dados = response.json()
+                if dados:
+                    return True, f"✅ Conectado! {len(dados)} registros"
+                else:
+                    return True, "⚠️ Conectado, mas sem dados"
+            else:
+                return False, f"❌ Erro {response.status_code}"
+                
+        except Exception as e:
+            return False, f"❌ Erro: {str(e)}"
+    
+    # ======================
+    # FUNÇÕES DE SALVAR NO SUPABASE
+    # ======================
+    
+    def salvar_produto_supabase(produto_dict: Dict) -> tuple:
+        """Salva produto no Supabase usando requests"""
+        try:
+            data = {
+                'produto_id': produto_dict['id'],
+                'categoria': produto_dict['categoria'],
+                'produto': produto_dict['produto'],
+                'ca': produto_dict['ca'],
+                'base': produto_dict['base'],
+                'quantidade': produto_dict['quantidade']
+            }
+            
+            # Verificar se já existe
+            check = requests.get(
+                f"{SUPABASE_URL}/rest/v1/almoxarifado_base?produto_id=eq.{produto_dict['id']}",
+                headers=SUPABASE_HEADERS
+            )
+            
+            if check.status_code == 200 and check.json():
+                # Atualizar
+                response = requests.patch(
+                    f"{SUPABASE_URL}/rest/v1/almoxarifado_base?produto_id=eq.{produto_dict['id']}",
+                    json=data,
+                    headers=SUPABASE_HEADERS
+                )
+            else:
+                # Inserir
+                response = requests.post(
+                    f"{SUPABASE_URL}/rest/v1/almoxarifado_base",
+                    json=data,
+                    headers=SUPABASE_HEADERS
+                )
+            
+            if response.status_code in [200, 201, 204]:
+                st.cache_data.clear()
+                return True, f"✅ Produto salvo no Supabase!"
+            else:
+                return False, f"❌ Erro: {response.status_code} - {response.text[:100]}"
+                
+        except Exception as e:
+            return False, f"❌ Erro: {str(e)}"
+    
+    def salvar_movimentacao_supabase(mov_dict: Dict) -> tuple:
+        """Salva movimentação no Supabase usando requests"""
+        try:
+            data = {
+                'mov_id': mov_dict['id'],
+                'data': mov_dict['data'].isoformat() if mov_dict.get('data') else None,
+                'produto': mov_dict['produto'],
+                'categoria': mov_dict.get('categoria', ''),
+                'colaborador': mov_dict.get('colaborador', ''),
+                'quantidade': mov_dict['quantidade'],
+                'obs': mov_dict.get('obs', ''),
+                'responsavel': mov_dict.get('responsavel', ''),
+                'tipo': mov_dict['tipo']
+            }
+            
+            response = requests.post(
+                f"{SUPABASE_URL}/rest/v1/almoxarifado_movimentacao",
+                json=data,
+                headers=SUPABASE_HEADERS
+            )
+            
+            if response.status_code in [200, 201, 204]:
+                # Atualizar estoque
+                if mov_dict['tipo'] == 'ENTRADA':
+                    delta = mov_dict['quantidade']
+                elif mov_dict['tipo'] == 'SAÍDA':
+                    delta = -mov_dict['quantidade']
+                else:
+                    delta = mov_dict['quantidade']
+                
+                # Buscar produto atual
+                check = requests.get(
+                    f"{SUPABASE_URL}/rest/v1/almoxarifado_base?produto=eq.{mov_dict['produto']}",
+                    headers=SUPABASE_HEADERS
+                )
+                
+                if check.status_code == 200 and check.json():
+                    qtd_atual = float(check.json()[0].get('quantidade', 0))
+                    nova_qtd = qtd_atual + delta
+                    requests.patch(
+                        f"{SUPABASE_URL}/rest/v1/almoxarifado_base?produto=eq.{mov_dict['produto']}",
+                        json={'quantidade': nova_qtd},
+                        headers=SUPABASE_HEADERS
+                    )
+                
+                st.cache_data.clear()
+                return True, "✅ Movimentação salva no Supabase!"
+            else:
+                return False, f"❌ Erro: {response.status_code} - {response.text[:100]}"
+                
+        except Exception as e:
+            return False, f"❌ Erro: {str(e)}"
+    
+    def salvar_lote_movimentacoes_supabase(lista_mov: List[Dict]) -> tuple:
+        """Salva lote de movimentações no Supabase"""
+        sucessos = 0
+        erros = []
+        
+        for mov in lista_mov:
+            if not mov.get('id') or mov['id'].startswith('TEMP-'):
+                mov['id'] = gerar_id_movimentacao_supabase()
+            
+            sucesso, msg = salvar_movimentacao_supabase(mov)
+            if sucesso:
+                sucessos += 1
+            else:
+                erros.append(msg)
+        
+        if erros:
+            return False, f"⚠️ {sucessos} salvos, {len(erros)} erros: {', '.join(erros[:3])}..."
+        else:
+            return True, f"✅ {sucessos} movimentações salvas no Supabase!"
+    
+    def gerar_id_movimentacao_supabase() -> str:
+        """Gera ID para movimentação"""
+        try:
+            response = requests.get(
+                f"{SUPABASE_URL}/rest/v1/almoxarifado_movimentacao?select=mov_id&order=mov_id.desc&limit=1",
+                headers=SUPABASE_HEADERS
+            )
+            if response.status_code == 200 and response.json():
+                ultimo_id = response.json()[0].get('mov_id', '')
+                if ultimo_id and ultimo_id.startswith('MOV-'):
+                    try:
+                        num = int(ultimo_id.replace('MOV-', ''))
+                        return f"MOV-{num + 1:03d}"
+                    except:
+                        pass
+        except:
+            pass
+        return f"MOV-{datetime.now().strftime('%H%M%S')}"
+    
+    def excluir_produto_supabase(id_produto: str) -> tuple:
+        """Exclui produto do Supabase"""
+        try:
+            response = requests.delete(
+                f"{SUPABASE_URL}/rest/v1/almoxarifado_base?produto_id=eq.{id_produto}",
+                headers=SUPABASE_HEADERS
+            )
+            
+            if response.status_code in [200, 204]:
+                st.cache_data.clear()
+                return True, f"✅ Produto {id_produto} excluído com sucesso!"
+            else:
+                return False, f"❌ Erro: {response.status_code} - {response.text[:100]}"
+                
+        except Exception as e:
+            return False, f"❌ Erro: {str(e)}"
+    
+    # ======================
+    # FUNÇÕES DE CARREGAMENTO DO GOOGLE SHEETS (FALLBACK)
+    # ======================
+    
+    def carregar_produtos_google_sheets() -> List[Dict]:
+        """Carrega produtos do Google Sheets (APENAS FALLBACK)"""
         produtos = []
         try:
+            print("🔄 FALLBACK: Carregando do Google Sheets...")
             client = get_gspread_client()
             if client is None:
-                return produtos
+                return []
             
             spreadsheet = client.open_by_key(ID_PLANILHA_ALMOXARIFADO)
-            
-            try:
-                sheet = spreadsheet.worksheet(ABA_BASE)
-            except Exception as e:
-                return produtos
-            
+            sheet = spreadsheet.worksheet(ABA_BASE)
             todos_dados = sheet.get_all_values()
             
             if len(todos_dados) < 2:
-                return produtos
+                return []
             
             cabecalho = todos_dados[0]
-            idx_id = None
-            idx_categoria = None
-            idx_produto = None
-            idx_ca = None
-            idx_base = None
-            idx_quantidade = None
             
-            for i, col in enumerate(cabecalho):
-                col_clean = str(col).strip().upper()
-                if col_clean == 'ID':
-                    idx_id = i
-                elif col_clean == 'CATEGORIA':
-                    idx_categoria = i
-                elif col_clean == 'PRODUTO':
-                    idx_produto = i
-                elif col_clean == 'CA':
-                    idx_ca = i
-                elif col_clean == 'BASE':
-                    idx_base = i
-                elif col_clean == 'QUANTIDADE':
-                    idx_quantidade = i
+            idx_id = 0
+            idx_categoria = 1
+            idx_produto = 2
+            idx_ca = 3
+            idx_base = 4
+            idx_quantidade = 5
             
-            if idx_id is None or idx_produto is None:
-                for i, col in enumerate(cabecalho):
-                    col_clean = str(col).strip().upper()
-                    if 'ID' in col_clean and idx_id is None:
-                        idx_id = i
-                    elif 'PRODUTO' in col_clean and idx_produto is None:
-                        idx_produto = i
-                    elif 'CATEGORIA' in col_clean and idx_categoria is None:
-                        idx_categoria = i
-                    elif 'CA' in col_clean and idx_ca is None:
-                        idx_ca = i
-                    elif 'BASE' in col_clean and idx_base is None:
-                        idx_base = i
-                    elif 'QUANTIDADE' in col_clean and idx_quantidade is None:
-                        idx_quantidade = i
+            def parse_valor(val):
+                if not val or str(val).strip() == '':
+                    return 0.0
+                try:
+                    return float(str(val).replace(',', '.'))
+                except:
+                    return 0.0
             
             for row in todos_dados[1:]:
                 try:
-                    if idx_id is not None and len(row) <= idx_id:
-                        continue
-                    if idx_produto is not None and len(row) <= idx_produto:
+                    if len(row) <= max(idx_id, idx_produto):
                         continue
                     
-                    id_val = row[idx_id].strip() if idx_id is not None and row[idx_id] else ""
-                    produto_val = row[idx_produto].strip() if idx_produto is not None and row[idx_produto] else ""
+                    id_val = str(row[idx_id]).strip() if idx_id < len(row) and row[idx_id] else ""
+                    produto_val = str(row[idx_produto]).strip() if idx_produto < len(row) and row[idx_produto] else ""
                     
                     if not id_val or not produto_val:
                         continue
                     
-                    produto = {
+                    produtos.append({
                         'id': id_val,
-                        'categoria': row[idx_categoria].strip() if idx_categoria is not None and len(row) > idx_categoria and row[idx_categoria] else "",
+                        'categoria': str(row[idx_categoria]).strip() if idx_categoria < len(row) and row[idx_categoria] else "",
                         'produto': produto_val,
-                        'ca': 0.0,
-                        'base': 0.0,
-                        'quantidade': 0.0
-                    }
-                    
-                    if idx_ca is not None and len(row) > idx_ca and row[idx_ca]:
-                        try:
-                            produto['ca'] = float(str(row[idx_ca]).replace(',', '.'))
-                        except:
-                            pass
-                    
-                    if idx_base is not None and len(row) > idx_base and row[idx_base]:
-                        try:
-                            produto['base'] = float(str(row[idx_base]).replace(',', '.'))
-                        except:
-                            pass
-                    
-                    if idx_quantidade is not None and len(row) > idx_quantidade and row[idx_quantidade]:
-                        try:
-                            produto['quantidade'] = float(str(row[idx_quantidade]).replace(',', '.'))
-                        except:
-                            pass
-                    
-                    produtos.append(produto)
-                except Exception as e:
-                    continue
-            
-            return produtos
-            
-        except Exception as e:
-            return produtos
-    
-    @retry_on_quota()
-    @st.cache_data(ttl=300)
-    def carregar_movimentacoes() -> List[Dict]:
-        movimentacoes = []
-        try:
-            client = get_gspread_client()
-            if client is None:
-                return movimentacoes
-            
-            spreadsheet = client.open_by_key(ID_PLANILHA_ALMOXARIFADO)
-            
-            try:
-                sheet = spreadsheet.worksheet(ABA_MOVIMENTACAO)
-            except Exception as e:
-                sheet = spreadsheet.add_worksheet(title=ABA_MOVIMENTACAO, rows=1000, cols=20)
-                cabecalho = ["ID", "DATA", "PRODUTO", "CATEGORIA", "COLABORADOR", "QUANTIDADE", "OBS", "RESPONSÁVEL", "TIPO"]
-                sheet.append_row(cabecalho)
-                return movimentacoes
-            
-            todos_dados = sheet.get_all_values()
-            
-            if len(todos_dados) < 2:
-                return movimentacoes
-            
-            cabecalho = todos_dados[0]
-            idx_id = None
-            idx_data = None
-            idx_produto = None
-            idx_categoria = None
-            idx_colaborador = None
-            idx_quantidade = None
-            idx_obs = None
-            idx_responsavel = None
-            idx_tipo = None
-            
-            for i, col in enumerate(cabecalho):
-                col_clean = str(col).strip().upper()
-                if col_clean == 'ID':
-                    idx_id = i
-                elif col_clean == 'DATA':
-                    idx_data = i
-                elif col_clean == 'PRODUTO':
-                    idx_produto = i
-                elif col_clean == 'CATEGORIA':
-                    idx_categoria = i
-                elif col_clean == 'COLABORADOR':
-                    idx_colaborador = i
-                elif col_clean == 'QUANTIDADE':
-                    idx_quantidade = i
-                elif col_clean == 'OBS':
-                    idx_obs = i
-                elif col_clean == 'RESPONSÁVEL':
-                    idx_responsavel = i
-                elif col_clean == 'TIPO':
-                    idx_tipo = i
-            
-            if idx_tipo is None:
-                for i, col in enumerate(cabecalho):
-                    col_clean = str(col).strip().upper()
-                    if 'TIPO' in col_clean:
-                        idx_tipo = i
-                        break
-            
-            for row in todos_dados[1:]:
-                try:
-                    if idx_id is not None and len(row) <= idx_id:
-                        continue
-                    if idx_produto is not None and len(row) <= idx_produto:
-                        continue
-                    
-                    id_val = row[idx_id].strip() if idx_id is not None and row[idx_id] else ""
-                    produto_val = row[idx_produto].strip() if idx_produto is not None and row[idx_produto] else ""
-                    
-                    if not id_val or not produto_val:
-                        continue
-                    
-                    movimentacao = {
-                        'id': id_val,
-                        'data': None,
-                        'produto': produto_val,
-                        'categoria': row[idx_categoria].strip() if idx_categoria is not None and len(row) > idx_categoria and row[idx_categoria] else "",
-                        'colaborador': row[idx_colaborador].strip() if idx_colaborador is not None and len(row) > idx_colaborador and row[idx_colaborador] else "",
-                        'quantidade': 0.0,
-                        'obs': row[idx_obs].strip() if idx_obs is not None and len(row) > idx_obs and row[idx_obs] else "",
-                        'responsavel': row[idx_responsavel].strip() if idx_responsavel is not None and len(row) > idx_responsavel and row[idx_responsavel] else "",
-                        'tipo': row[idx_tipo].strip().upper() if idx_tipo is not None and len(row) > idx_tipo and row[idx_tipo] else "SAÍDA"
-                    }
-                    
-                    if idx_data is not None and len(row) > idx_data and row[idx_data]:
-                        try:
-                            movimentacao['data'] = datetime.strptime(row[idx_data].strip(), "%d/%m/%Y")
-                        except:
-                            movimentacao['data'] = converter_data_br(row[idx_data])
-                    
-                    if idx_quantidade is not None and len(row) > idx_quantidade and row[idx_quantidade]:
-                        try:
-                            movimentacao['quantidade'] = float(str(row[idx_quantidade]).replace(',', '.'))
-                        except:
-                            pass
-                    
-                    movimentacoes.append(movimentacao)
+                        'ca': parse_valor(row[idx_ca]) if idx_ca < len(row) else 0.0,
+                        'base': parse_valor(row[idx_base]) if idx_base < len(row) else 0.0,
+                        'quantidade': parse_valor(row[idx_quantidade]) if idx_quantidade < len(row) else 0.0
+                    })
                 except:
                     continue
             
-            return movimentacoes
+            print(f"✅ FALLBACK: {len(produtos)} produtos carregados do Google Sheets")
+            return produtos
             
         except Exception as e:
-            return movimentacoes
+            print(f"❌ FALLBACK: Erro: {e}")
+            return []
     
-    # ======================
-    # FUNÇÕES CRUD - PRODUTOS
-    # ======================
-    def salvar_produto(produto_dict: Dict) -> tuple:
+    def carregar_movimentacoes_google_sheets() -> List[Dict]:
+        """Carrega movimentações do Google Sheets (APENAS FALLBACK)"""
+        movimentacoes = []
         try:
+            print("🔄 FALLBACK: Carregando movimentações do Google Sheets...")
             client = get_gspread_client()
             if client is None:
-                return False, "❌ Erro ao conectar ao Google Sheets"
+                return []
             
             spreadsheet = client.open_by_key(ID_PLANILHA_ALMOXARIFADO)
-            sheet = spreadsheet.worksheet(ABA_BASE)
+            sheet = spreadsheet.worksheet(ABA_MOVIMENTACAO)
+            todos_dados = sheet.get_all_values()
             
-            dados = [
-                produto_dict['id'],
-                produto_dict['categoria'],
-                produto_dict['produto'],
-                str(produto_dict['ca']).replace('.', ','),
-                str(produto_dict['base']).replace('.', ','),
-                str(produto_dict['quantidade']).replace('.', ',')
-            ]
+            if len(todos_dados) < 2:
+                return []
             
-            sheet.append_row(dados)
-            st.cache_data.clear()
-            return True, f"✅ Produto {produto_dict['produto']} salvo com sucesso!"
+            cabecalho = todos_dados[0]
             
-        except Exception as e:
-            return False, f"❌ Erro ao salvar: {str(e)}"
-    
-    def atualizar_produto(produto_dict: Dict) -> tuple:
-        try:
-            client = get_gspread_client()
-            if client is None:
-                return False, "❌ Erro ao conectar ao Google Sheets"
+            idx_id = 0
+            idx_data = 1
+            idx_produto = 2
+            idx_categoria = 3
+            idx_colaborador = 4
+            idx_quantidade = 5
+            idx_obs = 6
+            idx_responsavel = 7
+            idx_tipo = 8
             
-            spreadsheet = client.open_by_key(ID_PLANILHA_ALMOXARIFADO)
-            sheet = spreadsheet.worksheet(ABA_BASE)
-            
-            cell = sheet.find(produto_dict['id'], in_column=1)
-            if not cell:
-                return False, f"❌ Produto {produto_dict['id']} não encontrado"
-            
-            dados = [
-                produto_dict['id'],
-                produto_dict['categoria'],
-                produto_dict['produto'],
-                str(produto_dict['ca']).replace('.', ','),
-                str(produto_dict['base']).replace('.', ','),
-                str(produto_dict['quantidade']).replace('.', ',')
-            ]
-            
-            for col, valor in enumerate(dados, start=1):
-                sheet.update_cell(cell.row, col, valor)
-            
-            st.cache_data.clear()
-            return True, f"✅ Produto {produto_dict['produto']} atualizado com sucesso!"
-            
-        except Exception as e:
-            return False, f"❌ Erro ao atualizar: {str(e)}"
-    
-    def excluir_produto(id_produto: str) -> tuple:
-        try:
-            client = get_gspread_client()
-            if client is None:
-                return False, "❌ Erro ao conectar ao Google Sheets"
-            
-            spreadsheet = client.open_by_key(ID_PLANILHA_ALMOXARIFADO)
-            sheet = spreadsheet.worksheet(ABA_BASE)
-            
-            cell = sheet.find(id_produto, in_column=1)
-            if not cell:
-                return False, f"❌ Produto {id_produto} não encontrado"
-            
-            sheet.delete_rows(cell.row)
-            st.cache_data.clear()
-            return True, f"✅ Produto {id_produto} excluído com sucesso!"
-            
-        except Exception as e:
-            return False, f"❌ Erro ao excluir: {str(e)}"
-    
-    # ======================
-    # FUNÇÕES PARA SALVAR LOTE DE MOVIMENTAÇÕES
-    # ======================
-    def salvar_lote_movimentacoes(lista_mov: List[Dict]) -> tuple:
-        """
-        Salva um lote de movimentações na planilha online
-        """
-        try:
-            client = get_gspread_client()
-            if client is None:
-                return False, "❌ Erro ao conectar ao Google Sheets"
-            
-            spreadsheet = client.open_by_key(ID_PLANILHA_ALMOXARIFADO)
-            sheet_mov = spreadsheet.worksheet(ABA_MOVIMENTACAO)
-            sheet_base = spreadsheet.worksheet(ABA_BASE)
-            
-            # Processar cada movimentação
-            erros = []
-            sucessos = 0
-            
-            for mov in lista_mov:
+            def parse_data(val):
+                if not val:
+                    return None
                 try:
-                    # Verificar estoque para SAÍDA
-                    if mov['tipo'] == 'SAÍDA':
-                        cell = sheet_base.find(mov['produto'], in_column=3)
-                        if not cell:
-                            erros.append(f"Produto {mov['produto']} não encontrado")
-                            continue
-                        
-                        qtd_cell = sheet_base.cell(cell.row, 6)
-                        qtd_atual = 0
-                        if qtd_cell.value:
-                            try:
-                                qtd_atual = float(str(qtd_cell.value).replace(',', '.'))
-                            except:
-                                qtd_atual = 0
-                        
-                        if mov['quantidade'] > qtd_atual:
-                            erros.append(f"Estoque insuficiente para {mov['produto']}: disponível {qtd_atual:.2f}, solicitado {mov['quantidade']:.2f}")
-                            continue
-                    
-                    # Salvar movimentação
-                    data_str = mov['data'].strftime("%d/%m/%Y") if mov.get('data') else datetime.now().strftime("%d/%m/%Y")
-                    dados_mov = [
-                        mov['id'],
-                        data_str,
-                        mov['produto'],
-                        mov.get('categoria', ''),
-                        mov.get('colaborador', ''),
-                        str(mov['quantidade']).replace('.', ','),
-                        mov.get('obs', ''),
-                        mov.get('responsavel', ''),
-                        mov['tipo']
-                    ]
-                    sheet_mov.append_row(dados_mov)
-                    
-                    # Atualizar estoque
-                    cell = sheet_base.find(mov['produto'], in_column=3)
-                    if cell:
-                        qtd_cell = sheet_base.cell(cell.row, 6)
-                        qtd_atual = 0
-                        if qtd_cell.value:
-                            try:
-                                qtd_atual = float(str(qtd_cell.value).replace(',', '.'))
-                            except:
-                                qtd_atual = 0
-                        
-                        if mov['tipo'] == 'ENTRADA':
-                            nova_qtd = qtd_atual + mov['quantidade']
-                        elif mov['tipo'] == 'SAÍDA':
-                            nova_qtd = qtd_atual - mov['quantidade']
-                        else:  # INVENTÁRIO
-                            nova_qtd = mov['quantidade']
-                        
-                        sheet_base.update_cell(cell.row, 6, str(nova_qtd).replace('.', ','))
-                    
-                    sucessos += 1
-                    
-                except Exception as e:
-                    erros.append(f"Erro ao processar {mov.get('produto', '')}: {str(e)}")
+                    val_str = str(val).strip()
+                    if '/' in val_str:
+                        partes = val_str.split('/')
+                        if len(partes) == 3:
+                            return datetime(int(partes[2]), int(partes[1]), int(partes[0]))
+                    return None
+                except:
+                    return None
             
-            st.cache_data.clear()
+            def parse_valor(val):
+                if not val or str(val).strip() == '':
+                    return 0.0
+                try:
+                    return float(str(val).replace(',', '.'))
+                except:
+                    return 0.0
             
-            if erros:
-                return False, f"⚠️ {sucessos} salvos, {len(erros)} erros: {', '.join(erros[:3])}..."
-            else:
-                return True, f"✅ {sucessos} movimentações salvas com sucesso!"
+            for row in todos_dados[1:]:
+                try:
+                    if len(row) <= max(idx_id, idx_produto):
+                        continue
+                    
+                    id_val = str(row[idx_id]).strip() if idx_id < len(row) and row[idx_id] else ""
+                    produto_val = str(row[idx_produto]).strip() if idx_produto < len(row) and row[idx_produto] else ""
+                    
+                    if not id_val or not produto_val:
+                        continue
+                    
+                    movimentacoes.append({
+                        'id': id_val,
+                        'data': parse_data(row[idx_data]) if idx_data < len(row) else None,
+                        'produto': produto_val,
+                        'categoria': str(row[idx_categoria]).strip() if idx_categoria < len(row) and row[idx_categoria] else "",
+                        'colaborador': str(row[idx_colaborador]).strip() if idx_colaborador < len(row) and row[idx_colaborador] else "",
+                        'quantidade': parse_valor(row[idx_quantidade]) if idx_quantidade < len(row) else 0.0,
+                        'obs': str(row[idx_obs]).strip() if idx_obs < len(row) and row[idx_obs] else "",
+                        'responsavel': str(row[idx_responsavel]).strip() if idx_responsavel < len(row) and row[idx_responsavel] else "",
+                        'tipo': str(row[idx_tipo]).strip().upper() if idx_tipo < len(row) and row[idx_tipo] else "SAÍDA"
+                    })
+                except:
+                    continue
+            
+            print(f"✅ FALLBACK: {len(movimentacoes)} movimentações carregadas")
+            return movimentacoes
             
         except Exception as e:
-            return False, f"❌ Erro ao salvar lote: {str(e)}"
+            print(f"❌ FALLBACK: Erro: {e}")
+            return []
     
     # ======================
     # FUNÇÕES DE RELATÓRIOS
     # ======================
+    
     def gerar_relatorio_almoxarifado(produtos_dict: List[Dict], movimentacoes_dict: List[Dict]) -> str:
+        """Gera relatório HTML do almoxarifado"""
         data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
         
         total_produtos = len(produtos_dict)
@@ -16301,7 +16236,7 @@ elif aba_selecionada == 'ALMOXARIFADO':
                 .section-title {{ font-size: 14px; font-weight: 700; margin: 15px 0 8px 0; padding-bottom: 6px; border-bottom: 2px solid #e0e0e0; }}
                 
                 table {{ width: 100%; border-collapse: collapse; margin-bottom: 12px; font-size: 9px; }}
-                table th {{ background: #2c3e50; color: white; padding: 5px 6px; border: 1px solid #2c3e50; text-align: center; font-weight: 700; white-space: nowrap; }}
+                table th {{ background: #2c3e50; color: white; padding: 5px 6px; border: 1px solid #2c3e50; text-align: center; font-weight: 700; }}
                 table td {{ padding: 4px 6px; border: 1px solid #ddd; text-align: center; }}
                 table tr:nth-child(even) {{ background: #f8f9fc; }}
                 
@@ -16316,12 +16251,6 @@ elif aba_selecionada == 'ALMOXARIFADO':
                 .status-baixo {{ color: #dc3545; font-weight: bold; }}
                 .status-normal {{ color: #28a745; }}
                 .status-alto {{ color: #0078D4; }}
-                
-                .previsao-zerado {{ color: #dc3545; font-weight: bold; }}
-                .previsao-urgencia {{ color: #dc3545; font-weight: bold; }}
-                .previsao-curto {{ color: #E86C2C; }}
-                .previsao-medio {{ color: #28a745; }}
-                .previsao-longo {{ color: #0078D4; }}
                 
                 .badge {{ display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 8px; font-weight: bold; }}
                 .badge-entrada {{ background: #d4edda; color: #155724; }}
@@ -16340,7 +16269,7 @@ elif aba_selecionada == 'ALMOXARIFADO':
             <div class="container">
                 <div class="header">
                     <h1>📦 RELATÓRIO ALMOXARIFADO</h1>
-                    <div class="subtitle">Controle de Estoque com Previsão de Consumo - Luvidarte</div>
+                    <div class="subtitle">Controle de Estoque - Luvidarte</div>
                     <div class="data">Gerado em: {data_atual}</div>
                 </div>
                 
@@ -16358,9 +16287,9 @@ elif aba_selecionada == 'ALMOXARIFADO':
         if estoque_baixo:
             html += f'<div class="alert-box alert-warning"><strong>🟡 ALERTA - ESTOQUE BAIXO:</strong> {len(estoque_baixo)} produto(s) com estoque abaixo de 5 unidades.</div>'
         
-        # Tabela de Produtos com PREVISÃO
+        # Tabela de Produtos
         html += f"""
-                <div class="section-title">📋 ESTOQUE ATUAL COM PREVISÃO DE CONSUMO</div>
+                <div class="section-title">📋 ESTOQUE ATUAL</div>
                 <div class="table-responsive">
                     <table>
                         <thead>
@@ -16372,7 +16301,6 @@ elif aba_selecionada == 'ALMOXARIFADO':
                                 <th>BASE</th>
                                 <th>Quantidade</th>
                                 <th>Status</th>
-                                <th>Previsão</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -16391,25 +16319,6 @@ elif aba_selecionada == 'ALMOXARIFADO':
                 else:
                     status = '<span class="status-alto">🔵 ALTO</span>'
                 
-                previsao = calcular_previsao_dias(
-                    p.get('produto', ''), 
-                    qtd, 
-                    movimentacoes_dict
-                )
-                
-                if "ZERADO" in previsao:
-                    previsao_class = 'previsao-zerado'
-                elif "⚠️" in previsao or "horas" in previsao:
-                    previsao_class = 'previsao-urgencia'
-                elif "🟡" in previsao:
-                    previsao_class = 'previsao-curto'
-                elif "🟢" in previsao:
-                    previsao_class = 'previsao-medio'
-                elif "🔵" in previsao:
-                    previsao_class = 'previsao-longo'
-                else:
-                    previsao_class = ''
-                
                 html += f"""
                             <tr>
                                 <td>{p.get('id', '')}</td>
@@ -16419,11 +16328,10 @@ elif aba_selecionada == 'ALMOXARIFADO':
                                 <td>{p.get('base', 0):.2f}</td>
                                 <td><strong>{qtd:.2f}</strong></td>
                                 <td>{status}</td>
-                                <td class="{previsao_class}">{previsao}</td>
                             </tr>
                 """
         else:
-            html += '<tr><td colspan="8" style="text-align:center;color:#999;padding:20px;">Nenhum produto cadastrado.</td></tr>'
+            html += '<tr><td colspan="7" style="text-align:center;color:#999;padding:20px;">Nenhum produto cadastrado.</td></tr>'
         
         html += """
                         </tbody>
@@ -16493,7 +16401,7 @@ elif aba_selecionada == 'ALMOXARIFADO':
         html += f"""
                 <div class="footer">
                     Relatório gerado automaticamente pelo Sistema TRS Dashboard - Luvidarte<br>
-                    {data_atual} | Previsão baseada nas saídas registradas no histórico
+                    {data_atual}
                 </div>
             </div>
         </body>
@@ -16508,6 +16416,7 @@ elif aba_selecionada == 'ALMOXARIFADO':
                                             tipo_filtro: str = "(Todos)",
                                             produto_filtro: str = "(Todos)",
                                             categoria_filtro: str = "(Todos)") -> str:
+        """Gera relatório de movimentações em HTML"""
         
         data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
         
@@ -16533,14 +16442,6 @@ elif aba_selecionada == 'ALMOXARIFADO':
         entradas = [m for m in mov_filtradas if m.get('tipo', '').upper() == 'ENTRADA']
         saidas = [m for m in mov_filtradas if m.get('tipo', '').upper() == 'SAÍDA']
         inventarios = [m for m in mov_filtradas if m.get('tipo', '').upper() == 'INVENTÁRIO']
-        
-        total_entradas = len(entradas)
-        total_saidas = len(saidas)
-        total_inventarios = len(inventarios)
-        
-        qtd_entradas = sum(m.get('quantidade', 0) for m in entradas)
-        qtd_saidas = sum(m.get('quantidade', 0) for m in saidas)
-        qtd_inventarios = sum(m.get('quantidade', 0) for m in inventarios)
         
         filtros_texto = []
         if data_ini:
@@ -16601,7 +16502,7 @@ elif aba_selecionada == 'ALMOXARIFADO':
                 .section-title {{ font-size: 14px; font-weight: 700; margin: 15px 0 8px 0; padding-bottom: 6px; border-bottom: 2px solid #e0e0e0; }}
                 
                 table {{ width: 100%; border-collapse: collapse; margin-bottom: 12px; font-size: 9px; }}
-                table th {{ background: #2c3e50; color: white; padding: 5px 6px; border: 1px solid #2c3e50; text-align: center; font-weight: 700; white-space: nowrap; }}
+                table th {{ background: #2c3e50; color: white; padding: 5px 6px; border: 1px solid #2c3e50; text-align: center; font-weight: 700; }}
                 table td {{ padding: 4px 6px; border: 1px solid #ddd; text-align: center; }}
                 table tr:nth-child(even) {{ background: #f8f9fc; }}
                 
@@ -16643,18 +16544,18 @@ elif aba_selecionada == 'ALMOXARIFADO':
                     </div>
                     <div class="card card-green">
                         <div class="label">📥 Entradas</div>
-                        <div class="value">{total_entradas}</div>
-                        <div class="sub">{qtd_entradas:.2f} un</div>
+                        <div class="value">{len(entradas)}</div>
+                        <div class="sub">{sum(m.get('quantidade', 0) for m in entradas):.2f} un</div>
                     </div>
                     <div class="card card-red">
                         <div class="label">📤 Saídas</div>
-                        <div class="value">{total_saidas}</div>
-                        <div class="sub">{qtd_saidas:.2f} un</div>
+                        <div class="value">{len(saidas)}</div>
+                        <div class="sub">{sum(m.get('quantidade', 0) for m in saidas):.2f} un</div>
                     </div>
                     <div class="card card-purple">
                         <div class="label">📋 Inventários</div>
-                        <div class="value">{total_inventarios}</div>
-                        <div class="sub">{qtd_inventarios:.2f} un</div>
+                        <div class="value">{len(inventarios)}</div>
+                        <div class="sub">{sum(m.get('quantidade', 0) for m in inventarios):.2f} un</div>
                     </div>
                     <div class="card">
                         <div class="label">📊 Média</div>
@@ -16731,6 +16632,7 @@ elif aba_selecionada == 'ALMOXARIFADO':
         return html
     
     def baixar_relatorio(html_content: str, nome_arquivo: str):
+        """Botão para baixar relatório"""
         st.download_button(
             label="📥 Baixar Relatório",
             data=html_content,
@@ -16741,11 +16643,175 @@ elif aba_selecionada == 'ALMOXARIFADO':
         )
     
     # ======================
-    # CARREGAR DADOS
+    # CARREGAR DADOS (PRIORIDADE ABSOLUTA SUPABASE)
     # ======================
-    with st.spinner("🔄 Carregando dados do almoxarifado..."):
-        produtos = carregar_produtos_estoque()
-        movimentacoes = carregar_movimentacoes()
+    
+    with st.spinner("🔄 Carregando dados do Supabase..."):
+        # Testar Supabase primeiro
+        supabase_ok, msg = testar_supabase()
+        
+        if supabase_ok:
+            # Tenta carregar do Supabase
+            produtos = carregar_produtos_supabase()
+            
+            if not produtos:
+                st.warning("⚠️ Supabase conectado, mas sem dados. Usando Google Sheets...")
+                produtos = carregar_produtos_google_sheets()
+                
+                if produtos:
+                    st.info("🔄 Sincronizando dados com o Supabase...")
+                    for p in produtos:
+                        salvar_produto_supabase(p)
+                    st.success("✅ Dados sincronizados! Recarregando do Supabase...")
+                    produtos = carregar_produtos_supabase()
+        else:
+            st.warning(f"⚠️ Supabase: {msg}. Usando Google Sheets...")
+            produtos = carregar_produtos_google_sheets()
+            
+            if produtos:
+                st.info("🔄 Tentando sincronizar com o Supabase...")
+                for p in produtos:
+                    try:
+                        salvar_produto_supabase(p)
+                    except:
+                        pass
+                st.warning("⚠️ Dados carregados do Google Sheets (fallback)")
+        
+        # Carrega movimentações
+        if supabase_ok:
+            movimentacoes = carregar_movimentacoes_supabase()
+            if not movimentacoes:
+                movimentacoes = carregar_movimentacoes_google_sheets()
+                if movimentacoes:
+                    for m in movimentacoes:
+                        salvar_movimentacao_supabase(m)
+                    movimentacoes = carregar_movimentacoes_supabase()
+        else:
+            movimentacoes = carregar_movimentacoes_google_sheets()
+        
+        # Mostra resultado
+        if produtos:
+            fonte = "Supabase" if supabase_ok and carregar_produtos_supabase() else "Google Sheets (fallback)"
+            if fonte == "Supabase":
+                st.success(f"✅ **{len(produtos)} produtos** carregados do Supabase")
+            else:
+                st.warning(f"⚠️ **{len(produtos)} produtos** carregados do {fonte}")
+        else:
+            st.error("❌ Nenhum dado disponível. Verifique a conexão.")
+            with st.expander("🔍 Diagnóstico de conexão", expanded=True):
+                # Testar Supabase
+                try:
+                    response = requests.get(
+                        f"{SUPABASE_URL}/rest/v1/almoxarifado_base?select=count&limit=1",
+                        headers=SUPABASE_HEADERS,
+                        timeout=5
+                    )
+                    if response.status_code == 200:
+                        st.success("✅ Supabase: Conectado")
+                    else:
+                        st.error(f"❌ Supabase: Erro {response.status_code}")
+                except Exception as e:
+                    st.error(f"❌ Supabase: {e}")
+                
+                # Testar Google Sheets
+                try:
+                    client = get_gspread_client()
+                    if client:
+                        st.success("✅ Google Sheets: Conectado")
+                    else:
+                        st.error("❌ Google Sheets: Falha na conexão")
+                except Exception as e:
+                    st.error(f"❌ Google Sheets: {e}")
+    
+    # ======================
+    # INICIALIZAR SESSION STATE
+    # ======================
+    if 'almoxarifado_aba' not in st.session_state:
+        st.session_state.almoxarifado_aba = 'ESTOQUE'
+    
+    if 'almoxarifado_editando' not in st.session_state:
+        st.session_state.almoxarifado_editando = None
+    
+    if 'almoxarifado_termo_busca' not in st.session_state:
+        st.session_state.almoxarifado_termo_busca = ""
+    
+    if 'almoxarifado_lista_temporaria' not in st.session_state:
+        st.session_state.almoxarifado_lista_temporaria = []
+    
+    if 'almoxarifado_editando_item' not in st.session_state:
+        st.session_state.almoxarifado_editando_item = None
+    
+    if 'almoxarifado_mostrar_confirmacao' not in st.session_state:
+        st.session_state.almoxarifado_mostrar_confirmacao = False
+    
+    # ======================
+    # FUNÇÃO PARA GERAR ID AUTOMÁTICO
+    # ======================
+    def gerar_id_produto(produtos_dict: List[Dict]) -> str:
+        if not produtos_dict:
+            return "PROD-001"
+        
+        ids = []
+        for p in produtos_dict:
+            id_val = p.get('id', '')
+            if id_val and id_val.startswith("PROD-"):
+                try:
+                    num = int(id_val.replace("PROD-", ""))
+                    ids.append(num)
+                except:
+                    pass
+        
+        if not ids:
+            return "PROD-001"
+        
+        proximo = max(ids) + 1
+        return f"PROD-{proximo:03d}"
+    
+    # ======================
+    # FUNÇÃO PARA CALCULAR PREVISÃO DE DIAS
+    # ======================
+    def calcular_previsao_dias(produto: str, quantidade_atual: float, movimentacoes_dict: List[Dict]) -> str:
+        if quantidade_atual <= 0:
+            return "🔴 ZERADO"
+        
+        saidas_produto = [m for m in movimentacoes_dict 
+                         if m.get('produto', '') == produto 
+                         and m.get('tipo', '').upper() == 'SAÍDA'
+                         and m.get('data') is not None]
+        
+        if not saidas_produto:
+            return "-----"
+        
+        saidas_produto = sorted(saidas_produto, key=lambda x: x.get('data'))
+        data_inicio = saidas_produto[0].get('data')
+        data_fim = saidas_produto[-1].get('data')
+        
+        if data_inicio is None or data_fim is None or data_fim == data_inicio:
+            total_saidas = sum(m.get('quantidade', 0) for m in saidas_produto)
+            if total_saidas <= 0:
+                return "-----"
+            dias_estimados = quantidade_atual / total_saidas
+        else:
+            dias_periodo = (data_fim - data_inicio).days
+            if dias_periodo <= 0:
+                dias_periodo = 1
+            total_saidas = sum(m.get('quantidade', 0) for m in saidas_produto)
+            if total_saidas <= 0:
+                return "-----"
+            media_diaria = total_saidas / dias_periodo
+            if media_diaria <= 0:
+                return "-----"
+            dias_estimados = quantidade_atual / media_diaria
+        
+        if dias_estimados < 1:
+            return f"⚠️ {dias_estimados * 24:.0f}h"
+        elif dias_estimados < 7:
+            return f"🟡 {dias_estimados:.0f} dias"
+        elif dias_estimados < 30:
+            return f"🟢 {dias_estimados:.0f} dias"
+        else:
+            meses = dias_estimados / 30
+            return f"🔵 {meses:.1f} meses"
     
     # ======================
     # NAVEGAÇÃO
@@ -16791,7 +16857,7 @@ elif aba_selecionada == 'ALMOXARIFADO':
     if st.session_state.almoxarifado_aba == 'ESTOQUE':
         st.markdown("### 📦 Estoque Atual")
         
-        st.caption(f"📊 {len(produtos)} produtos carregados da planilha")
+        st.caption(f"📊 {len(produtos)} produtos carregados")
         
         col_f1, col_f2, col_f3 = st.columns(3)
         with col_f1:
@@ -16898,7 +16964,7 @@ elif aba_selecionada == 'ALMOXARIFADO':
             st.info("📭 Nenhum produto encontrado com os filtros selecionados.")
     
     # ======================
-    # ABA: MOVIMENTAÇÕES (COM LISTA TEMPORÁRIA)
+    # ABA: MOVIMENTAÇÕES
     # ======================
     elif st.session_state.almoxarifado_aba == 'MOVIMENTACOES':
         st.markdown("### 📤 Registro de Movimentações")
@@ -17168,7 +17234,7 @@ elif aba_selecionada == 'ALMOXARIFADO':
             st.markdown("---")
             st.markdown("### ⚠️ CONFIRMAÇÃO DE SALVAMENTO")
             
-            st.warning("⚠️ Você está prestes a salvar TODOS os lançamentos da lista na planilha online.")
+            st.warning("⚠️ Você está prestes a salvar TODOS os lançamentos.")
             
             st.markdown("**📋 Resumo do lote:**")
             st.write(f"- Total de itens: {len(lista_temp)}")
@@ -17188,11 +17254,8 @@ elif aba_selecionada == 'ALMOXARIFADO':
             
             with col_confirm1:
                 if st.button("✅ SIM, SALVAR TUDO", use_container_width=True, type="primary"):
-                    with st.spinner("Salvando movimentações..."):
-                        for item in lista_temp:
-                            item['id'] = gerar_id_movimentacao(movimentacoes + lista_temp)
-                        
-                        sucesso, msg = salvar_lote_movimentacoes(lista_temp)
+                    with st.spinner("Salvando movimentações no Supabase..."):
+                        sucesso, msg = salvar_lote_movimentacoes_supabase(lista_temp)
                         
                         if sucesso:
                             st.success(msg)
@@ -17364,7 +17427,7 @@ elif aba_selecionada == 'ALMOXARIFADO':
                 st.markdown("---")
                 col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
                 with col_btn2:
-                    submitted_novo = st.form_submit_button("💾 SALVAR PRODUTO", type="primary", use_container_width=True)
+                    submitted_novo = st.form_submit_button("💾 SALVAR PRODUTO (Supabase)", type="primary", use_container_width=True)
                 
                 if submitted_novo:
                     if not produto_nome:
@@ -17385,10 +17448,11 @@ elif aba_selecionada == 'ALMOXARIFADO':
                                 'quantidade': quantidade_novo
                             }
                             
-                            sucesso, msg = salvar_produto(novo_produto)
+                            sucesso, msg = salvar_produto_supabase(novo_produto)
                             if sucesso:
                                 st.success(msg)
                                 st.balloons()
+                                st.cache_data.clear()
                                 st.rerun()
                             else:
                                 st.error(msg)
@@ -17472,7 +17536,7 @@ elif aba_selecionada == 'ALMOXARIFADO':
                             st.markdown("---")
                             col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
                             with col_btn2:
-                                submitted_edit = st.form_submit_button("💾 SALVAR ALTERAÇÕES", type="primary", use_container_width=True)
+                                submitted_edit = st.form_submit_button("💾 SALVAR ALTERAÇÕES (Supabase)", type="primary", use_container_width=True)
                             
                             if submitted_edit:
                                 if not produto_nome_edit:
@@ -17487,10 +17551,11 @@ elif aba_selecionada == 'ALMOXARIFADO':
                                         'quantidade': quantidade_edit
                                     }
                                     
-                                    sucesso, msg = atualizar_produto(produto_atualizado)
+                                    sucesso, msg = salvar_produto_supabase(produto_atualizado)
                                     if sucesso:
                                         st.success(msg)
                                         st.session_state.almoxarifado_editando = None
+                                        st.cache_data.clear()
                                         st.rerun()
                                     else:
                                         st.error(msg)
@@ -17524,11 +17589,12 @@ elif aba_selecionada == 'ALMOXARIFADO':
                         confirmar_excluir = st.checkbox(f"✅ Confirmo exclusão de {produto_excluir.get('produto', '')}")
                         
                         if confirmar_excluir:
-                            if st.button("🗑️ CONFIRMAR EXCLUSÃO", type="primary", use_container_width=True):
-                                sucesso, msg = excluir_produto(produto_excluir.get('id', ''))
+                            if st.button("🗑️ CONFIRMAR EXCLUSÃO (Supabase)", type="primary", use_container_width=True):
+                                sucesso, msg = excluir_produto_supabase(produto_excluir.get('id', ''))
                                 if sucesso:
                                     st.success(msg)
                                     st.balloons()
+                                    st.cache_data.clear()
                                     st.rerun()
                                 else:
                                     st.error(msg)
