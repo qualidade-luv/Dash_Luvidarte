@@ -15911,69 +15911,7 @@ elif aba_selecionada == 'ALMOXARIFADO':
                  
             except Exception as e:
                 return False, f"❌ Erro: {str(e)}"
-    
-    def salvar_movimentacao_supabase(mov_dict: Dict) -> tuple:
-    """Salva movimentação no Supabase usando requests"""
-    try:
-        data = {
-            'mov_id': mov_dict['id'],
-            'data': mov_dict['data'].isoformat() if mov_dict.get('data') else None,
-            'produto': mov_dict['produto'],
-            'categoria': mov_dict.get('categoria', ''),
-            'colaborador': mov_dict.get('colaborador', ''),
-            'quantidade': mov_dict['quantidade'],
-            'obs': mov_dict.get('obs', ''),
-            'responsavel': mov_dict.get('responsavel', ''),
-            'tipo': mov_dict['tipo']
-        }
-        
-        response = requests.post(
-            f"{SUPABASE_URL}/rest/v1/almoxarifado_movimentacao",
-            json=data,
-            headers=SUPABASE_HEADERS
-        )
-        
-        if response.status_code in [200, 201, 204]:
-            # Buscar produto atual
-            check = requests.get(
-                f"{SUPABASE_URL}/rest/v1/almoxarifado_base?produto=eq.{mov_dict['produto']}",
-                headers=SUPABASE_HEADERS
-            )
-            
-            if check.status_code == 200 and check.json():
-                qtd_atual = float(check.json()[0].get('quantidade', 0))
-                tipo = mov_dict['tipo']
-                quantidade = float(mov_dict['quantidade'])
-                
-                # Calcular nova quantidade conforme o tipo
-                if tipo == 'ENTRADA':
-                    nova_qtd = qtd_atual + quantidade
-                elif tipo == 'SAÍDA':
-                    nova_qtd = qtd_atual - quantidade
-                elif tipo == 'INVENTÁRIO':
-                    # Inventário SUBSTITUI o valor pelo contado
-                    nova_qtd = quantidade
-                else:
-                    nova_qtd = qtd_atual  # tipo desconhecido, não altera
-                
-                # Garantir que não fique negativo
-                if nova_qtd < 0:
-                    nova_qtd = 0
-                
-                requests.patch(
-                    f"{SUPABASE_URL}/rest/v1/almoxarifado_base?produto=eq.{mov_dict['produto']}",
-                    json={'quantidade': nova_qtd},
-                    headers=SUPABASE_HEADERS
-                )
-            
-            st.cache_data.clear()
-            return True, "✅ Movimentação salva no Supabase!"
-        else:
-            return False, f"❌ Erro: {response.status_code} - {response.text[:100]}"
-            
-    except Exception as e:
-        return False, f"❌ Erro: {str(e)}"
-    
+           
     def salvar_lote_movimentacoes_supabase(lista_mov: List[Dict]) -> tuple:
         """Salva lote de movimentações no Supabase"""
         sucessos = 0
