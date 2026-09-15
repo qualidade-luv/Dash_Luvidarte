@@ -15926,64 +15926,51 @@ elif aba_selecionada == 'ALMOXARIFADO':
                 'responsavel': mov_dict.get('responsavel', ''),
                 'tipo': mov_dict['tipo']
             }
-            
+        
             response = requests.post(
                 f"{SUPABASE_URL}/rest/v1/almoxarifado_movimentacao",
                 json=data,
                 headers=SUPABASE_HEADERS
             )
-            
+        
             if response.status_code in [200, 201, 204]:
-                # Atualizar estoque
+                # Atualizar estoque conforme o tipo de movimentação
                 if mov_dict['tipo'] == 'ENTRADA':
                     delta = mov_dict['quantidade']
                 elif mov_dict['tipo'] == 'SAÍDA':
                     delta = -mov_dict['quantidade']
-                else:
-                    delta = mov_dict['quantidade']
-                
+                else:  # INVENTÁRIO
+                    delta = None  # inventário SUBSTITUI o valor, não soma
+            
                 # Buscar produto atual
                 check = requests.get(
                     f"{SUPABASE_URL}/rest/v1/almoxarifado_base?produto=eq.{mov_dict['produto']}",
                     headers=SUPABASE_HEADERS
                 )
-                
+            
                 if check.status_code == 200 and check.json():
                     qtd_atual = float(check.json()[0].get('quantidade', 0))
-                    nova_qtd = qtd_atual + delta
+                
+                    if mov_dict['tipo'] == 'INVENTÁRIO':
+                        # Inventário: SUBSTITUI o valor pelo contado
+                        nova_qtd = mov_dict['quantidade']
+                    else:
+                        # Entrada/Saída: SOMA ou SUBTRAI
+                        nova_qtd = qtd_atual + delta
+                
                     requests.patch(
                         f"{SUPABASE_URL}/rest/v1/almoxarifado_base?produto=eq.{mov_dict['produto']}",
                         json={'quantidade': nova_qtd},
                         headers=SUPABASE_HEADERS
                     )
-                
+            
                 st.cache_data.clear()
                 return True, "✅ Movimentação salva no Supabase!"
             else:
                 return False, f"❌ Erro: {response.status_code} - {response.text[:100]}"
-                
+            
         except Exception as e:
             return False, f"❌ Erro: {str(e)}"
-    
-    def salvar_lote_movimentacoes_supabase(lista_mov: List[Dict]) -> tuple:
-        """Salva lote de movimentações no Supabase"""
-        sucessos = 0
-        erros = []
-        
-        for mov in lista_mov:
-            if not mov.get('id') or mov['id'].startswith('TEMP-'):
-                mov['id'] = gerar_id_movimentacao_supabase()
-            
-            sucesso, msg = salvar_movimentacao_supabase(mov)
-            if sucesso:
-                sucessos += 1
-            else:
-                erros.append(msg)
-        
-        if erros:
-            return False, f"⚠️ {sucessos} salvos, {len(erros)} erros: {', '.join(erros[:3])}..."
-        else:
-            return True, f"✅ {sucessos} movimentações salvas no Supabase!"
     
     def gerar_id_movimentacao_supabase() -> str:
         """Gera ID para movimentação"""
