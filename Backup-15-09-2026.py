@@ -22,6 +22,8 @@ import time
 import json
 from datetime import datetime, timedelta, date, time as dt_time
 from functools import wraps
+import plotly.express as px
+import plotly.graph_objects as go
 
 # ======================
 # FUNÇÃO PARA LIMPAR CACHE E RECARREGAR
@@ -575,9 +577,12 @@ ABAS = {
     'REQUISIÇÃO MANUTENÇÃO': 'RM',
     'FECHAMENTO TURNO': 'FT',
     'MANUTENÇÃO PREVENTIVA': 'MP',
-    'MAPEAMENTO DE HABILIDADES': 'MP',
     'FERRAMENTARIA': 'FM',
-    'PRÊMIO PRENSADOS': 'PP'
+    'MAPEAMENTO DE HABILIDADES': 'MH',    
+    'PRÊMIO PRENSADOS': 'PP',
+    'REPASSES DE PRODUÇÃO': 'RP',
+    'ALMOXARIFADO': 'AM',
+    'CONTROLE DO FORNO': 'CF'  # <-- NOVO
 }
 
 CAMINHO_PDF_AR = r"\\srv-luvidarte\dados\DOC\Engenharia_Luvidarte\SGQ - LUVIDARTE - ALTERADAS\0-AVISO DE REJEIÇÃO\1-PDF"
@@ -2502,8 +2507,8 @@ st.markdown(f"""
 with st.sidebar:
     st.markdown(f"""
     <div style="text-align: center; padding: 20px 0 16px; border-bottom: 1px solid {THEME['border_bright']}; margin-bottom: 20px;">
-        <div style="font-family: 'Rajdhani', sans-serif; font-size: 24px; font-weight: 700; color: {THEME['accent_cyan']}; letter-spacing: 0.2em;">⚙ TRS</div>
-        <div style="font-family: 'JetBrains Mono', monospace; font-size: 9px; color: {THEME['text_muted']}; letter-spacing: 0.2em; text-transform: uppercase;">Industrial Dashboard</div>
+        <div style="font-family: 'Rajdhani', sans-serif; font-size: 24px; font-weight: 700; color: {THEME['accent_cyan']}; letter-spacing: 0.2em;">⚙ ERP - Luvidarte</div>
+        <div style="font-family: 'JetBrains Mono', monospace; font-size: 9px; color: {THEME['text_muted']}; letter-spacing: 0.2em; text-transform: uppercase;">Aqui tem Café no bule Versão Teste</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -2578,17 +2583,12 @@ with st.sidebar:
 
 # Verifica se o usuário está logado e se a sessão é válida
 if not verificar_acesso():
-    # Se não estiver logado, a tela de login já foi renderizada
-    # Para a execução aqui para não mostrar o resto do sistema
-    st.stop()
+    st.stop()  # Interrompe a execução se não estiver logado
 
 # Se chegou aqui, o usuário está logado e a sessão é válida
 # Remove mensagens de login antigas para não aparecerem na interface
 if 'mensagem_login' in st.session_state:
     del st.session_state.mensagem_login
-
-# Adiciona um botão de logout no sidebar (após a navegação)
-# Modifique a seção do sidebar para incluir o logout
 
 # ======================
 # RENDERIZAR POPUPS PENDENTES E VERIFICAR NOVOS REGISTROS
@@ -2597,7 +2597,7 @@ renderizar_popups_pendentes()
 verificar_e_exibir_popups()
 
 # ==================================================================================================
-# PRENSADOS
+# PRENSADOS - VERSÃO COM DEFEITOS DE TÊMPERA E COLUNA TEMPERADO
 # ==================================================================================================
 if aba_selecionada == 'PRENSADOS':
     with st.spinner("Carregando dados..."):
@@ -2607,12 +2607,23 @@ if aba_selecionada == 'PRENSADOS':
         st.warning("Não foi possível carregar os dados.")
         st.stop()
 
+    # ===== PROCESSAMENTO INICIAL DOS DADOS =====
     df_base_calc = df_base.copy()
+    
+    # Converter colunas numéricas
     colunas_numericas = ['PRODUZIDO', 'APROVADO', 'EMBALADO', 'TRS 100%', 'REFUGADO']
     for col in colunas_numericas:
         if col in df_base_calc.columns:
             df_base_calc[col] = pd.to_numeric(df_base_calc[col], errors='coerce').fillna(0)
 
+    # ===== NOVA COLUNA: TEMPERADO =====
+    # A coluna AP_TEMPERA já está no DataFrame, basta usá-la
+    if 'AP_TEMPERA' in df_base_calc.columns:
+        df_base_calc['TEMPERADO'] = pd.to_numeric(df_base_calc['AP_TEMPERA'], errors='coerce').fillna(0)
+    else:
+        df_base_calc['TEMPERADO'] = 0
+
+    # Calcular TRS
     if 'TRS 100%' in df_base_calc.columns:
         df_base_calc['TRS 1ª ESCOLHA (%)'] = df_base_calc.apply(
             lambda row: (row['APROVADO'] / row['TRS 100%'] * 100) if row['TRS 100%'] != 0 else 0, axis=1
@@ -2624,6 +2635,38 @@ if aba_selecionada == 'PRENSADOS':
         df_base_calc['TRS 1ª ESCOLHA (%)'] = 0
         df_base_calc['TRS FINAL (%)'] = 0
 
+    # ===== IDENTIFICAR COLUNAS DE DEFEITOS DE TÊMPERA =====
+    colunas_defeitos_tempera = [
+        'EMPENADA', 'OVALIZADA T', 'QUEBRA RESFRIAMENTO T', 'EMPENADA T',
+        'QUEBRA T', 'IMPACTO T', 'QUARENTENA T', 'TESTE FURAÇÃO T',
+        'PROCESSOS ANTERIORES T'
+    ]
+    
+    # Mapear colunas existentes no DataFrame
+    defeitos_tempera_existentes = []
+    for col_def in colunas_defeitos_tempera:
+        for col_df in df_base_calc.columns:
+            if col_df.upper().strip() == col_def.upper().strip():
+                defeitos_tempera_existentes.append(col_df)
+                break
+
+    # ===== IDENTIFICAR COLUNAS DE DEFEITOS DE EMBALAGEM =====
+    colunas_defeitos_embalagem = [
+        'BOLHA E', 'PEDRA E', 'TRINCA E', 'RUGA E', 'CORTE TESOURA E',
+        'DOBRA E', 'FARINHA E', 'QUEBRA E', 'ARREADO E', 'VIDRO GRUDADO E',
+        'CONTRA-PEÇA E', 'FALHA E', 'CHUPADO E', 'ÓLEO TESOURA E',
+        'CROMO E', 'RISCO E', 'BARRO E', 'EMPENO E', 'SUJEIRA E'
+    ]
+    
+    # Mapear colunas existentes no DataFrame
+    defeitos_embalagem_existentes = []
+    for col_def in colunas_defeitos_embalagem:
+        for col_df in df_base_calc.columns:
+            if col_df.upper().strip() == col_def.upper().strip():
+                defeitos_embalagem_existentes.append(col_df)
+                break
+    
+    # Melhores TRS histórico (mantido)
     melhores_trs_historico = {}
     if 'REFERÊNCIA' in df_base_calc.columns:
         for ref in df_base_calc['REFERÊNCIA'].unique():
@@ -2633,7 +2676,7 @@ if aba_selecionada == 'PRENSADOS':
                 if max_trs > 0:
                     melhores_trs_historico[ref] = max_trs
 
-    # Sidebar filtros PRENSADOS
+    # ===== SIDEBAR FILTROS =====
     with st.sidebar:
         st.markdown(f"<div style='font-family:JetBrains Mono,monospace;font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:{THEME['accent_cyan']};margin:20px 0 10px;border-top:1px solid {THEME['border_bright']};padding-top:16px'>▸ Filtros · Prensados</div>", unsafe_allow_html=True)
         filtro_melhores_trs = st.checkbox("Melhores TRS por Referência", value=False)
@@ -2642,11 +2685,23 @@ if aba_selecionada == 'PRENSADOS':
         turno = st.selectbox("Turno", options=["(Todos)", "M", "T", "N"], key="prensados_turno")
         referencia = st.text_input("Referência (parte do código)", key="prensados_ref")
         prensa_tipo = st.selectbox("Tipo de prensa", ["(Todos)", "Semi-Automática", "Automática"], key="prensados_tipo")
+        
+        # NOVO: Filtro por faixa de TRS
+        st.markdown("---")
+        st.markdown(f"<div style='font-family:JetBrains Mono,monospace;font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:{THEME['accent_yellow']};'>▸ Filtro TRS</div>", unsafe_allow_html=True)
+        faixa_trs = st.selectbox(
+            "Faixa de TRS Final",
+            ["(Todas)", "Excelente (>85%)", "Bom (70-85%)", "Regular (50-70%)", "Crítico (<50%)"],
+            key="prensados_faixa_trs"
+        )
+        
+        st.markdown("---")
         mostrar_defeitos = st.checkbox("Somatório de Defeitos", value=True, key="prensados_defeitos")
         qtd = st.number_input("Linhas na tabela (0 = todas)", min_value=0, max_value=5000, value=0, step=10, key="prensados_qtd")
 
-    # Aplicar filtros
-    df = df_base.copy()
+    # ===== APLICAR FILTROS =====
+    df = df_base_calc.copy()
+    
     if data_ini:
         df = df[df['DATA'] >= pd.to_datetime(data_ini)]
     if data_fim:
@@ -2660,10 +2715,21 @@ if aba_selecionada == 'PRENSADOS':
             df = df[df['BOQUETA'] == 1]
         elif "Auto" in prensa_tipo:
             df = df[df['BOQUETA'] == 2]
+    
+    # Filtro por faixa de TRS
+    if faixa_trs != "(Todas)" and 'TRS FINAL (%)' in df.columns:
+        if faixa_trs == "Excelente (>85%)":
+            df = df[df['TRS FINAL (%)'] > 85]
+        elif faixa_trs == "Bom (70-85%)":
+            df = df[(df['TRS FINAL (%)'] >= 70) & (df['TRS FINAL (%)'] <= 85)]
+        elif faixa_trs == "Regular (50-70%)":
+            df = df[(df['TRS FINAL (%)'] >= 50) & (df['TRS FINAL (%)'] < 70)]
+        elif faixa_trs == "Crítico (<50%)":
+            df = df[df['TRS FINAL (%)'] < 50]
 
-    # KPIs
+    # ===== KPIs =====
     if not df.empty:
-        for col in ['PRODUZIDO', 'APROVADO', 'EMBALADO', 'TRS 100%', 'REFUGADO']:
+        for col in ['PRODUZIDO', 'APROVADO', 'EMBALADO', 'TRS 100%', 'REFUGADO', 'TEMPERADO']:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
         
@@ -2671,29 +2737,31 @@ if aba_selecionada == 'PRENSADOS':
         total_apro = int(df['APROVADO'].sum())
         total_embal = int(df['EMBALADO'].sum()) if 'EMBALADO' in df.columns else 0
         total_meta = int(df['TRS 100%'].sum()) if 'TRS 100%' in df.columns else 0
+        total_temperado = int(df['TEMPERADO'].sum()) if 'TEMPERADO' in df.columns else 0
         
         trs_primeira_escolha = (total_apro / total_meta * 100) if total_meta else 0
         trs_final_total = (total_embal / total_meta * 100) if total_meta else 0
     else:
-        total_prod = total_apro = total_embal = total_meta = trs_primeira_escolha = trs_final_total = 0
+        total_prod = total_apro = total_embal = total_meta = total_temperado = trs_primeira_escolha = trs_final_total = 0
 
-    # Page header
+    # ===== PAGE HEADER =====
     render_page_header("PRENSADOS", f"Industrial · {len(df):,} registros carregados · Atualizado {get_horario_brasilia()}", THEME['accent_cyan'])
 
-    # KPIs (6 cards)
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    # ===== KPIs (7 cards - incluindo TEMPERADO e TRS divididos) =====
+    c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
     with c1: render_kpi_card("Produzido", f"{total_prod:,}".replace(",","."), THEME['accent_cyan'], "◈")
     with c2: render_kpi_card("Aprovado", f"{total_apro:,}".replace(",","."), THEME['accent_lime'], "◈")
     with c3: render_kpi_card("Meta Líquida", f"{total_meta:,}".replace(",","."), THEME['accent_purple'], "◈")
     with c4: render_kpi_card("Embalado", f"{total_embal:,}".replace(",","."), THEME['accent_yellow'], "◈")
-    with c5:
+    with c5: render_kpi_card("Temperado", f"{total_temperado:,}".replace(",","."), THEME['accent_orange'], "🔥")
+    with c6:
         trs_primeira_cor = THEME['accent_lime'] if trs_primeira_escolha >= 85 else THEME['accent_orange'] if trs_primeira_escolha >= 70 else THEME['accent_red']
         render_kpi_card("TRS 1ª Escolha", f"{trs_primeira_escolha:.1f}%", trs_primeira_cor, "◎")
-    with c6:
-        trs_final_cor = THEME['accent_lime'] if trs_final_total >= 85 else THEME['accent_orange'] if trs_final_total >= 70 else THEME['accent_red']
+    with c7:
+        trs_final_cor = THEME['accent_yellow'] if trs_final_total >= 85 else THEME['accent_orange'] if trs_final_total >= 70 else THEME['accent_red']
         render_kpi_card("TRS Final", f"{trs_final_total:.1f}%", trs_final_cor, "◎")
 
-    # Tabela de produção
+    # ===== TABELA DE PRODUÇÃO COM COLUNA TEMPERADO =====
     render_section_header("Tabela de Produção", "▸")
 
     if not df.empty:
@@ -2718,7 +2786,7 @@ if aba_selecionada == 'PRENSADOS':
         df_display = df_view.copy()
         df_display['DATA'] = pd.to_datetime(df_display['DATA']).dt.strftime('%d/%m/%Y')
 
-        for col in ['PRODUZIDO', 'APROVADO', 'EMBALADO', 'REFUGADO', 'TRS 100%']:
+        for col in ['PRODUZIDO', 'APROVADO', 'EMBALADO', 'REFUGADO', 'TRS 100%', 'TEMPERADO']:
             if col in df_display.columns:
                 df_display[col] = df_display[col].apply(lambda x: int(round(x)) if pd.notnull(x) else 0)
                 df_display[col] = df_display[col].apply(lambda x: f"{x:,}".replace(",", "."))
@@ -2728,7 +2796,8 @@ if aba_selecionada == 'PRENSADOS':
         if 'TRS FINAL (%)' in df_display.columns:
             df_display['TRS FINAL (%)'] = df_display['TRS FINAL (%)'].apply(lambda x: f"{x:.2f}%")
 
-        colunas_exibir = ['DATA', 'REFERÊNCIA', 'TURNO', 'PRODUZIDO', 'APROVADO', 'TRS 100%', 'EMBALADO', 'REFUGADO', 'TRS 1ª ESCOLHA (%)', 'TRS FINAL (%)']
+        # Colunas para exibição - incluindo TEMPERADO após APROVADO
+        colunas_exibir = ['DATA', 'REFERÊNCIA', 'TURNO', 'PRODUZIDO', 'APROVADO', 'TEMPERADO', 'TRS 100%', 'EMBALADO', 'REFUGADO', 'TRS 1ª ESCOLHA (%)', 'TRS FINAL (%)']
         if 'ANALISE' in df_display.columns:
             colunas_exibir.append('ANALISE')
         colunas_exibir = [col for col in colunas_exibir if col in df_display.columns]
@@ -2738,7 +2807,7 @@ if aba_selecionada == 'PRENSADOS':
         if not filtro_melhores_trs:
             st.caption("▸ Dourado: Melhor TRS Final Histórico por referência   ▸ Verde: Análise registrada")
 
-    # Gráfico TRS Diário
+    # ===== GRÁFICO TRS DIÁRIO =====
     render_section_header("Evolução Diária do TRS", "▸")
 
     if not df.empty and 'TRS 100%' in df.columns:
@@ -2746,6 +2815,10 @@ if aba_selecionada == 'PRENSADOS':
         for col in ['PRODUZIDO', 'APROVADO', 'EMBALADO', 'TRS 100%']:
             if col in df.columns:
                 colunas_agg[col] = 'sum'
+        
+        # Adicionar TEMPERADO se existir
+        if 'TEMPERADO' in df.columns:
+            colunas_agg['TEMPERADO'] = 'sum'
         
         if colunas_agg:
             resumo_dia = df.groupby(df['DATA'].dt.date).agg(colunas_agg).reset_index()
@@ -2787,7 +2860,7 @@ if aba_selecionada == 'PRENSADOS':
 
     st.markdown("<hr>", unsafe_allow_html=True)
 
-    # Manual vs Automática
+    # ===== MANUAL VS AUTOMÁTICA =====
     render_section_header("Desempenho por Tipo de Prensa", "▸")
     col1, col2 = st.columns(2)
 
@@ -2800,13 +2873,14 @@ if aba_selecionada == 'PRENSADOS':
                 t_ap_m = df_manual['APROVADO'].sum()
                 t_emb_m = df_manual['EMBALADO'].sum()
                 t_mt_m = df_manual['TRS 100%'].sum() if 'TRS 100%' in df_manual.columns else 1
+                t_temp_m = df_manual['TEMPERADO'].sum() if 'TEMPERADO' in df_manual.columns else 0
                 trs1_m = (t_ap_m / t_mt_m * 100) if t_mt_m > 0 else 0
                 trs_final_m = (t_emb_m / t_mt_m * 100) if t_mt_m > 0 else 0
                 prod_m = df_manual['PRODUZIDO'].sum()
                 
                 trs_color_m = THEME['accent_lime'] if trs1_m >= 85 else THEME['accent_orange'] if trs1_m >= 70 else THEME['accent_red']
                 render_kpi_card("TRS 1ª Escolha — Manual", f"{trs1_m:.1f}%", trs_color_m)
-                st.caption(f"TRS Final: {trs_final_m:.1f}% | Produção: {prod_m:,.0f} un".replace(",","."))
+                st.caption(f"TRS Final: {trs_final_m:.1f}% | Produção: {prod_m:,.0f} un | Temperado: {t_temp_m:,.0f}".replace(",","."))
             else:
                 st.info("Sem dados para Prensa Manual")
 
@@ -2819,24 +2893,23 @@ if aba_selecionada == 'PRENSADOS':
                 t_ap_a = df_auto['APROVADO'].sum()
                 t_emb_a = df_auto['EMBALADO'].sum()
                 t_mt_a = df_auto['TRS 100%'].sum() if 'TRS 100%' in df_auto.columns else 1
+                t_temp_a = df_auto['TEMPERADO'].sum() if 'TEMPERADO' in df_auto.columns else 0
                 trs1_a = (t_ap_a / t_mt_a * 100) if t_mt_a > 0 else 0
                 trs_final_a = (t_emb_a / t_mt_a * 100) if t_mt_a > 0 else 0
                 prod_a = df_auto['PRODUZIDO'].sum()
                 
                 trs_color_a = THEME['accent_lime'] if trs1_a >= 85 else THEME['accent_orange'] if trs1_a >= 70 else THEME['accent_red']
                 render_kpi_card("TRS 1ª Escolha — Automática", f"{trs1_a:.1f}%", trs_color_a)
-                st.caption(f"TRS Final: {trs_final_a:.1f}% | Produção: {prod_a:,.0f} un".replace(",","."))
+                st.caption(f"TRS Final: {trs_final_a:.1f}% | Produção: {prod_a:,.0f} un | Temperado: {t_temp_a:,.0f}".replace(",","."))
             else:
                 st.info("Sem dados para Prensa Automática")
 
     st.markdown("<hr>", unsafe_allow_html=True)
 
-    # ==================================================================
-    # ANÁLISE DE PARADAS - COM HORAS TRABALHADAS PRODUTIVAS NO PIZZA
-    # ==================================================================
+    # ===== ANÁLISE DE PARADAS =====
     render_section_header("Análise de Paradas", "▸")
 
-    # 1. HORAS TRABALHADAS PRODUTIVAS = soma direta da coluna HORAS TOTAIS
+    # 1. HORAS TRABALHADAS PRODUTIVAS
     horas_trabalhadas_produtivas = 0
     if 'HORAS_TOTAIS_MIN' in df.columns:
         horas_trabalhadas_produtivas = df['HORAS_TOTAIS_MIN'].sum()
@@ -2848,11 +2921,11 @@ if aba_selecionada == 'PRENSADOS':
                 horas_trabalhadas_produtivas = df['HORAS_TOTAIS_MIN'].sum()
                 break
 
-    # 2. ERROS DE PROCESSO = soma da coluna ACERTOS (ignorando 02:45:00)
+    # 2. ERROS DE PROCESSO
     total_acertos = 0
     if 'ACERTOS_MIN' in df.columns:
         def filtrar_acertos(val):
-            if val == 165:  # 02:45:00 = 165 minutos
+            if val == 165:
                 return 0
             return val
         
@@ -2865,7 +2938,7 @@ if aba_selecionada == 'PRENSADOS':
                 total_acertos = df['ACERTOS_MIN'].apply(filtrar_acertos).sum()
                 break
 
-    # 3. MANUTENÇÃO = soma da coluna MANUT.
+    # 3. MANUTENÇÃO
     total_manut = 0
     if 'MANUT_MIN' in df.columns:
         total_manut = df['MANUT_MIN'].sum()
@@ -2877,10 +2950,9 @@ if aba_selecionada == 'PRENSADOS':
                 total_manut = df['MANUT_MIN'].sum()
                 break
 
-    # Calcular Horas Produtivas para o gráfico de pizza
     horas_produtivas = max(0, horas_trabalhadas_produtivas - (total_acertos + total_manut))
 
-    # Exibir APENAS 3 cards (Horas Trabalhadas Produtivas, Erros, Manutenção)
+    # Cards de paradas
     p1, p2, p3 = st.columns(3)
     with p1: 
         render_kpi_card(
@@ -2901,7 +2973,7 @@ if aba_selecionada == 'PRENSADOS':
             THEME['accent_red']
         )
 
-    # Gráfico de barras empilhadas: Manual vs Automática
+    # Gráfico de barras empilhadas
     col1, col2 = st.columns(2)
 
     with col1:
@@ -2950,7 +3022,6 @@ if aba_selecionada == 'PRENSADOS':
             plt.close(fig)
 
     with col2:
-        # GRÁFICO DE PIZZA - Usando a SOMA DOS 3 CARDS como 100%
         total_geral = horas_trabalhadas_produtivas + total_acertos + total_manut
         
         if total_geral > 0:
@@ -3000,29 +3071,22 @@ if aba_selecionada == 'PRENSADOS':
         else:
             st.info("Sem dados de tempo para exibir")
 
-    # ==================================================================
-    # NOVOS GRÁFICOS: MANUAL E AUTOMÁTICA - MÊS A MÊS
-    # ==================================================================
+    # ===== GRÁFICOS MENSAIS MANUAL E AUTOMÁTICA =====
     st.markdown("<hr>", unsafe_allow_html=True)
     render_section_header("📊 Evolução Mensal de Erros e Manutenção por Tipo de Prensa", "▸")
 
-    # Função para filtrar acertos (ignorar 02:45:00)
     def filtrar_acertos_para_grafico(valor):
-        """Retorna 0 se o valor for 02:45:00 (165 minutos), senão retorna o valor original"""
         if valor == 165:
             return 0
         return valor
 
-    # Verificar se temos dados para ambos os tipos
     if 'BOQUETA' in df.columns and 'ACERTOS_MIN' in df.columns and 'MANUT_MIN' in df.columns:
-        # Criar coluna de mês/ano
         df['MES_ANO'] = df['DATA'].dt.to_period('M').astype(str)
         
-        # Separar dados por tipo de prensa
         df_manual = df[df['BOQUETA'] == 1].copy()
         df_auto = df[df['BOQUETA'] == 2].copy()
         
-        # ==== GRÁFICO MANUAL ====
+        # MANUAL
         st.markdown(f"""
         <div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.1em;
             color:{THEME['accent_cyan']};margin:10px 0 5px;font-weight:bold;">
@@ -3031,13 +3095,10 @@ if aba_selecionada == 'PRENSADOS':
         """, unsafe_allow_html=True)
         
         if not df_manual.empty:
-            # Agrupar por mês
             agg_manual = df_manual.groupby('MES_ANO').agg({
                 'ACERTOS_MIN': lambda x: x.apply(filtrar_acertos_para_grafico).sum(),
                 'MANUT_MIN': 'sum'
             }).reset_index()
-            
-            # Ordenar por mês
             agg_manual = agg_manual.sort_values('MES_ANO')
             
             if not agg_manual.empty:
@@ -3054,7 +3115,6 @@ if aba_selecionada == 'PRENSADOS':
                               label='Manutenção', color=THEME['accent_red'], 
                               alpha=0.85, edgecolor='white', linewidth=1.5)
                 
-                # Adicionar valores nas barras
                 for bars in [bars1, bars2]:
                     for bar in bars:
                         height = bar.get_height()
@@ -3067,7 +3127,6 @@ if aba_selecionada == 'PRENSADOS':
                 ax.set_xticklabels(agg_manual['MES_ANO'], fontsize=10, fontweight='bold')
                 ax.legend(loc='upper left', fontsize=10)
                 
-                # Ajustar limites
                 max_valor = max(agg_manual['ACERTOS_MIN'].max(), agg_manual['MANUT_MIN'].max())
                 if max_valor > 0:
                     ax.set_ylim(0, max_valor * 1.2)
@@ -3076,7 +3135,6 @@ if aba_selecionada == 'PRENSADOS':
                 st.pyplot(fig)
                 plt.close(fig)
                 
-                # Mostrar total do período
                 total_acertos_m = agg_manual['ACERTOS_MIN'].sum()
                 total_manut_m = agg_manual['MANUT_MIN'].sum()
                 st.caption(f"📊 Total Manual: Erros Processo: {minutos_para_horas_str(int(total_acertos_m))} | Manutenção: {minutos_para_horas_str(int(total_manut_m))}")
@@ -3087,7 +3145,7 @@ if aba_selecionada == 'PRENSADOS':
         
         st.markdown("<br>", unsafe_allow_html=True)
         
-        # ==== GRÁFICO AUTOMÁTICA ====
+        # AUTOMÁTICA
         st.markdown(f"""
         <div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.1em;
             color:{THEME['accent_purple']};margin:10px 0 5px;font-weight:bold;">
@@ -3096,13 +3154,10 @@ if aba_selecionada == 'PRENSADOS':
         """, unsafe_allow_html=True)
         
         if not df_auto.empty:
-            # Agrupar por mês
             agg_auto = df_auto.groupby('MES_ANO').agg({
                 'ACERTOS_MIN': lambda x: x.apply(filtrar_acertos_para_grafico).sum(),
                 'MANUT_MIN': 'sum'
             }).reset_index()
-            
-            # Ordenar por mês
             agg_auto = agg_auto.sort_values('MES_ANO')
             
             if not agg_auto.empty:
@@ -3119,7 +3174,6 @@ if aba_selecionada == 'PRENSADOS':
                               label='Manutenção', color=THEME['accent_red'], 
                               alpha=0.85, edgecolor='white', linewidth=1.5)
                 
-                # Adicionar valores nas barras
                 for bars in [bars1, bars2]:
                     for bar in bars:
                         height = bar.get_height()
@@ -3132,7 +3186,6 @@ if aba_selecionada == 'PRENSADOS':
                 ax.set_xticklabels(agg_auto['MES_ANO'], fontsize=10, fontweight='bold')
                 ax.legend(loc='upper left', fontsize=10)
                 
-                # Ajustar limites
                 max_valor = max(agg_auto['ACERTOS_MIN'].max(), agg_auto['MANUT_MIN'].max())
                 if max_valor > 0:
                     ax.set_ylim(0, max_valor * 1.2)
@@ -3141,7 +3194,6 @@ if aba_selecionada == 'PRENSADOS':
                 st.pyplot(fig)
                 plt.close(fig)
                 
-                # Mostrar total do período
                 total_acertos_a = agg_auto['ACERTOS_MIN'].sum()
                 total_manut_a = agg_auto['MANUT_MIN'].sum()
                 st.caption(f"📊 Total Automática: Erros Processo: {minutos_para_horas_str(int(total_acertos_a))} | Manutenção: {minutos_para_horas_str(int(total_manut_a))}")
@@ -3150,12 +3202,7 @@ if aba_selecionada == 'PRENSADOS':
         else:
             st.info("📭 Nenhum dado disponível para Prensa Automática")
 
-    else:
-        st.warning("⚠️ Dados insuficientes para gerar os gráficos mensais. Verifique as colunas 'BOQUETA', 'ACERTOS_MIN' e 'MANUT_MIN'.")
-
-    # ==================================================================
-    # GRÁFICO DE COLUNAS POR TURNO (Horas Trabalhadas, Erros, Manutenção) + TRS (linha)
-    # ==================================================================
+    # ===== GRÁFICO POR TURNO =====
     if not df.empty and 'TURNO' in df.columns:
         render_section_header("Tempo de Parada x Produtividade (TRS)", "▸")
         
@@ -3326,7 +3373,7 @@ if aba_selecionada == 'PRENSADOS':
             
     st.markdown("<hr>", unsafe_allow_html=True)
 
-    # TRS por Turno
+    # ===== TRS POR TURNO =====
     if not df.empty and 'TURNO' in df.columns and 'TRS 100%' in df.columns:
         render_section_header("TRS por Turno", "▸")
         turno_data = []
@@ -3370,7 +3417,7 @@ if aba_selecionada == 'PRENSADOS':
             st.pyplot(fig)
             plt.close(fig)
 
-    # Defeitos de Prensados
+    # ===== DEFEITOS DE PRENSADOS =====
     if mostrar_defeitos:
         render_section_header("Estratificação de Defeitos - Prensados", "▸")
         colunas_defeitos_prensados = [
@@ -3406,7 +3453,7 @@ if aba_selecionada == 'PRENSADOS':
                 altura_grafico = max(4, len(df_def_sum) * 0.35)
                 
                 fig, ax = plt.subplots(figsize=(12, altura_grafico), facecolor=THEME['bg_card'])
-                apply_chart_style(ax, fig, "Defeitos — Somatório", ylabel="Quantidade")
+                apply_chart_style(ax, fig, "Defeitos de Prensados — Somatório", ylabel="Quantidade")
                 
                 bars = ax.barh(range(len(df_def_sum)), df_def_sum.values,
                               color=THEME['accent_red'], alpha=0.8,
@@ -3430,9 +3477,9 @@ if aba_selecionada == 'PRENSADOS':
                 plt.close(fig)
                 
                 total_def = df_def_sum.sum()
-                st.caption(f"**Total de defeitos:** {int(total_def):,}".replace(",","."))
+                st.caption(f"**Total de defeitos de Prensados:** {int(total_def):,}".replace(",","."))
                 
-                with st.expander("📊 Ver tabela detalhada de defeitos"):
+                with st.expander("📊 Ver tabela detalhada de defeitos de Prensados"):
                     tabela_defeitos = pd.DataFrame({
                         'Defeito': df_def_sum.index,
                         'Quantidade': df_def_sum.values.astype(int),
@@ -3442,7 +3489,7 @@ if aba_selecionada == 'PRENSADOS':
                     st.dataframe(tabela_defeitos, use_container_width=True, hide_index=True)
                     
                     if len(df_def_sum) > 1:
-                        st.markdown("**📈 Top 5 Defeitos**")
+                        st.markdown("**📈 Top 5 Defeitos de Prensados**")
                         top5 = df_def_sum.head(5)
                         outros_total = df_def_sum.iloc[5:].sum() if len(df_def_sum) > 5 else 0
                         
@@ -3469,15 +3516,168 @@ if aba_selecionada == 'PRENSADOS':
                             autotext.set_color('white')
                             autotext.set_fontweight('bold')
                             autotext.set_fontsize(10)
-                        ax2.set_title('Distribuição dos Defeitos (Top 5)', fontweight='bold', fontsize=12)
+                        ax2.set_title('Distribuição dos Defeitos de Prensados (Top 5)', fontweight='bold', fontsize=12)
                         fig2.tight_layout()
                         st.pyplot(fig2)
                         plt.close(fig2)
             else:
-                st.info("📭 Nenhum defeito registrado no período selecionado")
+                st.info("📭 Nenhum defeito de Prensados registrado no período selecionado")
         else:
-            st.warning("⚠️ Colunas de defeitos não encontradas na planilha de Prensados")
-            st.caption(f"Colunas disponíveis na planilha: {', '.join(list(df.columns)[:15])}...")
+            st.warning("⚠️ Colunas de defeitos de Prensados não encontradas na planilha")
+
+    # ===== SEÇÃO DEFEITOS SETOR DE TÊMPERA =====
+    if defeitos_tempera_existentes:
+        st.markdown("<hr>", unsafe_allow_html=True)
+        render_section_header("Defeitos Setor de Têmpera", "🔥", THEME['accent_orange'])
+        
+        # Calcular somatório dos defeitos de têmpera
+        df_def_temp = df[defeitos_tempera_existentes].apply(pd.to_numeric, errors='coerce').fillna(0)
+        df_def_temp_sum = df_def_temp.sum().sort_values(ascending=False)
+        df_def_temp_sum = df_def_temp_sum[df_def_temp_sum > 0]
+        
+        if not df_def_temp_sum.empty:
+            # Gráfico de barras (sem pizza)
+            altura_grafico_temp = max(4, len(df_def_temp_sum) * 0.35)
+            
+            fig, ax = plt.subplots(figsize=(12, altura_grafico_temp), facecolor=THEME['bg_card'])
+            apply_chart_style(ax, fig, "Defeitos Setor de Têmpera — Somatório", ylabel="Quantidade", accent=THEME['accent_orange'])
+            
+            # Definir cores personalizadas para defeitos de têmpera
+            cores_temp = ['#E86C2C' if 'RESFRIAMENTO' in idx or 'EMPENADA' in idx else 
+                         '#FF6B35' if 'IMPACTO' in idx else 
+                         '#FFB900' if 'QUARENTENA' in idx else 
+                         '#0078D4' for idx in df_def_temp_sum.index]
+            
+            bars = ax.barh(range(len(df_def_temp_sum)), df_def_temp_sum.values,
+                          color=cores_temp, alpha=0.8,
+                          edgecolor=THEME['bg_card'], linewidth=1.2)
+            
+            ax.set_yticks(range(len(df_def_temp_sum)))
+            ax.set_yticklabels(df_def_temp_sum.index, fontsize=9, color=THEME['text_muted'])
+            ax.invert_yaxis()
+            
+            max_valor_temp = df_def_temp_sum.max() if len(df_def_temp_sum) > 0 else 1
+            for bar, val in zip(bars, df_def_temp_sum.values):
+                if val > 0:
+                    ax.text(bar.get_width() + (max_valor_temp * 0.01), 
+                           bar.get_y() + bar.get_height()/2,
+                           f"{int(val):,}".replace(",","."), 
+                           va='center', fontsize=9, color=THEME['text_primary'])
+            
+            ax.set_xlabel("Quantidade", fontsize=10, color=THEME['text_muted'])
+            fig.tight_layout(pad=1.5)
+            st.pyplot(fig)
+            plt.close(fig)
+            
+            total_def_temp = df_def_temp_sum.sum()
+            st.caption(f"🔥 **Total de defeitos do Setor de Têmpera:** {int(total_def_temp):,}".replace(",","."))
+            
+            # Tabela detalhada (SEM GRÁFICO DE PIZZA)
+            with st.expander("📊 Ver tabela detalhada de defeitos da Têmpera", expanded=False):
+                tabela_temp = pd.DataFrame({
+                    'Defeito': df_def_temp_sum.index,
+                    'Quantidade': df_def_temp_sum.values.astype(int),
+                    '% do Total': (df_def_temp_sum.values / total_def_temp * 100).round(1)
+                })
+                tabela_temp['% do Total'] = tabela_temp['% do Total'].astype(str) + '%'
+                st.dataframe(tabela_temp, use_container_width=True, hide_index=True)
+        else:
+            st.info("📭 Nenhum defeito do setor de Têmpera registrado no período selecionado")
+
+    # ===== SEÇÃO DEFEITOS DA EMBALAGEM =====
+    if defeitos_embalagem_existentes:
+        st.markdown("<hr>", unsafe_allow_html=True)
+        render_section_header("Defeitos da Embalagem", "📦", THEME['accent_lime'])
+        
+        # Calcular somatório dos defeitos de embalagem
+        df_def_emb = df[defeitos_embalagem_existentes].apply(pd.to_numeric, errors='coerce').fillna(0)
+        df_def_emb_sum = df_def_emb.sum().sort_values(ascending=False)
+        df_def_emb_sum = df_def_emb_sum[df_def_emb_sum > 0]
+        
+        if not df_def_emb_sum.empty:
+            # Gráfico de barras
+            altura_grafico_emb = max(4, len(df_def_emb_sum) * 0.35)
+            
+            fig, ax = plt.subplots(figsize=(12, altura_grafico_emb), facecolor=THEME['bg_card'])
+            apply_chart_style(ax, fig, "Defeitos da Embalagem — Somatório", ylabel="Quantidade", accent=THEME['accent_lime'])
+            
+            # Definir cores personalizadas para defeitos de embalagem
+            cores_emb = ['#107C10' if 'BOLHA' in idx or 'PEDRA' in idx else 
+                         '#0078D4' if 'TRINCA' in idx or 'RUGA' in idx else 
+                         '#E86C2C' if 'CORTE' in idx or 'DOBRA' in idx else 
+                         '#FFB900' if 'QUEBRA' in idx or 'FALHA' in idx else 
+                         '#6B46C1' if 'CHUPADO' in idx or 'CROMO' in idx else 
+                         '#E81123' for idx in df_def_emb_sum.index]
+            
+            bars = ax.barh(range(len(df_def_emb_sum)), df_def_emb_sum.values,
+                          color=cores_emb, alpha=0.8,
+                          edgecolor=THEME['bg_card'], linewidth=1.2)
+            
+            ax.set_yticks(range(len(df_def_emb_sum)))
+            ax.set_yticklabels(df_def_emb_sum.index, fontsize=9, color=THEME['text_muted'])
+            ax.invert_yaxis()
+            
+            max_valor_emb = df_def_emb_sum.max() if len(df_def_emb_sum) > 0 else 1
+            for bar, val in zip(bars, df_def_emb_sum.values):
+                if val > 0:
+                    ax.text(bar.get_width() + (max_valor_emb * 0.01), 
+                           bar.get_y() + bar.get_height()/2,
+                           f"{int(val):,}".replace(",","."), 
+                           va='center', fontsize=9, color=THEME['text_primary'])
+            
+            ax.set_xlabel("Quantidade", fontsize=10, color=THEME['text_muted'])
+            fig.tight_layout(pad=1.5)
+            st.pyplot(fig)
+            plt.close(fig)
+            
+            total_def_emb = df_def_emb_sum.sum()
+            st.caption(f"📦 **Total de defeitos da Embalagem:** {int(total_def_emb):,}".replace(",","."))
+            
+            # Tabela detalhada
+            with st.expander("📊 Ver tabela detalhada de defeitos da Embalagem", expanded=False):
+                tabela_emb = pd.DataFrame({
+                    'Defeito': df_def_emb_sum.index,
+                    'Quantidade': df_def_emb_sum.values.astype(int),
+                    '% do Total': (df_def_emb_sum.values / total_def_emb * 100).round(1)
+                })
+                tabela_emb['% do Total'] = tabela_emb['% do Total'].astype(str) + '%'
+                st.dataframe(tabela_emb, use_container_width=True, hide_index=True)
+                
+                # Gráfico de pizza dos defeitos de embalagem
+                if len(df_def_emb_sum) > 1:
+                    st.markdown("**📈 Distribuição dos Defeitos da Embalagem**")
+                    top5_emb = df_def_emb_sum.head(5)
+                    outros_total_emb = df_def_emb_sum.iloc[5:].sum() if len(df_def_emb_sum) > 5 else 0
+                    
+                    dados_pizza_emb = []
+                    labels_pizza_emb = []
+                    for idx, (defeito, qtd) in enumerate(top5_emb.items()):
+                        dados_pizza_emb.append(qtd)
+                        labels_pizza_emb.append(f"{defeito}\n({qtd:.0f})")
+                    if outros_total_emb > 0:
+                        dados_pizza_emb.append(outros_total_emb)
+                        labels_pizza_emb.append(f"Outros\n({outros_total_emb:.0f})")
+                    
+                    fig2, ax2 = plt.subplots(figsize=(6, 6), facecolor=THEME['bg_card'])
+                    cores_pizza_emb = ['#107C10', '#0078D4', '#E86C2C', '#FFB900', '#6B46C1', '#E81123']
+                    wedges, texts, autotexts = ax2.pie(
+                        dados_pizza_emb, 
+                        labels=labels_pizza_emb,
+                        colors=cores_pizza_emb[:len(dados_pizza_emb)],
+                        autopct='%1.0f%%',
+                        startangle=90,
+                        textprops={'fontsize': 9}
+                    )
+                    for autotext in autotexts:
+                        autotext.set_color('white')
+                        autotext.set_fontweight('bold')
+                        autotext.set_fontsize(10)
+                    ax2.set_title('Distribuição dos Defeitos da Embalagem', fontweight='bold', fontsize=12)
+                    fig2.tight_layout()
+                    st.pyplot(fig2)
+                    plt.close(fig2)
+        else:
+            st.info("📭 Nenhum defeito da Embalagem registrado no período selecionado")
 
     st.markdown(f"""
     <div style="text-align:right;padding:16px 0 8px;
@@ -3486,7 +3686,6 @@ if aba_selecionada == 'PRENSADOS':
         TRS DASHBOARD · PRENSADOS · {get_horario_brasilia()}
     </div>
     """, unsafe_allow_html=True)
-
 
 # ==================================================================================================
 # SOPRO
@@ -3794,12 +3993,29 @@ elif aba_selecionada == 'SOPRO':
 
 
 # ==================================================================================================
-# TÊMPERA (COM MAPEAMENTO CORRETO DAS COLUNAS)
+# TÊMPERA - VERSÃO MESCLADA (COM MAPEAMENTO DE GANCHEIRA E NOVAS FUNCIONALIDADES)
 # ==================================================================================================
 elif aba_selecionada == 'TÊMPERA':
-    ABA = 'TRS_TEMPERA'
-
-    # Mapeamento dos códigos de defeito
+    render_page_header("TÊMPERA", f"Industrial · Atualizado {get_horario_brasilia()}", THEME['accent_purple'])
+    
+    # ======================
+    # DEFINIÇÃO DAS COLUNAS DE DEFEITOS DA TÊMPERA
+    # ======================
+    COLUNAS_DEFEITOS_TEMPERA = [
+        'EMPENADA',
+        'OVALIZADA T',
+        'QUEBRA RESFRIAMENTO T',
+        'EMPENADA T',
+        'QUEBRA T',
+        'IMPACTO T',
+        'QUARENTENA T',
+        'TESTE FURAÇÃO T',
+        'PROCESSOS ANTERIORES T'
+    ]
+    
+    # ======================
+    # MAPEAMENTO DOS CÓDIGOS DE DEFEITO (ORIGINAL - PARA A PLANILHA TRS_TEMPERA)
+    # ======================
     MAPEAMENTO_DEFEITOS = {
         1: 'Estourou após furar',
         2: 'Quebra no resfriamento',
@@ -3810,962 +4026,1316 @@ elif aba_selecionada == 'TÊMPERA':
     }
     
     CODIGOS_DEFEITO_REAIS = [2, 3, 4, 5, 6]
-
-    # ======================
-    # ARQUIVO DE CACHE LOCAL
-    # ======================
-    CACHE_FILE_TEMPERA = "cache_tempera.pkl"
     
-    def safe_float(val):
-        """Converte valor para float de forma segura"""
-        if val is None or pd.isna(val):
+    # ======================
+    # FUNÇÃO PARA CONVERTER TRS CORRETAMENTE
+    # ======================
+    def converter_trs(valor):
+        """
+        Converte o valor do TRS para porcentagem correta.
+        - Se o valor for > 1, considera que já está em porcentagem (ex: 92)
+        - Se o valor for < 1, considera que está em decimal (ex: 0.92) e multiplica por 100
+        - Se o valor for entre 1 e 100, mantém como está
+        """
+        if pd.isna(valor) or valor is None:
             return 0.0
-        try:
-            val_str = str(val).strip()
-            if val_str == '' or val_str == 'nan':
+        
+        # Se for string, tenta converter
+        if isinstance(valor, str):
+            valor_str = valor.strip().replace(',', '.')
+            try:
+                valor = float(valor_str)
+            except:
                 return 0.0
-            val_str = val_str.replace(',', '.')
-            return float(val_str)
+        
+        try:
+            valor = float(valor)
         except:
             return 0.0
-
-    def salvar_cache_tempera(df):
-        """Salva o DataFrame em cache local"""
-        try:
-            df.to_pickle(CACHE_FILE_TEMPERA)
-            return True
-        except Exception as e:
-            print(f"Erro ao salvar cache: {e}")
-            return False
+        
+        if valor <= 0:
+            return 0.0
+        elif valor < 1:
+            # Valor está em decimal (0.92 = 92%)
+            return valor * 100
+        elif valor < 100:
+            # Valor já está em porcentagem (92 = 92%)
+            return valor
+        else:
+            # Valor > 100, pode ser porcentagem com mais de 100%
+            return valor
     
-    def carregar_cache_tempera():
-        """Carrega o DataFrame do cache local"""
+    # ======================
+    # FUNÇÃO PARA CONVERTER TEMPO EM FORMATO HH:MM:SS PARA HORAS DECIMAIS
+    # ======================
+    def tempo_para_horas_decimais(valor):
+        """
+        Converte um valor de tempo no formato HH:MM:SS ou HH:MM para horas decimais
+        Retorna 0 se não for possível converter
+        """
+        if pd.isna(valor) or valor is None:
+            return 0.0
+        
         try:
-            if os.path.exists(CACHE_FILE_TEMPERA):
-                df = pd.read_pickle(CACHE_FILE_TEMPERA)
-                if not df.empty:
-                    return df
-            return None
+            # Se for string, tenta converter
+            if isinstance(valor, str):
+                valor_str = valor.strip()
+                
+                # Verifica se está no formato HH:MM:SS
+                if ':' in valor_str:
+                    partes = valor_str.split(':')
+                    if len(partes) == 3:  # HH:MM:SS
+                        horas = int(partes[0])
+                        minutos = int(partes[1])
+                        segundos = int(partes[2])
+                        return horas + (minutos / 60) + (segundos / 3600)
+                    elif len(partes) == 2:  # HH:MM
+                        horas = int(partes[0])
+                        minutos = int(partes[1])
+                        return horas + (minutos / 60)
+                
+                # Tenta converter para float
+                try:
+                    return float(valor_str)
+                except:
+                    return 0.0
+            
+            # Se já for número, retorna como está
+            if isinstance(valor, (int, float)):
+                # Se o número for muito grande (> 100), pode ser minutos ou segundos
+                if valor > 1000:
+                    return valor / 3600  # Segundos para horas
+                elif valor > 100:
+                    return valor / 60    # Minutos para horas
+                return float(valor)
+            
+            return 0.0
+            
         except Exception as e:
-            print(f"Erro ao carregar cache: {e}")
-            return None
-
+            return 0.0
+    
     # ======================
-    # FUNÇÃO DE PROCESSAMENTO DOS DADOS - CORRIGIDA
+    # FUNÇÃO PARA CONVERTER HORAS DECIMAIS PARA HH:MM
     # ======================
-    def processar_dados_tempera(todos_dados):
-        """Processa os dados brutos da planilha e retorna DataFrame processado"""
-        if len(todos_dados) < 2:
-            return pd.DataFrame()
+    def horas_decimais_para_str(horas):
+        """
+        Converte horas decimais para string no formato HH:MM
+        """
+        if pd.isna(horas) or horas is None:
+            return "00:00"
         
-        cabecalho = todos_dados[0]
-        valores = todos_dados[1:]
-        df = pd.DataFrame(valores, columns=cabecalho)
+        try:
+            horas = float(horas)
+        except:
+            return "00:00"
         
-        # ===== CORREÇÃO: Mapeamento baseado nos nomes REAIS das colunas =====
-        # Baseado no diagnóstico: os nomes reais são 'DATA TEMP.', 'TURNO TEMP.', 'PROD.'
+        if horas <= 0:
+            return "00:00"
         
-        # Mapeamento de nomes de colunas
-        rename_map = {}
+        horas_int = int(horas)
+        minutos = int((horas - horas_int) * 60)
         
-        for col in df.columns:
-            col_clean = str(col).strip().upper()
-            
-            if 'DATA TEMP' in col_clean or col_clean == 'DATA':
-                rename_map[col] = 'DATA_TEMP'
-            elif 'TURNO TEMP' in col_clean or col_clean == 'TURNO':
-                rename_map[col] = 'TURNO_TEMP'
-            elif col_clean == 'PROD.' or col_clean == 'PRODUTO' or col_clean == 'PROD':
-                rename_map[col] = 'PRODUTO'
-            elif col_clean == 'GANCHEIRA':
-                rename_map[col] = 'GANCHEIRA'
-            elif col_clean == 'SUPEIOR' or col_clean == 'SUPERIOR':
-                rename_map[col] = 'SUPERIOR'
-            elif col_clean == 'MEIO':
-                rename_map[col] = 'MEIO'
-            elif col_clean == 'INFERIOR':
-                rename_map[col] = 'INFERIOR'
-            elif col_clean == 'A1':
-                rename_map[col] = 'A1'
-            elif col_clean == 'C1':
-                rename_map[col] = 'C1'
-            elif col_clean == 'A2':
-                rename_map[col] = 'A2'
-            elif col_clean == 'C2':
-                rename_map[col] = 'C2'
-            elif col_clean == 'A3':
-                rename_map[col] = 'A3'
-            elif col_clean == 'C3':
-                rename_map[col] = 'C3'
-            elif col_clean == 'A4':
-                rename_map[col] = 'A4'
-            elif col_clean == 'C4':
-                rename_map[col] = 'C4'
-            elif col_clean == 'A5':
-                rename_map[col] = 'A5'
-            elif col_clean == 'C5':
-                rename_map[col] = 'C5'
-            elif col_clean == 'A E B':
-                rename_map[col] = 'A e B'
-            elif col_clean == 'APROVADAS':
-                rename_map[col] = 'APROVADAS'
+        # Garantir que minutos não ultrapassem 59
+        if minutos >= 60:
+            horas_int += minutos // 60
+            minutos = minutos % 60
         
-        # Aplicar renomeação
-        df = df.rename(columns=rename_map)
-        
-        # Converter datas
-        if 'DATA_TEMP' in df.columns:
-            df['DATA'] = df['DATA_TEMP'].apply(converter_data_br)
-        
-        if 'DATA' in df.columns:
-            df = df.dropna(subset=['DATA'])
-        
-        # Converter colunas numéricas
-        colunas_numericas = ['SUPERIOR', 'MEIO', 'INFERIOR', 'A1', 'C1', 'A2', 'C2', 'A3', 'C3', 'A4', 'C4', 'A5', 'C5', 'A e B', 'APROVADAS']
-        
-        for col in colunas_numericas:
-            if col in df.columns:
-                df[col] = df[col].apply(safe_float)
-        
-        # CORREÇÃO: Tempo C2 - converter para segundos
-        if 'C2' in df.columns:
-            def converter_tempo_c2(val):
-                if pd.isna(val) or val == 0:
-                    return 0
-                if val <= 1:
-                    return val * 100
-                elif val <= 10:
-                    return val * 10
-                else:
-                    return val
-            df['C2'] = df['C2'].apply(converter_tempo_c2)
-        
-        # Identificar colunas de posições (colunas com números)
-        colunas_posicoes_validas = []
-        for col in df.columns:
-            try:
-                # Tenta converter para número
-                num = float(str(col).strip())
-                if 19 <= num <= 70:
-                    colunas_posicoes_validas.append(col)
-            except:
-                pass
-        
-        # Se não encontrou colunas de posição, tentar identificar colunas com números
-        if not colunas_posicoes_validas:
-            for col in df.columns:
+        return f"{horas_int:02d}:{minutos:02d}"
+    
+    # ======================
+    # FUNÇÃO PARA SOMAR HORAS E CONVERTER PARA STRING
+    # ======================
+    def somar_horas_e_converter(series):
+        """
+        Soma os valores de horas (em horas decimais) e converte para HH:MM
+        """
+        total = 0.0
+        for val in series:
+            if pd.notna(val):
                 try:
-                    num = float(str(col).strip())
-                    if 1 <= num <= 100:
-                        colunas_posicoes_validas.append(col)
+                    total += float(val)
                 except:
                     pass
         
-        # Inicializar colunas
-        df['TOTAL_PECAS'] = 40
-        df['APROVADO'] = 40
-        df['TOTAL_DEFEITOS'] = 0
-        df['IS_CRITICO'] = False
+        if total <= 0:
+            return "00:00"
         
-        for codigo, nome in MAPEAMENTO_DEFEITOS.items():
-            nome_clean = nome.upper().replace(' ', '_').replace('Ç', 'C').replace('Ã', 'A').replace('Á', 'A').replace('Ó', 'O')
-            df[f'QTD_{nome_clean}'] = 0
+        horas_int = int(total)
+        minutos = int((total - horas_int) * 60)
         
-        # Processar cada linha para contar defeitos
-        for idx, row in df.iterrows():
-            defeitos_contagem = {codigo: 0 for codigo in MAPEAMENTO_DEFEITOS.keys()}
-            
-            for col in colunas_posicoes_validas:
-                try:
-                    val = row[col]
-                    if pd.notna(val) and str(val).strip():
-                        # Converter para número
-                        val_str = str(val).strip().replace(',', '.')
-                        codigo = int(float(val_str))
-                        if codigo in MAPEAMENTO_DEFEITOS:
-                            defeitos_contagem[codigo] += 1
-                except:
-                    pass
-            
-            total_defeitos_reais = sum(defeitos_contagem.get(cod, 0) for cod in CODIGOS_DEFEITO_REAIS)
-            aprovadas = 40 - total_defeitos_reais
-            
-            df.at[idx, 'APROVADO'] = aprovadas
-            df.at[idx, 'TOTAL_DEFEITOS'] = total_defeitos_reais
-            df.at[idx, 'TRS (%)'] = (aprovadas / 40 * 100) if 40 > 0 else 0
-            
-            is_critico = False
-            if defeitos_contagem.get(4, 0) >= 1:
-                is_critico = True
-            if defeitos_contagem.get(3, 0) > 2:
-                is_critico = True
-            df.at[idx, 'IS_CRITICO'] = is_critico
-            
-            for codigo, nome in MAPEAMENTO_DEFEITOS.items():
-                nome_clean = nome.upper().replace(' ', '_').replace('Ç', 'C').replace('Ã', 'A').replace('Á', 'A').replace('Ó', 'O')
-                col_nome = f'QTD_{nome_clean}'
-                if col_nome in df.columns:
-                    df.at[idx, col_nome] = defeitos_contagem.get(codigo, 0)
+        if minutos >= 60:
+            horas_int += minutos // 60
+            minutos = minutos % 60
         
-        return df
-
+        return f"{horas_int:02d}:{minutos:02d}"
+    
     # ======================
-    # FUNÇÃO DE CARREGAMENTO COM VALIDAÇÃO
+    # FUNÇÃO PARA CARREGAR DADOS DA TÊMPERA (DA PLANILHA TRS_INDUSTRIAL)
     # ======================
-    @retry_on_quota(max_retries=3, delay=5)
-    def carregar_dados_tempera():
+    @st.cache_data(ttl=1200)
+    def carregar_dados_tempera_industrial():
         """
-        Carrega dados da têmpera com validação e fallback para cache
+        Carrega os dados da Têmpera da planilha TRS_INDUSTRIAL
+        Utiliza as colunas: D_TEMPERA, AP_TEMPERA, HORAS_TEMPERA, META_TEMPERA, 
+        TRS_TEMPERA, AUD_TEMPERA, MANU_TEMPERA, PARADA_TEMPERA e colunas de defeitos
         """
-        # 1. TENTAR CARREGAR DO CACHE PRIMEIRO (mais rápido)
-        df_cache = carregar_cache_tempera()
-        if df_cache is not None and not df_cache.empty:
-            return df_cache
-        
-        # 2. TENTAR CARREGAR DA API
         try:
             client = get_gspread_client()
             if client is None:
-                st.error("❌ Não foi possível conectar ao Google Sheets")
                 return pd.DataFrame()
             
-            # Tentar carregar a planilha
-            try:
-                sheet = client.open_by_key(ID_PLANILHA_TEMPERA).worksheet(ABA)
-            except Exception as e:
-                st.error(f"❌ Erro ao acessar a planilha: {e}")
-                return pd.DataFrame()
-            
-            # Ler os dados
+            # Usa a mesma planilha dos prensados
+            sheet = client.open_by_key(ID_PLANILHA_PRENSADOS_SOPRO).worksheet('TRS_INDUSTRIAL')
             todos_dados = sheet.get_all_values()
             
-            # Validar se há dados
             if len(todos_dados) < 2:
-                st.warning("⚠️ A planilha está vazia ou não tem dados suficientes.")
                 return pd.DataFrame()
             
-            # Processar os dados
-            df = processar_dados_tempera(todos_dados)
+            cabecalho = todos_dados[1]  # Linha 1 é o cabeçalho
+            valores = todos_dados[2:]   # Dados a partir da linha 2
             
-            # Validar se o processamento gerou dados
-            if df.empty:
-                st.warning("⚠️ Nenhum dado válido encontrado na planilha.")
-                return pd.DataFrame()
+            df = pd.DataFrame(valores, columns=cabecalho)
+            df.columns = df.columns.str.strip().str.upper()
             
-            # Salvar em cache
-            salvar_cache_tempera(df)
+            # ===== CONVERTER DATA =====
+            if 'DATA' in df.columns:
+                df['DATA'] = df['DATA'].apply(converter_data_br)
+                df = df.dropna(subset=['DATA'])
+            
+            # ===== CONVERTER D_TEMPERA =====
+            if 'D_TEMPERA' in df.columns:
+                df['D_TEMPERA'] = df['D_TEMPERA'].apply(converter_data_br)
+            
+            # ===== CONVERTER COLUNAS NUMÉRICAS (exceto TRS) =====
+            colunas_numericas = [
+                'AP_TEMPERA', 'HORAS_TEMPERA', 'META_TEMPERA', 
+                'AUD_TEMPERA'
+            ]
+            
+            for col in colunas_numericas:
+                if col in df.columns:
+                    df[col] = df[col].apply(converter_numero_br)
+            
+            # ===== CONVERTER TRS_TEMPERA COM A FUNÇÃO ESPECIAL =====
+            if 'TRS_TEMPERA' in df.columns:
+                df['TRS_TEMPERA'] = df['TRS_TEMPERA'].apply(converter_trs)
+            else:
+                df['TRS_TEMPERA'] = 0.0
+            
+            # ===== CONVERTER COLUNAS DE TEMPO (MANU_TEMPERA e PARADA_TEMPERA) =====
+            for col in ['MANU_TEMPERA', 'PARADA_TEMPERA']:
+                if col in df.columns:
+                    df[col] = df[col].apply(tempo_para_horas_decimais)
+                else:
+                    df[col] = 0.0
+            
+            # ===== CONVERTER COLUNAS DE DEFEITOS =====
+            for col in COLUNAS_DEFEITOS_TEMPERA:
+                if col in df.columns:
+                    df[col] = df[col].apply(converter_numero_br)
+                else:
+                    df[col] = 0
+            
+            # ===== CALCULAR TOTAL REFUGADO =====
+            df['REFUGADO_TOTAL'] = df[COLUNAS_DEFEITOS_TEMPERA].sum(axis=1)
+            
+            # ===== CALCULAR TOTAL DE PEÇAS (APROVADAS + REFUGADAS) =====
+            if 'AP_TEMPERA' in df.columns:
+                df['TOTAL_PECAS'] = df['AP_TEMPERA'] + df['REFUGADO_TOTAL']
+            else:
+                df['TOTAL_PECAS'] = df['REFUGADO_TOTAL']
+            
+            # ===== GARANTIR META_LIQUIDA =====
+            if 'META_TEMPERA' in df.columns:
+                df['META_LIQUIDA'] = df['META_TEMPERA']
+            else:
+                df['META_LIQUIDA'] = 0
+            
+            # ===== GARANTIR TRS (já convertido) =====
+            df['TRS_LIQUIDO'] = df['TRS_TEMPERA']
+            
+            # ===== ADICIONAR ANO_MES PARA AGRUPAÇÃO =====
+            if 'DATA' in df.columns:
+                df['ANO_MES'] = df['DATA'].dt.to_period('M').astype(str)
+            
+            # ===== CONVERTER HORAS PARA STRING =====
+            df['MANU_TEMPERA_STR'] = df['MANU_TEMPERA'].apply(horas_decimais_para_str)
+            df['PARADA_TEMPERA_STR'] = df['PARADA_TEMPERA'].apply(horas_decimais_para_str)
+            
+            # ===== ORDENAR POR DATA DO MAIS RECENTE PARA O MAIS ANTIGO =====
+            if 'DATA' in df.columns:
+                df = df.sort_values('DATA', ascending=False)
             
             return df
             
         except Exception as e:
-            # Tratamento para erro de quota
-            if "429" in str(e) or "Quota exceeded" in str(e):
-                st.warning("⚠️ Limite de requisições ao Google Sheets atingido.")
-                # Tentar carregar do cache novamente
-                df_cache = carregar_cache_tempera()
-                if df_cache is not None and not df_cache.empty:
-                    st.info(f"📂 Usando dados em cache ({len(df_cache)} registros).")
-                    return df_cache
-                else:
-                    st.error("❌ Sem dados em cache disponíveis. Aguarde alguns minutos e tente novamente.")
-                    return pd.DataFrame()
-            else:
-                st.error(f"❌ Erro ao carregar dados: {str(e)}")
-                df_cache = carregar_cache_tempera()
-                if df_cache is not None and not df_cache.empty:
-                    st.info(f"📂 Usando dados em cache devido ao erro ({len(df_cache)} registros).")
-                    return df_cache
-                return pd.DataFrame()
-
+            st.error(f"Erro ao carregar dados da Têmpera (Industrial): {e}")
+            import traceback
+            traceback.print_exc()
+            return pd.DataFrame()
+    
     # ======================
-    # FUNÇÃO PARA FORCAR RECARREGAMENTO
+    # FUNÇÃO PARA CARREGAR DADOS DA TÊMPERA ORIGINAL (TRS_TEMPERA) - CORRIGIDA
     # ======================
-    def forcar_recarregamento_tempera():
-        """Força o recarregamento dos dados da API"""
+    @st.cache_data(ttl=1200)
+    def carregar_dados_tempera_original():
+        """
+        Carrega os dados da Têmpera da planilha TRS_TEMPERA (original)
+        Utilizado para análises de gancheira e posições
+        """
         try:
-            if os.path.exists(CACHE_FILE_TEMPERA):
-                os.remove(CACHE_FILE_TEMPERA)
-            st.cache_data.clear()
-            return True
-        except:
-            return False
-
+            client = get_gspread_client()
+            if client is None:
+                st.warning("❌ Cliente Google Sheets não disponível")
+                return pd.DataFrame()
+            
+            # Tenta abrir a planilha TRS_TEMPERA
+            try:
+                spreadsheet = client.open_by_key(ID_PLANILHA_TEMPERA)
+            except Exception as e:
+                st.warning(f"❌ Não foi possível abrir a planilha TRS_TEMPERA: {e}")
+                return pd.DataFrame()
+            
+            # Tenta acessar a aba TRS_TEMPERA
+            try:
+                sheet = spreadsheet.worksheet('TRS_TEMPERA')
+            except Exception as e:
+                st.warning(f"❌ Aba 'TRS_TEMPERA' não encontrada: {e}")
+                # Tentar listar as abas disponíveis
+                try:
+                    worksheets = spreadsheet.worksheets()
+                    abas_disponiveis = [w.title for w in worksheets]
+                    st.warning(f"Abas disponíveis: {', '.join(abas_disponiveis)}")
+                except:
+                    pass
+                return pd.DataFrame()
+            
+            todos_dados = sheet.get_all_values()
+            
+            if len(todos_dados) < 2:
+                st.warning("⚠️ A planilha TRS_TEMPERA está vazia")
+                return pd.DataFrame()
+            
+            cabecalho = todos_dados[0]
+            valores = todos_dados[1:]
+            df = pd.DataFrame(valores, columns=cabecalho)
+            colunas = list(df.columns)
+            
+            # ===== MAPEAMENTO INTELIGENTE DAS COLUNAS =====
+            rename_map = {}
+            
+            # Procurar colunas pelo nome (case insensitive)
+            for col in df.columns:
+                col_clean = str(col).strip().upper()
+                
+                # Mapeamento baseado em palavras-chave
+                if 'PRODUCAO' in col_clean or 'PROD' in col_clean:
+                    rename_map[col] = 'PRODUCAO'
+                elif 'DATA' in col_clean and 'TEMP' in col_clean:
+                    rename_map[col] = 'DATA_TEMP'
+                elif 'TURNO' in col_clean and 'TEMP' in col_clean:
+                    rename_map[col] = 'TURNO_TEMP'
+                elif 'PRODUTO' in col_clean:
+                    rename_map[col] = 'PRODUTO'
+                elif 'GANCHEIRA' in col_clean:
+                    rename_map[col] = 'GANCHEIRA'
+                elif 'SUPERIOR' in col_clean:
+                    rename_map[col] = 'SUPERIOR'
+                elif 'MEIO' in col_clean:
+                    rename_map[col] = 'MEIO'
+                elif 'INFERIOR' in col_clean:
+                    rename_map[col] = 'INFERIOR'
+                elif col_clean == 'A1':
+                    rename_map[col] = 'A1'
+                elif col_clean == 'C1':
+                    rename_map[col] = 'C1'
+                elif col_clean == 'A2':
+                    rename_map[col] = 'A2'
+                elif col_clean == 'C2':
+                    rename_map[col] = 'C2'
+                elif col_clean == 'A3':
+                    rename_map[col] = 'A3'
+                elif col_clean == 'C3':
+                    rename_map[col] = 'C3'
+                elif col_clean == 'A4':
+                    rename_map[col] = 'A4'
+                elif col_clean == 'C4':
+                    rename_map[col] = 'C4'
+                elif col_clean == 'A5':
+                    rename_map[col] = 'A5'
+                elif col_clean == 'C5':
+                    rename_map[col] = 'C5'
+                elif col_clean == 'A E B':
+                    rename_map[col] = 'A e B'
+            
+            # Aplicar renomeação
+            if rename_map:
+                df = df.rename(columns=rename_map)
+            
+            # Se não encontrou GANCHEIRA, mostrar aviso
+            if 'GANCHEIRA' not in df.columns:
+                st.warning("⚠️ Coluna 'GANCHEIRA' não encontrada na planilha TRS_TEMPERA")
+                # Tentar encontrar por nome alternativo
+                for col in df.columns:
+                    if 'GANCH' in str(col).upper():
+                        st.info(f"🔍 Coluna encontrada: '{col}' - renomeando para GANCHEIRA")
+                        df = df.rename(columns={col: 'GANCHEIRA'})
+                        break
+            
+            # Converter datas
+            if 'DATA_TEMP' in df.columns:
+                df['DATA'] = df['DATA_TEMP'].apply(converter_data_br)
+            elif 'PRODUCAO' in df.columns:
+                df['DATA'] = df['PRODUCAO'].apply(converter_data_br)
+            else:
+                # Tentar encontrar qualquer coluna que pareça ser data
+                for col in df.columns:
+                    if 'DATA' in str(col).upper():
+                        df['DATA'] = df[col].apply(converter_data_br)
+                        break
+            
+            if 'DATA' in df.columns:
+                df = df.dropna(subset=['DATA'])
+            
+            # Converter colunas numéricas
+            colunas_numericas = ['SUPERIOR', 'MEIO', 'INFERIOR', 'A1', 'C1', 'A2', 'C2', 'A3', 'C3', 'A4', 'C4', 'A5', 'C5', 'A e B']
+            for col in colunas_numericas:
+                if col in df.columns:
+                    df[col] = df[col].apply(safe_float_tempera)
+            
+            # Converter C2
+            if 'C2' in df.columns:
+                def converter_tempo_c2(val):
+                    if pd.isna(val) or val == 0:
+                        return 0
+                    if val <= 1:
+                        return val * 100
+                    elif val <= 10:
+                        return val * 10
+                    else:
+                        return val
+                df['C2'] = df['C2'].apply(converter_tempo_c2)
+            
+            # Identificar colunas de posições (colunas com números)
+            colunas_posicoes_validas = []
+            for col in df.columns:
+                try:
+                    num = int(str(col).strip())
+                    if 19 <= num <= 70:
+                        colunas_posicoes_validas.append(col)
+                except:
+                    pass
+            
+            # Se não encontrou colunas de posição, tentar identificar colunas com números
+            if not colunas_posicoes_validas:
+                for col in df.columns:
+                    try:
+                        num = float(str(col).strip())
+                        if 1 <= num <= 100:
+                            colunas_posicoes_validas.append(col)
+                    except:
+                        pass
+            
+            # Inicializar colunas
+            df['TOTAL_PECAS'] = 40
+            df['APROVADO'] = 40
+            df['TOTAL_DEFEITOS'] = 0
+            df['IS_CRITICO'] = False
+            
+            for codigo, nome in MAPEAMENTO_DEFEITOS.items():
+                nome_clean = nome.upper().replace(' ', '_').replace('Ç', 'C').replace('Ã', 'A').replace('Á', 'A').replace('Ó', 'O')
+                df[f'QTD_{nome_clean}'] = 0
+            
+            # Processar defeitos
+            for idx, row in df.iterrows():
+                defeitos_contagem = {codigo: 0 for codigo in MAPEAMENTO_DEFEITOS.keys()}
+                
+                for col in colunas_posicoes_validas:
+                    try:
+                        val = row[col]
+                        if pd.notna(val) and str(val).strip():
+                            val_str = str(val).strip().replace(',', '.')
+                            codigo = int(float(val_str))
+                            if codigo in MAPEAMENTO_DEFEITOS:
+                                defeitos_contagem[codigo] += 1
+                    except:
+                        pass
+                
+                total_defeitos_reais = sum(defeitos_contagem.get(cod, 0) for cod in CODIGOS_DEFEITO_REAIS)
+                aprovadas = 40 - total_defeitos_reais
+                
+                df.at[idx, 'APROVADO'] = aprovadas
+                df.at[idx, 'TOTAL_DEFEITOS'] = total_defeitos_reais
+                df.at[idx, 'TRS (%)'] = (aprovadas / 40 * 100) if 40 > 0 else 0
+                
+                is_critico = False
+                if defeitos_contagem.get(4, 0) >= 1:
+                    is_critico = True
+                if defeitos_contagem.get(3, 0) > 2:
+                    is_critico = True
+                df.at[idx, 'IS_CRITICO'] = is_critico
+                
+                for codigo, nome in MAPEAMENTO_DEFEITOS.items():
+                    nome_clean = nome.upper().replace(' ', '_').replace('Ç', 'C').replace('Ã', 'A').replace('Á', 'A').replace('Ó', 'O')
+                    col_nome = f'QTD_{nome_clean}'
+                    if col_nome in df.columns:
+                        df.at[idx, col_nome] = defeitos_contagem.get(codigo, 0)
+            
+            # Ordenar por data (mais recente primeiro)
+            if 'DATA' in df.columns:
+                df = df.sort_values('DATA', ascending=False)
+            
+            return df
+            
+        except Exception as e:
+            st.error(f"❌ Erro ao carregar dados da Têmpera Original: {e}")
+            import traceback
+            traceback.print_exc()
+            return pd.DataFrame()
+    
     # ======================
-    # CARREGAR DADOS PRIMEIRO
+    # CARREGAR DADOS
     # ======================
     with st.spinner("Carregando dados da Têmpera..."):
-        df_base = carregar_dados_tempera()
-
-    if df_base.empty:
-        st.error("""
-        ❌ **Não foi possível carregar os dados da Têmpera.**
-        
-        **Possíveis causas:**
-        1. A planilha está vazia ou sem dados
-        2. Limite de requisições ao Google Sheets atingido
-        3. Problemas de conexão com a internet
-        
-        **Soluções:**
-        1. Aguarde alguns minutos e clique em "Recarregar Dados da Planilha" no sidebar
-        2. Verifique se a planilha está acessível
-        3. Verifique sua conexão com a internet
-        """)
-        
-        # Botão para tentar novamente
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            if st.button("🔄 Tentar Novamente", use_container_width=True):
-                forcar_recarregamento_tempera()
-                st.rerun()
+        df_industrial = carregar_dados_tempera_industrial()
+        df_original = carregar_dados_tempera_original()
+    
+    if df_industrial.empty:
+        st.warning("⚠️ Não foi possível carregar os dados da Têmpera (Industrial).")
         st.stop()
-
+    
     # ======================
     # SIDEBAR FILTROS
     # ======================
     with st.sidebar:
-        st.markdown(f"<div style='font-family:JetBrains Mono,monospace;font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:{THEME['accent_purple']};margin:20px 0 10px;border-top:1px solid {THEME['border_bright']};padding-top:16px'>▸ Filtros · Têmpera</div>", unsafe_allow_html=True)
+        st.markdown(f"""
+        <div style='font-family:JetBrains Mono,monospace;font-size:10px;
+            letter-spacing:.2em;text-transform:uppercase;
+            color:{THEME['accent_purple']};margin:20px 0 10px;
+            border-top:1px solid {THEME['border_bright']};padding-top:16px'>
+            ▸ Filtros · Têmpera
+        </div>
+        """, unsafe_allow_html=True)
         
         data_ini = st.date_input("Data inicial", value=None, key="tempera_data_ini")
         data_fim = st.date_input("Data final", value=None, key="tempera_data_fim")
         
-        if 'TURNO_TEMP' in df_base.columns:
-            turnos_disp = ["(Todos)"] + sorted([str(t) for t in df_base['TURNO_TEMP'].dropna().unique()])
+        if 'TURNO' in df_industrial.columns:
+            turnos_disp = ["(Todos)"] + sorted([str(t) for t in df_industrial['TURNO'].dropna().unique()])
             turno = st.selectbox("Turno", options=turnos_disp, key="tempera_turno")
         else:
             turno = "(Todos)"
         
-        if 'PRODUTO' in df_base.columns:
-            produtos_disp = ["(Todos)"] + sorted([str(p) for p in df_base['PRODUTO'].dropna().unique()])
-            produto = st.selectbox("Produto", options=produtos_disp, key="tempera_produto")
+        if 'REFERÊNCIA' in df_industrial.columns:
+            referencias_disp = ["(Todas)"] + sorted([str(r) for r in df_industrial['REFERÊNCIA'].dropna().unique()])
+            referencia = st.selectbox("Referência", options=referencias_disp, key="tempera_referencia")
         else:
-            produto = "(Todos)"
+            referencia = "(Todas)"
         
+        # Filtro Gancheira (usando dados da original)
+        if not df_original.empty and 'GANCHEIRA' in df_original.columns:
+            gancheiras_disp = ["(Todas)"] + sorted([str(g) for g in df_original['GANCHEIRA'].dropna().unique() if str(g).strip() and str(g).strip().lower() != 'nan'])
+            gancheira = st.selectbox("Gancheira", options=gancheiras_disp, key="tempera_gancheira")
+        else:
+            gancheira = "(Todas)"
+            st.info("📭 Dados de gancheira não disponíveis")
+        
+        # Filtro TRS
+        st.markdown("---")
+        st.markdown(f"""<div style='font-family:JetBrains Mono,monospace;font-size:10px;letter-spacing:.2em;
+            text-transform:uppercase;color:{THEME['accent_yellow']};'>▸ Filtro TRS</div>""", unsafe_allow_html=True)
+        faixa_trs = st.selectbox(
+            "Faixa de TRS Líquido",
+            ["(Todas)", "Excelente (>85%)", "Bom (70-85%)", "Regular (50-70%)", "Crítico (<50%)"],
+            key="tempera_faixa_trs"
+        )
+        
+        # Excluir registros críticos
         excluir_criticos = st.checkbox("Excluir registros críticos", value=False, key="tempera_excluir_criticos")
+        
         qtd = st.number_input("Linhas na tabela", min_value=0, max_value=5000, value=20, step=10, key="tempera_qtd")
         
+        # Debug: mostrar status dos dados originais
         st.markdown("---")
-        
-        # Botão para forçar recarregamento
-        if st.button("🔄 Recarregar Dados da Planilha", key="btn_recarregar_tempera", use_container_width=True):
-            if forcar_recarregamento_tempera():
-                st.success("✅ Cache limpo! Recarregando dados da planilha...")
-                time.sleep(1)
-                st.rerun()
-            else:
-                st.error("❌ Erro ao limpar cache")
-        
-        # Informações do cache
-        if os.path.exists(CACHE_FILE_TEMPERA):
-            try:
-                tamanho = os.path.getsize(CACHE_FILE_TEMPERA) / 1024
-                st.caption(f"💾 Cache: {tamanho:.1f} KB")
-            except:
-                pass
-
-    # ── Aplicar filtros ──
-    df = df_base.copy()
+        if not df_original.empty:
+            st.success(f"✅ Dados TRS_TEMPERA: {len(df_original)} registros")
+            if 'GANCHEIRA' in df_original.columns:
+                ganch_count = df_original['GANCHEIRA'].dropna().nunique()
+                st.caption(f"🔄 Gancheiras disponíveis: {ganch_count}")
+        else:
+            st.warning("⚠️ Dados TRS_TEMPERA não carregados")
+    
+    # ===== APLICAR FILTROS =====
+    df = df_industrial.copy()
     
     if data_ini:
         df = df[df['DATA'] >= pd.to_datetime(data_ini)]
     if data_fim:
         df = df[df['DATA'] <= pd.to_datetime(data_fim)]
-    if turno != "(Todos)" and 'TURNO_TEMP' in df.columns:
-        df = df[df['TURNO_TEMP'].astype(str).str.upper() == turno.upper()]
-    if produto != "(Todos)" and 'PRODUTO' in df.columns:
-        df = df[df['PRODUTO'].astype(str) == produto]
+    if turno != "(Todos)" and 'TURNO' in df.columns:
+        df = df[df['TURNO'].astype(str).str.upper() == turno.upper()]
+    if referencia != "(Todas)" and 'REFERÊNCIA' in df.columns:
+        df = df[df['REFERÊNCIA'].astype(str) == referencia]
+    
+    # Filtro por faixa de TRS
+    if faixa_trs != "(Todas)" and 'TRS_LIQUIDO' in df.columns:
+        if faixa_trs == "Excelente (>85%)":
+            df = df[df['TRS_LIQUIDO'] > 85]
+        elif faixa_trs == "Bom (70-85%)":
+            df = df[(df['TRS_LIQUIDO'] >= 70) & (df['TRS_LIQUIDO'] <= 85)]
+        elif faixa_trs == "Regular (50-70%)":
+            df = df[(df['TRS_LIQUIDO'] >= 50) & (df['TRS_LIQUIDO'] < 70)]
+        elif faixa_trs == "Crítico (<50%)":
+            df = df[df['TRS_LIQUIDO'] < 50]
     
     if excluir_criticos and 'IS_CRITICO' in df.columns:
         df = df[~df['IS_CRITICO']].copy()
-
+    
+    # ===== ORDENAR DO MAIS RECENTE PARA O MAIS ANTIGO APÓS FILTROS =====
+    if 'DATA' in df.columns and not df.empty:
+        df = df.sort_values('DATA', ascending=False)
+    
     if df.empty:
-        st.warning("Nenhum dado encontrado com os filtros selecionados.")
+        st.warning("⚠️ Nenhum dado encontrado com os filtros selecionados.")
         st.stop()
-
-    # ── Função para média ignorando zeros ──
-    def safe_mean(col):
-        """Calcula média ignorando valores zero e NaN"""
-        if col in df.columns:
-            valores = df[col][(df[col] > 0) & (pd.notna(df[col]))]
-            if len(valores) > 0:
-                return valores.mean()
-        return 0
-
-    # ── KPIs (médias ignorando zeros) ──
-    total_registros = len(df)
-    total_pecas = total_registros * 40
-    total_aprovado = int(df['APROVADO'].sum())
-    total_defeitos = int(df['TOTAL_DEFEITOS'].sum())
-    trs_medio = (total_aprovado / total_pecas * 100) if total_pecas > 0 else 0
     
-    temp_sup = safe_mean('SUPERIOR')
-    temp_meio = safe_mean('MEIO')
-    temp_inf = safe_mean('INFERIOR')
-    temp_entrada = safe_mean('A1')
-    tempo_c2 = safe_mean('C2')
-    humidade = safe_mean('C4')
-    pressao_ar = safe_mean('A e B')
-
-    # ── Page header ──
-    render_page_header(
-        "TÊMPERA",
-        f"Industrial · {total_registros:,} registros · Atualizado {get_horario_brasilia()}",
-        THEME['accent_purple']
-    )
-
-    # KPIs principais
-    c1, c2, c3, c4 = st.columns(4)
+    # ===== CALCULAR TOTAIS PARA KPIS =====
+    total_pecas = int(df['TOTAL_PECAS'].sum()) if 'TOTAL_PECAS' in df.columns else 0
+    total_refugado = int(df['REFUGADO_TOTAL'].sum()) if 'REFUGADO_TOTAL' in df.columns else 0
+    total_aprovado = int(df['AP_TEMPERA'].sum()) if 'AP_TEMPERA' in df.columns else 0
+    total_meta = int(df['META_LIQUIDA'].sum()) if 'META_LIQUIDA' in df.columns else 0
+    trs_medio = df['TRS_LIQUIDO'].mean() if 'TRS_LIQUIDO' in df.columns else 0
+    
+    # ===== CALCULAR PARADAS =====
+    total_manut_str = somar_horas_e_converter(df['MANU_TEMPERA'] if 'MANU_TEMPERA' in df.columns else pd.Series([0]))
+    total_parada_str = somar_horas_e_converter(df['PARADA_TEMPERA'] if 'PARADA_TEMPERA' in df.columns else pd.Series([0]))
+    
+    # ===== PAGE HEADER =====
+    render_page_header("TÊMPERA", f"Industrial · {len(df):,} registros carregados · Atualizado {get_horario_brasilia()}", THEME['accent_purple'])
+    
+    # ===== KPIS (7 CARDS) =====
+    st.markdown("### 📊 Indicadores da Têmpera")
+    
+    c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
+    
     with c1:
-        render_kpi_card("Total Peças", f"{total_pecas:,}".replace(",","."), THEME['accent_cyan'])
+        render_kpi_card(
+            "Total Peças", 
+            f"{total_pecas:,}".replace(",","."), 
+            THEME['accent_cyan'], 
+            "📦"
+        )
+    
     with c2:
-        render_kpi_card("Aprovadas", f"{total_aprovado:,}".replace(",","."), THEME['accent_lime'])
+        render_kpi_card(
+            "Peças Refugadas", 
+            f"{total_refugado:,}".replace(",","."), 
+            THEME['accent_red'], 
+            "❌"
+        )
+    
     with c3:
-        render_kpi_card("Defeitos", f"{total_defeitos:,}".replace(",","."), THEME['accent_red'])
+        render_kpi_card(
+            "Peças Aprovadas", 
+            f"{total_aprovado:,}".replace(",","."), 
+            THEME['accent_lime'], 
+            "✅"
+        )
+    
     with c4:
-        trs_color = THEME['accent_lime'] if trs_medio >= 80 else THEME['accent_orange'] if trs_medio >= 70 else THEME['accent_red']
-        render_kpi_card("TRS Médio", f"{trs_medio:.1f}%", trs_color)
-
-    # Temperaturas Forno (médias ignorando zeros)
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        render_kpi_card("Temp. Superior", f"{temp_sup:.0f}°C" if temp_sup > 0 else "N/A", THEME['accent_orange'])
-    with c2:
-        render_kpi_card("Temp. Meio", f"{temp_meio:.0f}°C" if temp_meio > 0 else "N/A", THEME['accent_orange'])
-    with c3:
-        render_kpi_card("Temp. Inferior", f"{temp_inf:.0f}°C" if temp_inf > 0 else "N/A", THEME['accent_orange'])
-
-    # Processo - Médias (ignorando zeros)
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown(f"<div style='font-family:JetBrains Mono,monospace;font-size:10px;color:{THEME['accent_purple']}';>▸ PROCESSO - MÉDIAS DO PERÍODO (ignorando zeros)</div>", unsafe_allow_html=True)
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        render_kpi_card("Temp. Entrada (A1)", f"{temp_entrada:.0f}°C" if temp_entrada > 0 else "N/A", THEME['accent_cyan'])
-    with c2:
-        render_kpi_card("Tempo (C2)", f"{tempo_c2:.0f}s" if tempo_c2 > 0 else "N/A", THEME['accent_lime'])
-    with c3:
-        render_kpi_card("Humidade (C4)", f"{humidade:.1f}%" if humidade > 0 else "N/A", THEME['accent_orange'])
-    with c4:
-        render_kpi_card("Pressão Ar (A e B)", f"{pressao_ar:.1f}" if pressao_ar > 0 else "N/A", THEME['accent_purple'])
-
+        render_kpi_card(
+            "Meta Líquida", 
+            f"{total_meta:,}".replace(",","."), 
+            THEME['accent_purple'], 
+            "🎯"
+        )
+    
+    with c5:
+        trs_cor = THEME['accent_lime'] if trs_medio >= 85 else THEME['accent_orange'] if trs_medio >= 70 else THEME['accent_red']
+        render_kpi_card(
+            "TRS Líquido", 
+            f"{trs_medio:.1f}%", 
+            trs_cor, 
+            "📈"
+        )
+    
+    with c6:
+        render_kpi_card(
+            "Parada Manutenção", 
+            total_manut_str, 
+            THEME['accent_red'], 
+            "🔧"
+        )
+    
+    with c7:
+        render_kpi_card(
+            "Parada Têmpera", 
+            total_parada_str, 
+            THEME['accent_orange'], 
+            "⏱️"
+        )
+    
     st.markdown("<hr>", unsafe_allow_html=True)
-
-    # ── Tabela ──
-    render_section_header("Registros de Têmpera", "▸", THEME['accent_purple'])
     
-    df_display = df.sort_values(by="DATA", ascending=False).head(qtd if qtd > 0 else 100).copy()
-    df_display['DATA'] = pd.to_datetime(df_display['DATA']).dt.strftime('%d/%m/%Y')
-    df_display['TRS (%)'] = df_display['TRS (%)'].round(1).astype(str) + '%'
+    # ===== TABELA DE PRODUÇÃO DA TÊMPERA =====
+    render_section_header("📋 Produção da Têmpera", "▸", THEME['accent_purple'])
     
-    colunas = ['DATA', 'TURNO_TEMP', 'PRODUTO', 'GANCHEIRA', 'APROVADO', 'TOTAL_DEFEITOS', 'TRS (%)']
-    colunas = [c for c in colunas if c in df_display.columns]
+    # Preparar dados para a tabela
+    df_display = df.copy()
     
-    st.dataframe(df_display[colunas], use_container_width=True, height=400)
-
-    st.markdown("<hr>", unsafe_allow_html=True)
-
-    # ── Gráfico TRS Diário ──
-    render_section_header("Evolução Diária do TRS", "▸", THEME['accent_purple'])
+    # Formatar datas
+    if 'DATA' in df_display.columns:
+        df_display['DATA_STR'] = pd.to_datetime(df_display['DATA']).dt.strftime('%d/%m/%Y')
+    if 'D_TEMPERA' in df_display.columns:
+        df_display['D_TEMPERA_STR'] = pd.to_datetime(df_display['D_TEMPERA']).dt.strftime('%d/%m/%Y') if pd.notna(df_display['D_TEMPERA']).any() else ""
     
-    resumo_dia = df.groupby(df['DATA'].dt.date).agg({'APROVADO': 'sum'}).reset_index()
-    resumo_dia['DATA'] = pd.to_datetime(resumo_dia['DATA'])
-    counts = df.groupby(df['DATA'].dt.date).size().values
-    resumo_dia['TRS (%)'] = (resumo_dia['APROVADO'] / (counts * 40) * 100)
-    resumo_dia = resumo_dia.sort_values('DATA')
+    # Formatar números
+    for col in ['TOTAL_PECAS', 'REFUGADO_TOTAL', 'AP_TEMPERA', 'META_LIQUIDA']:
+        if col in df_display.columns:
+            df_display[col] = df_display[col].apply(lambda x: f"{int(x):,}".replace(",", ".") if pd.notna(x) else "0")
     
-    if not resumo_dia.empty:
-        fig, ax = plt.subplots(figsize=(12, 4), facecolor=THEME['bg_card'])
-        apply_chart_style(ax, fig, "TRS Diário", ylabel="TRS (%)", accent=THEME['accent_purple'])
-        ax.fill_between(resumo_dia['DATA'], 0, resumo_dia['TRS (%)'], alpha=0.12, color=THEME['accent_purple'])
-        ax.plot(resumo_dia['DATA'], resumo_dia['TRS (%)'], marker='o', markersize=5, linewidth=2, color=THEME['accent_purple'])
-        ax.axhline(y=80, color=THEME['accent_red'], linestyle=':', linewidth=1.5, label='Meta 80%')
-        ax.legend(loc='upper right', fontsize=9)
-        plt.setp(ax.xaxis.get_majorticklabels(), rotation=35, ha='right', fontsize=8)
-        fig.tight_layout()
-        st.pyplot(fig)
-        plt.close(fig)
-
-    # ── PADRÃO DE EXCELÊNCIA (Média das TOP 15) ──
-    st.markdown("<hr>", unsafe_allow_html=True)
-    render_section_header("🏆 PADRÃO DE EXCELÊNCIA (Média Top 15)", "▸", THEME['accent_purple'])
+    # Formatar TRS
+    if 'TRS_LIQUIDO' in df_display.columns:
+        df_display['TRS_LIQUIDO_STR'] = df_display['TRS_LIQUIDO'].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "0%")
     
-    TOP_N = 15
+    # Garantir colunas de tempo
+    if 'MANU_TEMPERA_STR' not in df_display.columns:
+        df_display['MANU_TEMPERA_STR'] = df_display['MANU_TEMPERA'].apply(horas_decimais_para_str)
+    if 'PARADA_TEMPERA_STR' not in df_display.columns:
+        df_display['PARADA_TEMPERA_STR'] = df_display['PARADA_TEMPERA'].apply(horas_decimais_para_str)
     
-    # Filtra produções válidas (com dados de pressão, se disponível)
-    if 'A e B' in df.columns:
-        df_validos = df[df['A e B'] > 0].copy()
-    else:
-        df_validos = df.copy()
+    # Colunas para exibição na tabela principal
+    colunas_tabela = [
+        'FIFO', 'DATA_STR', 'TURNO', 'D_TEMPERA_STR',
+        'TOTAL_PECAS', 'REFUGADO_TOTAL', 'AP_TEMPERA',
+        'META_LIQUIDA', 'TRS_LIQUIDO_STR',
+        'MANU_TEMPERA_STR', 'PARADA_TEMPERA_STR'
+    ]
     
-    if len(df_validos) >= TOP_N:
-        # Seleciona as TOP N produções com base no maior número de peças aprovadas
-        df_top = df_validos.nlargest(TOP_N, ['APROVADO', 'TRS (%)'])
-        
-        # Calcula as médias
-        media_aprovadas = df_top['APROVADO'].mean()
-        media_trs = df_top['TRS (%)'].mean()
-        media_defeitos = df_top['TOTAL_DEFEITOS'].mean()
-        
-        # Médias dos parâmetros de processo
-        media_temp_sup = df_top['SUPERIOR'].mean()
-        media_temp_meio = df_top['MEIO'].mean()
-        media_temp_inf = df_top['INFERIOR'].mean()
-        media_temp_entrada = df_top['A1'].mean()
-        media_tempo_c2 = df_top['C2'].mean()
-        media_humidade = df_top['C4'].mean()
-        media_pressao_ar = df_top['A e B'].mean()
-        
-        # Desvio padrão para noção de estabilidade
-        std_trs = df_top['TRS (%)'].std()
-        criticas_top = df_top['IS_CRITICO'].sum()
-        
-        st.markdown(f"""
-        <div style="background: {THEME['bg_card2']}; padding: 20px; border-radius: 10px; border-left: 4px solid {THEME['accent_lime']};">
-            <h4 style="margin:0 0 5px 0; color:{THEME['accent_lime']};">🎯 Referência de Excelência</h4>
-            <p style="margin:0 0 15px 0; font-size:12px; color:{THEME['text_muted']};">Média calculada com base nas {TOP_N} melhores produções do período</p>
-        """, unsafe_allow_html=True)
-        
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("📊 TRS Médio (Top 15)", f"{media_trs:.1f}%", f"±{std_trs:.1f}%" if std_trs > 0 else "estável")
-        with col2:
-            st.metric("✅ Aprovadas (Média)", f"{media_aprovadas:.1f}/40")
-        with col3:
-            st.metric("❌ Defeitos (Média)", f"{media_defeitos:.1f}")
-        with col4:
-            st.metric("⚠️ Produções Críticas", f"{criticas_top}/{TOP_N}")
-        
-        st.markdown("<hr style='margin:15px 0; opacity:0.3;'>", unsafe_allow_html=True)
-        
-        st.markdown("#### 🔥 Temperaturas do Forno (Média)")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Superior", f"{media_temp_sup:.0f}°C" if pd.notna(media_temp_sup) else "N/A")
-        with col2:
-            st.metric("Meio", f"{media_temp_meio:.0f}°C" if pd.notna(media_temp_meio) else "N/A")
-        with col3:
-            st.metric("Inferior", f"{media_temp_inf:.0f}°C" if pd.notna(media_temp_inf) else "N/A")
-        
-        st.markdown("#### 📍 Principais Indicadores (Média)")
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Temp. Entrada (A1)", f"{media_temp_entrada:.0f}°C" if pd.notna(media_temp_entrada) else "N/A")
-        with col2:
-            st.metric("Tempo (C2)", f"{media_tempo_c2:.0f}s" if pd.notna(media_tempo_c2) else "N/A")
-        with col3:
-            st.metric("Humidade (C4)", f"{media_humidade:.1f}%" if pd.notna(media_humidade) else "N/A")
-        with col4:
-            st.metric("Pressão Ar (A e B)", f"{media_pressao_ar:.1f}" if pd.notna(media_pressao_ar) else "N/A")
-        
-        st.markdown("</div>", unsafe_allow_html=True)
-        
-        # Expander com detalhes das Top 15
-        with st.expander(f"🔍 Ver detalhes das {TOP_N} melhores produções"):
-            st.markdown(f"**As {TOP_N} produções que definem o padrão de excelência:**")
-            df_top_display = df_top[['DATA', 'TURNO_TEMP', 'PRODUTO', 'GANCHEIRA', 'APROVADO', 'TRS (%)', 'TOTAL_DEFEITOS']].copy()
-            df_top_display['DATA'] = pd.to_datetime(df_top_display['DATA']).dt.strftime('%d/%m/%Y')
-            df_top_display['TRS (%)'] = df_top_display['TRS (%)'].round(1).astype(str) + '%'
-            st.dataframe(df_top_display, use_container_width=True, height=300)
-            
-            st.markdown("**📊 Estatísticas das Top 15 vs. Média Geral:**")
-            media_geral_trs = (df_validos['APROVADO'].sum() / (len(df_validos) * 40) * 100) if len(df_validos) > 0 else 0
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric("Média Geral TRS", f"{media_geral_trs:.1f}%")
-            with col2:
-                ganho = media_trs - media_geral_trs
-                st.metric("Ganho Potencial", f"+{ganho:.1f}%", delta_color="normal")
-                
-    elif len(df_validos) > 0:
-        st.warning(f"Dados insuficientes para calcular a média das {TOP_N} melhores produções. Apenas {len(df_validos)} registros encontrados. Exibindo a melhor produção individual:")
-        
-        # Fallback: mostra a melhor produção individual
-        idx_melhor = df_validos['APROVADO'].idxmax()
-        melhor = df_validos.loc[idx_melhor]
-        
-        st.markdown(f"""
-        <div style="background: {THEME['bg_card2']}; padding: 20px; border-radius: 10px; border-left: 4px solid {THEME['accent_lime']};">
-            <h4 style="margin:0 0 15px 0; color:{THEME['accent_lime']};">🎯 Melhor Resultado Individual</h4>
-        """, unsafe_allow_html=True)
-        
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            data_str = pd.to_datetime(melhor['DATA']).strftime('%d/%m/%Y') if pd.notna(melhor['DATA']) else 'N/A'
-            st.metric("📅 Data", data_str)
-        with col2:
-            st.metric("⏰ Turno", str(melhor.get('TURNO_TEMP', 'N/A')))
-        with col3:
-            st.metric("📦 Produto", str(melhor.get('PRODUTO', 'N/A'))[:15])
-        with col4:
-            st.metric("🔧 Gancheira", str(melhor.get('GANCHEIRA', 'N/A')))
-        
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("✅ Aprovadas", f"{int(melhor['APROVADO'])}/40")
-        with col2:
-            st.metric("📊 TRS", f"{melhor['TRS (%)']:.1f}%")
-        with col3:
-            st.metric("❌ Defeitos", int(melhor['TOTAL_DEFEITOS']))
-        with col4:
-            criticos = "Sim" if melhor.get('IS_CRITICO', False) else "Não"
-            st.metric("⚠️ Crítico", criticos)
-        
-        st.markdown("<hr style='margin:15px 0; opacity:0.3;'>", unsafe_allow_html=True)
-        
-        st.markdown("#### 🔥 Temperaturas do Forno")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            val = melhor.get('SUPERIOR', 0)
-            st.metric("Superior", f"{val:.0f}°C" if pd.notna(val) and val > 0 else "N/A")
-        with col2:
-            val = melhor.get('MEIO', 0)
-            st.metric("Meio", f"{val:.0f}°C" if pd.notna(val) and val > 0 else "N/A")
-        with col3:
-            val = melhor.get('INFERIOR', 0)
-            st.metric("Inferior", f"{val:.0f}°C" if pd.notna(val) and val > 0 else "N/A")
-        
-        st.markdown("#### 📍 Principais Indicadores")
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            val = melhor.get('A1', 0)
-            st.metric("Temp. Entrada (A1)", f"{val:.0f}°C" if pd.notna(val) and val > 0 else "N/A")
-        with col2:
-            val = melhor.get('C2', 0)
-            st.metric("Tempo (C2)", f"{val:.0f}s" if pd.notna(val) and val > 0 else "N/A")
-        with col3:
-            val = melhor.get('C4', 0)
-            st.metric("Humidade (C4)", f"{val:.1f}%" if pd.notna(val) and val > 0 else "N/A")
-        with col4:
-            val = melhor.get('A e B', 0)
-            st.metric("Pressão Ar (A e B)", f"{val:.1f}" if pd.notna(val) and val > 0 else "N/A")
-        
-        st.markdown("</div>", unsafe_allow_html=True)
-    else:
-        st.info("Nenhum registro válido encontrado (Pressão Ar > 0).")
-
-    # ── Ranking de Gancheiras (Pior → Melhor) ──
-    st.markdown("<hr>", unsafe_allow_html=True)
-    render_section_header("🏭 Ranking de Gancheiras (Pior → Melhor)", "▸", THEME['accent_purple'])
+    # Mapear nomes de colunas para exibição
+    nome_colunas = {
+        'FIFO': 'FIFO',
+        'DATA_STR': 'PRODUÇÃO',
+        'TURNO': 'TURNO',
+        'D_TEMPERA_STR': 'DATA TÊMPERA',
+        'TOTAL_PECAS': 'Total',
+        'REFUGADO_TOTAL': 'Refugado',
+        'AP_TEMPERA': 'Aprovadas',
+        'META_LIQUIDA': 'Meta Líquida',
+        'TRS_LIQUIDO_STR': 'TRS Líquido',
+        'MANU_TEMPERA_STR': 'Parada Manutenção',
+        'PARADA_TEMPERA_STR': 'Parada Têmpera'
+    }
     
-    if not df.empty and 'GANCHEIRA' in df.columns:
-        ranking_gancheiras = []
-        for gancheira in df['GANCHEIRA'].dropna().unique():
-            df_g = df[df['GANCHEIRA'] == gancheira]
-            total_registros_g = len(df_g)
-            total_aprovado_g = int(df_g['APROVADO'].sum())
-            total_defeitos_g = int(df_g['TOTAL_DEFEITOS'].sum())
-            total_pecas_g = total_registros_g * 40
-            trs_g = (total_aprovado_g / total_pecas_g * 100) if total_pecas_g > 0 else 0
-            
-            defeitos_gancheira = {}
-            for codigo, nome in MAPEAMENTO_DEFEITOS.items():
-                if codigo in CODIGOS_DEFEITO_REAIS:
-                    nome_clean = nome.upper().replace(' ', '_').replace('Ç', 'C').replace('Ã', 'A').replace('Á', 'A').replace('Ó', 'O')
-                    col = f'QTD_{nome_clean}'
-                    if col in df_g.columns:
-                        qtd = int(df_g[col].sum())
-                        if qtd > 0:
-                            defeitos_gancheira[nome] = qtd
-            
-            media_defeitos = total_defeitos_g / total_registros_g if total_registros_g > 0 else 0
-            det_str = ' | '.join([f"{k}: {v}" for k, v in defeitos_gancheira.items()]) if defeitos_gancheira else "-"
-            
-            ranking_gancheiras.append({
-                'Pos': 0,
-                'Gancheira': str(gancheira),
-                'Reg': total_registros_g,
-                'Defeitos': total_defeitos_g,
-                'Média': media_defeitos,
-                'TRS_num': trs_g,
-                'TRS': f"{trs_g:.1f}%",
-                'Detalhamento': det_str
-            })
-        
-        df_ranking = pd.DataFrame(ranking_gancheiras)
-        df_ranking = df_ranking.sort_values('Defeitos', ascending=False)
-        df_ranking['Pos'] = range(1, len(df_ranking) + 1)
-        
-        if not df_ranking.empty:
-            piores = df_ranking.head(3)
-            st.warning(f"⚠️ **Piores gancheiras:** {', '.join(piores['Gancheira'].tolist())}")
-            
-            df_tabela = df_ranking[['Pos', 'Gancheira', 'Reg', 'Defeitos', 'Média', 'TRS']].copy()
-            df_tabela['Média'] = df_tabela['Média'].round(1)
-            
-            def estilo_ranking(row):
-                styles = [''] * len(row)
-                pos = row['Pos']
-                if pos <= 3:
-                    styles[0] = 'color: #E81123; font-weight: bold;'
-                elif pos > len(df_ranking) - 3:
-                    styles[0] = 'color: #107C10; font-weight: bold;'
-                styles[3] = 'color: #E81123; font-weight: bold;'
-                try:
-                    trs_val = float(row['TRS'].replace('%', ''))
-                    if trs_val >= 80:
-                        styles[5] = 'color: #107C10; font-weight: bold;'
+    # Criar DataFrame para exibição
+    df_exibicao = pd.DataFrame()
+    for col_orig, col_nome in nome_colunas.items():
+        if col_orig in df_display.columns:
+            df_exibicao[col_nome] = df_display[col_orig]
+    
+    # Aplicar estilo à tabela
+    def estilo_tabela_tempera(row):
+        styles = [''] * len(row)
+        try:
+            if 'TRS Líquido' in row.index:
+                trs_str = str(row['TRS Líquido']).replace('%', '').strip()
+                if trs_str and trs_str != '0%':
+                    trs_val = float(trs_str)
+                    idx_trs = row.index.get_loc('TRS Líquido')
+                    if trs_val >= 85:
+                        styles[idx_trs] = 'color: #107C10; font-weight: bold;'
                     elif trs_val >= 70:
-                        styles[5] = 'color: #E86C2C; font-weight: bold;'
-                except:
-                    pass
-                return styles
+                        styles[idx_trs] = 'color: #FFB900; font-weight: bold;'
+                    else:
+                        styles[idx_trs] = 'color: #E81123; font-weight: bold;'
+        except:
+            pass
+        return styles
+    
+    if not df_exibicao.empty:
+        if qtd > 0:
+            df_exibicao = df_exibicao.head(qtd)
+        
+        styled_df = df_exibicao.style.apply(estilo_tabela_tempera, axis=1)
+        st.dataframe(styled_df, use_container_width=True, height=400, hide_index=True)
+        
+        st.caption(f"📊 Exibindo {len(df_exibicao)} de {len(df_display)} registros (ordenados do mais recente para o mais antigo)")
+    else:
+        st.info("📭 Nenhum dado disponível para exibição")
+    
+    st.markdown("<hr>", unsafe_allow_html=True)
+    
+    # ===== TABELA REGISTROS DE TÊMPERA =====
+    render_section_header("📋 Registros de Têmpera", "▸", THEME['accent_purple'])
+    
+    if not df.empty:
+        df_temp_display = df.sort_values(by="DATA", ascending=False).copy()
+        
+        if qtd > 0:
+            df_temp_display = df_temp_display.head(qtd)
+        
+        df_temp_display['DATA'] = pd.to_datetime(df_temp_display['DATA']).dt.strftime('%d/%m/%Y')
+        
+        colunas_temp = ['DATA', 'TURNO', 'REFERÊNCIA', 'AP_TEMPERA', 'REFUGADO_TOTAL', 'TRS_LIQUIDO']
+        colunas_temp = [c for c in colunas_temp if c in df_temp_display.columns]
+        
+        for col in COLUNAS_DEFEITOS_TEMPERA:
+            if col in df_temp_display.columns and df_temp_display[col].sum() > 0:
+                colunas_temp.append(col)
+        
+        df_exibicao_temp = df_temp_display[colunas_temp].copy()
+        
+        rename_map_temp = {
+            'DATA': 'Data',
+            'TURNO': 'Turno',
+            'REFERÊNCIA': 'Referência',
+            'AP_TEMPERA': 'Aprovadas',
+            'REFUGADO_TOTAL': 'Refugado Total',
+            'TRS_LIQUIDO': 'TRS Líquido (%)'
+        }
+        for col_old, col_new in rename_map_temp.items():
+            if col_old in df_exibicao_temp.columns:
+                df_exibicao_temp = df_exibicao_temp.rename(columns={col_old: col_new})
+        
+        if 'TRS Líquido (%)' in df_exibicao_temp.columns:
+            df_exibicao_temp['TRS Líquido (%)'] = df_exibicao_temp['TRS Líquido (%)'].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "0%")
+        
+        for col in ['Aprovadas', 'Refugado Total']:
+            if col in df_exibicao_temp.columns:
+                df_exibicao_temp[col] = df_exibicao_temp[col].apply(lambda x: f"{int(x):,}".replace(",", ".") if pd.notna(x) else "0")
+        
+        st.dataframe(df_exibicao_temp, use_container_width=True, height=300, hide_index=True)
+        st.caption(f"📊 Exibindo {len(df_exibicao_temp)} registros (do mais recente para o mais antigo)")
+    else:
+        st.info("📭 Nenhum registro de têmpera disponível")
+    
+    st.markdown("<hr>", unsafe_allow_html=True)
+    
+    # ── GRÁFICO TRS DIÁRIO ──
+    render_section_header("📈 Evolução Diária do TRS Líquido", "▸", THEME['accent_purple'])
+    
+    if not df.empty and 'TRS_LIQUIDO' in df.columns and 'DATA' in df.columns:
+        resumo_dia = df.groupby(df['DATA'].dt.date).agg({
+            'TRS_LIQUIDO': 'mean',
+            'AP_TEMPERA': 'sum',
+            'REFUGADO_TOTAL': 'sum',
+            'TOTAL_PECAS': 'sum'
+        }).reset_index()
+        resumo_dia['DATA'] = pd.to_datetime(resumo_dia['DATA'])
+        resumo_dia = resumo_dia.sort_values('DATA', ascending=True)
+        
+        if not resumo_dia.empty:
+            fig, ax = plt.subplots(figsize=(12, 4), facecolor=THEME['bg_card'])
+            apply_chart_style(ax, fig, "TRS Líquido Diário", ylabel="TRS (%)", accent=THEME['accent_purple'])
             
-            styled = df_tabela.style.apply(estilo_ranking, axis=1)
-            st.dataframe(styled, use_container_width=True, height=250)
+            ax.fill_between(resumo_dia['DATA'], 0, resumo_dia['TRS_LIQUIDO'], alpha=0.12, color=THEME['accent_purple'])
+            ax.plot(resumo_dia['DATA'], resumo_dia['TRS_LIQUIDO'], 
+                    marker='o', markersize=5, linewidth=2, color=THEME['accent_purple'],
+                    markerfacecolor=THEME['bg_card'], markeredgecolor=THEME['accent_purple'], markeredgewidth=2)
             
-            with st.expander("🔍 Detalhamento das 5 Piores Gancheiras", expanded=False):
-                for i, (_, row) in enumerate(df_ranking.head(5).iterrows(), 1):
-                    st.markdown(f"""
-                    **{i}º - Gancheira {row['Gancheira']}** | ❌ {row['Defeitos']} defeitos | TRS: {row['TRS']}  
-                    📋 {row['Detalhamento']}
-                    """)
+            ax.axhline(y=85, color=THEME['accent_lime'], linestyle='--', alpha=0.7, linewidth=1.5, label='Meta 85%')
+            ax.axhline(y=70, color=THEME['accent_orange'], linestyle=':', alpha=0.5, linewidth=1.5, label='Limite 70%')
+            ax.legend(loc='upper right', fontsize=9)
             
-            fig, ax = plt.subplots(figsize=(10, 3), facecolor=THEME['bg_card'])
-            apply_chart_style(ax, fig, "Top 10 Piores Gancheiras", accent=THEME['accent_purple'])
-            top10 = df_ranking.head(10)
-            colors = [THEME['accent_red'] if i < 3 else THEME['accent_orange'] for i in range(len(top10))]
-            ax.barh(range(len(top10)), top10['Defeitos'], color=colors, alpha=0.8)
-            ax.set_yticks(range(len(top10)))
-            ax.set_yticklabels(top10['Gancheira'])
-            ax.invert_yaxis()
-            ax.set_xlabel('Defeitos')
+            plt.setp(ax.xaxis.get_majorticklabels(), rotation=35, ha='right', fontsize=8)
             fig.tight_layout()
             st.pyplot(fig)
             plt.close(fig)
-        else:
-            st.info("Sem dados de gancheiras disponíveis.")
-    else:
-        st.info("Coluna GANCHEIRA não encontrada.")
-
-    # ── Análise de Posições da Pior Gancheira ──
-    st.markdown("<hr>", unsafe_allow_html=True)
-    render_section_header("🔧 Análise de Posições - Pior Gancheira", "▸", THEME['accent_purple'])
     
-    if not df.empty and 'GANCHEIRA' in df.columns:
-        ranking = []
-        for g in df['GANCHEIRA'].dropna().unique():
-            df_g = df[df['GANCHEIRA'] == g]
-            ranking.append({'Gancheira': str(g), 'Defeitos': int(df_g['TOTAL_DEFEITOS'].sum()), 'Reg': len(df_g)})
+    # ── GRÁFICO DEFEITOS DA TÊMPERA ──
+    st.markdown("<hr>", unsafe_allow_html=True)
+    render_section_header("📊 Distribuição de Defeitos da Têmpera", "▸", THEME['accent_purple'])
+    
+    defeitos_soma = {}
+    for col in COLUNAS_DEFEITOS_TEMPERA:
+        if col in df.columns and df[col].sum() > 0:
+            defeitos_soma[col] = df[col].sum()
+    
+    if defeitos_soma:
+        df_defeitos = pd.DataFrame(list(defeitos_soma.items()), columns=['Defeito', 'Quantidade'])
+        df_defeitos = df_defeitos.sort_values('Quantidade', ascending=False)
         
-        if ranking:
-            df_rank = pd.DataFrame(ranking).sort_values('Defeitos', ascending=False)
-            pior = df_rank.iloc[0]
-            
-            st.markdown(f"""
-            <div style="background: {THEME['bg_card2']}; padding: 10px 15px; margin-bottom: 15px; border-left: 4px solid {THEME['accent_red']};">
-                <span style="font-weight: bold; color: {THEME['accent_red']};">🔴 PIOR GANCHEIRA: {pior['Gancheira']}</span> | 
-                {pior['Defeitos']} defeitos em {pior['Reg']} registros
-            </div>
-            """, unsafe_allow_html=True)
-            
-            df_pior = df[df['GANCHEIRA'] == pior['Gancheira']]
-            posicoes_dados = []
-            for col in df_base.columns:
-                try:
-                    num = int(str(col).strip())
-                    if 11 <= num <= 78 and col in df_pior.columns:
-                        contagem = {c: 0 for c in CODIGOS_DEFEITO_REAIS}
-                        total = 0
-                        for val in df_pior[col].dropna():
-                            try:
-                                cod = int(float(str(val).strip()))
-                                if cod in CODIGOS_DEFEITO_REAIS:
-                                    contagem[cod] += 1
-                                    total += 1
-                            except:
-                                pass
-                        if total > 0:
-                            principal_cod = max(contagem, key=contagem.get)
-                            principal_nome = MAPEAMENTO_DEFEITOS.get(principal_cod, '?')
-                            posicoes_dados.append({
-                                'Posição': num,
-                                'Defeitos': total,
-                                'Principal': f"{principal_nome[:20]} ({contagem[principal_cod]})"
-                            })
-                except:
-                    pass
-            
-            if posicoes_dados:
-                df_pos = pd.DataFrame(posicoes_dados).sort_values('Defeitos', ascending=False)
-                total_def = df_pos['Defeitos'].sum()
-                df_pos['%'] = (df_pos['Defeitos'] / total_def * 100).round(1)
+        fig, ax = plt.subplots(figsize=(10, 4), facecolor=THEME['bg_card'])
+        apply_chart_style(ax, fig, "Defeitos da Têmpera", ylabel="Quantidade", accent=THEME['accent_red'])
+        
+        cores = ['#E81123' if 'QUEBRA' in d or 'EMPENADA' in d else '#FFB900' if 'IMPACTO' in d else '#0078D4' for d in df_defeitos['Defeito']]
+        bars = ax.bar(range(len(df_defeitos)), df_defeitos['Quantidade'], color=cores, alpha=0.8, edgecolor=THEME['bg_card'], linewidth=1.5)
+        
+        ax.set_xticks(range(len(df_defeitos)))
+        ax.set_xticklabels(df_defeitos['Defeito'], rotation=30, ha='right', fontsize=9)
+        
+        for bar, val in zip(bars, df_defeitos['Quantidade']):
+            if val > 0:
+                ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5, 
+                       f"{int(val):,}".replace(",", "."), ha='center', va='bottom', fontsize=9, fontweight='bold')
+        
+        fig.tight_layout()
+        st.pyplot(fig)
+        plt.close(fig)
+        
+        total_defeitos = df_defeitos['Quantidade'].sum()
+        st.caption(f"🔥 **Total de defeitos da Têmpera:** {int(total_defeitos):,}".replace(",", "."))
+    else:
+        st.info("📭 Nenhum defeito registrado no período selecionado")
+    
+    # ============================================================
+    # SEÇÃO DE GANCHEIRAS (USANDO DADOS DA PLANILHA TRS_TEMPERA ORIGINAL)
+    # ============================================================
+    
+    # Verificar se há dados originais para análise
+    if not df_original.empty and 'GANCHEIRA' in df_original.columns:
+        # ── RANKING DE GANCHEIRAS (PIOR → MELHOR) ──
+        st.markdown("<hr>", unsafe_allow_html=True)
+        render_section_header("🏭 Ranking de Gancheiras (Pior → Melhor)", "▸", THEME['accent_purple'])
+        
+        # Filtrar dados originais pela data selecionada
+        df_original_filtrado = df_original.copy()
+        if data_ini:
+            df_original_filtrado = df_original_filtrado[df_original_filtrado['DATA'] >= pd.to_datetime(data_ini)]
+        if data_fim:
+            df_original_filtrado = df_original_filtrado[df_original_filtrado['DATA'] <= pd.to_datetime(data_fim)]
+        if turno != "(Todos)" and 'TURNO_TEMP' in df_original_filtrado.columns:
+            df_original_filtrado = df_original_filtrado[df_original_filtrado['TURNO_TEMP'].astype(str).str.upper() == turno.upper()]
+        if gancheira != "(Todas)" and 'GANCHEIRA' in df_original_filtrado.columns:
+            df_original_filtrado = df_original_filtrado[df_original_filtrado['GANCHEIRA'].astype(str) == gancheira]
+        
+        # Verificar se há registros com gancheira
+        df_com_gancheira = df_original_filtrado[df_original_filtrado['GANCHEIRA'].notna() & (df_original_filtrado['GANCHEIRA'].astype(str).str.strip() != '')]
+        
+        if df_com_gancheira.empty:
+            st.info("📭 Nenhum registro com gancheira cadastrada no período selecionado.")
+        else:
+            # Calcular ranking
+            ranking_gancheiras = []
+            for gancheira_item in df_com_gancheira['GANCHEIRA'].unique():
+                df_g = df_com_gancheira[df_com_gancheira['GANCHEIRA'] == gancheira_item]
+                total_registros_g = len(df_g)
+                total_aprovado_g = int(df_g['APROVADO'].sum())
+                total_defeitos_g = int(df_g['TOTAL_DEFEITOS'].sum())
+                total_pecas_g = total_registros_g * 40
+                trs_g = (total_aprovado_g / total_pecas_g * 100) if total_pecas_g > 0 else 0
                 
-                st.metric("Posições afetadas", len(df_pos))
+                media_defeitos = total_defeitos_g / total_registros_g if total_registros_g > 0 else 0
                 
-                df_tabela_pos = df_pos[['Posição', 'Defeitos', '%', 'Principal']].head(15).copy()
-                df_tabela_pos['%'] = df_tabela_pos['%'].astype(str) + '%'
+                ranking_gancheiras.append({
+                    'Pos': 0,
+                    'Gancheira': str(gancheira_item),
+                    'Reg': total_registros_g,
+                    'Defeitos': total_defeitos_g,
+                    'Média Defeitos': media_defeitos,
+                    'Aprovadas': total_aprovado_g,
+                    'TRS_num': trs_g,
+                    'TRS': f"{trs_g:.1f}%",
+                    'Total Peças': total_pecas_g
+                })
+            
+            if ranking_gancheiras:
+                df_ranking = pd.DataFrame(ranking_gancheiras)
+                df_ranking = df_ranking.sort_values('Defeitos', ascending=False)
+                df_ranking['Pos'] = range(1, len(df_ranking) + 1)
                 
-                def estilo_pos(row):
+                # Piores gancheiras
+                piores = df_ranking.head(3)
+                st.warning(f"⚠️ **Piores gancheiras:** {', '.join(piores['Gancheira'].tolist())}")
+                
+                df_tabela = df_ranking[['Pos', 'Gancheira', 'Reg', 'Defeitos', 'Média Defeitos', 'TRS']].copy()
+                df_tabela['Média Defeitos'] = df_tabela['Média Defeitos'].round(1)
+                
+                def estilo_ranking(row):
                     styles = [''] * len(row)
-                    defeitos = row['Defeitos']
-                    if defeitos > 5:
-                        styles[1] = 'color: #E81123; font-weight: bold;'
-                    elif defeitos > 2:
-                        styles[1] = 'color: #E86C2C; font-weight: bold;'
+                    pos = row['Pos']
+                    if pos <= 3:
+                        styles[0] = 'color: #E81123; font-weight: bold;'
+                    elif pos > len(df_ranking) - 3:
+                        styles[0] = 'color: #107C10; font-weight: bold;'
+                    styles[3] = 'color: #E81123; font-weight: bold;'
+                    try:
+                        trs_val = float(row['TRS'].replace('%', ''))
+                        if trs_val >= 80:
+                            styles[5] = 'color: #107C10; font-weight: bold;'
+                        elif trs_val >= 70:
+                            styles[5] = 'color: #E86C2C; font-weight: bold;'
+                    except:
+                        pass
                     return styles
                 
-                styled_pos = df_tabela_pos.style.apply(estilo_pos, axis=1)
-                st.dataframe(styled_pos, use_container_width=True, height=300)
+                styled = df_tabela.style.apply(estilo_ranking, axis=1)
+                st.dataframe(styled, use_container_width=True, height=300)
                 
-                criticas = df_pos[df_pos['Defeitos'] > 5]['Posição'].tolist()
-                alerta = df_pos[(df_pos['Defeitos'] >= 2) & (df_pos['Defeitos'] <= 5)]['Posição'].tolist()
+                # Gráfico das piores gancheiras
+                fig, ax = plt.subplots(figsize=(10, 4), facecolor=THEME['bg_card'])
+                apply_chart_style(ax, fig, "Defeitos por Gancheira", ylabel="Quantidade de Defeitos", accent=THEME['accent_purple'])
                 
-                if criticas:
-                    st.error(f"🚨 **Críticas (>5):** {', '.join(map(str, criticas))}")
-                if alerta:
-                    st.warning(f"⚠️ **Alerta (2-5):** {', '.join(map(str, alerta))}")
-                if not criticas and not alerta:
-                    st.success("✅ Nenhuma posição crítica ou em alerta")
-                
-                if len(df_pos) > 0:
-                    fig, ax = plt.subplots(figsize=(10, 3), facecolor=THEME['bg_card'])
-                    apply_chart_style(ax, fig, f"Posições com defeitos - Gancheira {pior['Gancheira']}", accent=THEME['accent_red'])
-                    top = df_pos.head(20)
-                    colors = [THEME['accent_red'] if d > 5 else THEME['accent_orange'] if d > 2 else THEME['accent_yellow'] for d in top['Defeitos']]
-                    ax.barh(range(len(top)), top['Defeitos'], color=colors, alpha=0.8)
-                    ax.set_yticks(range(len(top)))
-                    ax.set_yticklabels(top['Posição'].astype(str))
+                top15 = df_ranking.head(15)
+                if len(top15) > 0:
+                    colors = [THEME['accent_red'] if i < 3 else THEME['accent_orange'] if i < 8 else THEME['accent_cyan'] for i in range(len(top15))]
+                    bars = ax.barh(range(len(top15)), top15['Defeitos'], color=colors, alpha=0.8, edgecolor=THEME['bg_card'], linewidth=1.2)
+                    
+                    ax.set_yticks(range(len(top15)))
+                    ax.set_yticklabels(top15['Gancheira'], fontsize=9)
                     ax.invert_yaxis()
-                    ax.set_xlabel('Defeitos')
+                    ax.set_xlabel('Defeitos', fontsize=10)
+                    
+                    for bar, val in zip(bars, top15['Defeitos']):
+                        if val > 0:
+                            ax.text(bar.get_width() + 2, bar.get_y() + bar.get_height()/2, 
+                                   f"{val:,}", va='center', fontsize=9, fontweight='bold')
+                    
                     fig.tight_layout()
                     st.pyplot(fig)
                     plt.close(fig)
+                
+                with st.expander("🔍 Detalhamento completo das Gancheiras", expanded=False):
+                    st.dataframe(df_ranking, use_container_width=True, height=400)
             else:
-                st.info(f"Nenhum defeito nas posições da gancheira {pior['Gancheira']}.")
+                st.info("📭 Sem dados de gancheiras disponíveis.")
+        
+        # ── ANÁLISE DE POSIÇÕES DA PIOR GANCHEIRA ──
+        st.markdown("<hr>", unsafe_allow_html=True)
+        render_section_header("🔧 Análise de Posições - Pior Gancheira", "▸", THEME['accent_purple'])
+        
+        # Identificar a pior gancheira do período
+        df_com_gancheira = df_original_filtrado[df_original_filtrado['GANCHEIRA'].notna() & (df_original_filtrado['GANCHEIRA'].astype(str).str.strip() != '')]
+        
+        if not df_com_gancheira.empty:
+            ranking_pior = []
+            for g in df_com_gancheira['GANCHEIRA'].unique():
+                df_g = df_com_gancheira[df_com_gancheira['GANCHEIRA'] == g]
+                ranking_pior.append({'Gancheira': str(g), 'Defeitos': int(df_g['TOTAL_DEFEITOS'].sum()), 'Reg': len(df_g)})
+            
+            if ranking_pior:
+                df_rank_pior = pd.DataFrame(ranking_pior).sort_values('Defeitos', ascending=False)
+                pior = df_rank_pior.iloc[0]
+                
+                st.markdown(f"""
+                <div style="background: {THEME['bg_card2']}; padding: 10px 15px; margin-bottom: 15px; border-left: 4px solid {THEME['accent_red']};">
+                    <span style="font-weight: bold; color: {THEME['accent_red']};">🔴 PIOR GANCHEIRA: {pior['Gancheira']}</span> | 
+                    {pior['Defeitos']} defeitos em {pior['Reg']} registros
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Análise de posições da pior gancheira
+                df_pior = df_com_gancheira[df_com_gancheira['GANCHEIRA'] == pior['Gancheira']]
+                
+                # Verificar se há colunas de posição (colunas numéricas)
+                posicoes_dados = []
+                for col in df_pior.columns:
+                    try:
+                        num = int(str(col).strip())
+                        if 11 <= num <= 78 and col in df_pior.columns:
+                            # Contar defeitos por posição
+                            contagem = {c: 0 for c in CODIGOS_DEFEITO_REAIS}
+                            total = 0
+                            for val in df_pior[col].dropna():
+                                try:
+                                    cod = int(float(str(val).strip()))
+                                    if cod in CODIGOS_DEFEITO_REAIS:
+                                        contagem[cod] += 1
+                                        total += 1
+                                except:
+                                    pass
+                            if total > 0:
+                                principal_cod = max(contagem, key=contagem.get)
+                                principal_nome = MAPEAMENTO_DEFEITOS.get(principal_cod, '?')
+                                posicoes_dados.append({
+                                    'Posição': num,
+                                    'Defeitos': total,
+                                    'Principal': f"{principal_nome[:20]} ({contagem[principal_cod]})"
+                                })
+                    except:
+                        pass
+                
+                if posicoes_dados:
+                    df_pos = pd.DataFrame(posicoes_dados).sort_values('Defeitos', ascending=False)
+                    total_def = df_pos['Defeitos'].sum()
+                    df_pos['%'] = (df_pos['Defeitos'] / total_def * 100).round(1)
+                    
+                    st.metric("Posições afetadas", len(df_pos))
+                    
+                    df_tabela_pos = df_pos[['Posição', 'Defeitos', '%', 'Principal']].head(15).copy()
+                    df_tabela_pos['%'] = df_tabela_pos['%'].astype(str) + '%'
+                    
+                    def estilo_pos(row):
+                        styles = [''] * len(row)
+                        defeitos = row['Defeitos']
+                        if defeitos > 5:
+                            styles[1] = 'color: #E81123; font-weight: bold;'
+                        elif defeitos > 2:
+                            styles[1] = 'color: #E86C2C; font-weight: bold;'
+                        return styles
+                    
+                    styled_pos = df_tabela_pos.style.apply(estilo_pos, axis=1)
+                    st.dataframe(styled_pos, use_container_width=True, height=300)
+                    
+                    criticas = df_pos[df_pos['Defeitos'] > 5]['Posição'].tolist()
+                    alerta = df_pos[(df_pos['Defeitos'] >= 2) & (df_pos['Defeitos'] <= 5)]['Posição'].tolist()
+                    
+                    if criticas:
+                        st.error(f"🚨 **Críticas (>5):** {', '.join(map(str, criticas))}")
+                    if alerta:
+                        st.warning(f"⚠️ **Alerta (2-5):** {', '.join(map(str, alerta))}")
+                    if not criticas and not alerta:
+                        st.success("✅ Nenhuma posição crítica ou em alerta")
+                    
+                    if len(df_pos) > 0:
+                        fig, ax = plt.subplots(figsize=(10, 4), facecolor=THEME['bg_card'])
+                        apply_chart_style(ax, fig, f"Posições com defeitos - Gancheira {pior['Gancheira']}", accent=THEME['accent_red'])
+                        top = df_pos.head(20)
+                        colors = [THEME['accent_red'] if d > 5 else THEME['accent_orange'] if d > 2 else THEME['accent_yellow'] for d in top['Defeitos']]
+                        bars = ax.barh(range(len(top)), top['Defeitos'], color=colors, alpha=0.8)
+                        ax.set_yticks(range(len(top)))
+                        ax.set_yticklabels(top['Posição'].astype(str), fontsize=9)
+                        ax.invert_yaxis()
+                        ax.set_xlabel('Defeitos', fontsize=10)
+                        
+                        for bar, val in zip(bars, top['Defeitos']):
+                            if val > 0:
+                                ax.text(bar.get_width() + 0.5, bar.get_y() + bar.get_height()/2, 
+                                       f"{val}", va='center', fontsize=9, fontweight='bold')
+                        
+                        fig.tight_layout()
+                        st.pyplot(fig)
+                        plt.close(fig)
+                else:
+                    st.info(f"🔍 Nenhum defeito nas posições da gancheira {pior['Gancheira']} para o período selecionado.")
+            else:
+                st.info("📭 Sem dados de gancheiras para análise de posições.")
         else:
-            st.info("Sem dados de gancheiras.")
+            st.info("📭 Nenhum registro com gancheira cadastrada no período selecionado.")
+    
     else:
-        st.info("Coluna GANCHEIRA não encontrada.")
-
-    # ── Comparativo por Turnos ──
+        st.info("📭 Dados da planilha TRS_TEMPERA não disponíveis para análise de gancheiras.")
+        
+        # Mostrar ajuda para diagnosticar o problema
+        with st.expander("🔍 Diagnóstico - Por que os dados da TRS_TEMPERA não estão disponíveis?"):
+            st.markdown("""
+            **Possíveis causas:**
+            1. A planilha TRS_TEMPERA não está acessível
+            2. A aba 'TRS_TEMPERA' não existe na planilha
+            3. A coluna 'GANCHEIRA' não existe na planilha
+            4. A planilha está vazia
+            
+            **Soluções:**
+            1. Verifique se a planilha existe em: `https://docs.google.com/spreadsheets/d/1GJegUHosaQLEJVMCH6QVuKjSjuaxrWkgzNEr9vM5Yio/edit`
+            2. Verifique se a aba 'TRS_TEMPERA' existe
+            3. Verifique se há dados na aba 'TRS_TEMPERA'
+            4. Verifique se a coluna 'GANCHEIRA' existe
+            """)
+            
+            # Mostrar informações de debug
+            if df_original.empty:
+                st.warning("⚠️ DataFrame df_original está vazio")
+            else:
+                st.success(f"✅ df_original carregado com {len(df_original)} registros")
+                st.write("Colunas disponíveis:", list(df_original.columns))
+    
+    # ── COMPARATIVO POR TURNOS ──
     st.markdown("<hr>", unsafe_allow_html=True)
     render_section_header("📊 Comparativo por Turno", "▸", THEME['accent_purple'])
     
-    if not df.empty and 'TURNO_TEMP' in df.columns:
-        turnos = df['TURNO_TEMP'].dropna().unique()
+    if not df.empty and 'TURNO' in df.columns:
+        turnos = df['TURNO'].dropna().unique()
         
         if len(turnos) > 0:
             dados_turnos = []
             for t in turnos:
-                df_t = df[df['TURNO_TEMP'] == t]
-                total_gancheiras = len(df_t)
-                total_aprovado = int(df_t['APROVADO'].sum())
-                total_defeitos = int(df_t['TOTAL_DEFEITOS'].sum())
-                trs_medio_t = (total_aprovado / (total_gancheiras * 40) * 100) if total_gancheiras > 0 else 0
+                df_t = df[df['TURNO'].astype(str) == t]
+                total_registros = len(df_t)
+                total_aprovado = int(df_t['AP_TEMPERA'].sum()) if 'AP_TEMPERA' in df_t.columns else 0
+                total_defeitos = int(df_t['REFUGADO_TOTAL'].sum()) if 'REFUGADO_TOTAL' in df_t.columns else 0
+                total_pecas = int(df_t['TOTAL_PECAS'].sum()) if 'TOTAL_PECAS' in df_t.columns else total_aprovado + total_defeitos
+                trs_medio_t = df_t['TRS_LIQUIDO'].mean() if 'TRS_LIQUIDO' in df_t.columns else 0
                 
                 dados_turnos.append({
                     'Turno': str(t),
-                    'Gancheiras': total_gancheiras,
+                    'Registros': total_registros,
                     'Aprovados': total_aprovado,
                     'Defeitos': total_defeitos,
+                    'Total Peças': total_pecas,
                     'TRS_num': trs_medio_t,
                     'TRS': f"{trs_medio_t:.1f}%"
                 })
             
-            df_turnos = pd.DataFrame(dados_turnos)
-            df_turnos = df_turnos.sort_values('TRS_num', ascending=False)
-            
-            df_tabela_turno = df_turnos[['Turno', 'Gancheiras', 'Aprovados', 'Defeitos', 'TRS']].copy()
-            
-            def estilo_turno(row):
-                styles = [''] * len(row)
-                try:
-                    trs_val = float(row['TRS'].replace('%', ''))
-                    if trs_val >= 80:
-                        styles[4] = 'color: #107C10; font-weight: bold;'
-                    elif trs_val >= 70:
-                        styles[4] = 'color: #E86C2C; font-weight: bold;'
-                    else:
-                        styles[4] = 'color: #E81123; font-weight: bold;'
-                except:
-                    pass
-                styles[2] = 'color: #107C10;'
-                styles[3] = 'color: #E81123;'
-                return styles
-            
-            styled_turno = df_tabela_turno.style.apply(estilo_turno, axis=1)
-            st.dataframe(styled_turno, use_container_width=True, height=150)
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                fig, ax = plt.subplots(figsize=(5, 3.5), facecolor=THEME['bg_card'])
-                apply_chart_style(ax, fig, "Aprovados vs Defeitos", accent=THEME['accent_purple'])
-                x = range(len(df_turnos))
-                width = 0.35
-                bars1 = ax.bar([i - width/2 for i in x], df_turnos['Aprovados'], width, label='Aprovados', color=THEME['accent_lime'], alpha=0.8)
-                bars2 = ax.bar([i + width/2 for i in x], df_turnos['Defeitos'], width, label='Defeitos', color=THEME['accent_red'], alpha=0.8)
-                ax.set_xticks(x)
-                ax.set_xticklabels(df_turnos['Turno'], fontsize=9)
-                ax.legend(loc='upper right', fontsize=8)
-                for bar in bars1:
-                    h = bar.get_height()
-                    if h > 0:
-                        ax.text(bar.get_x() + bar.get_width()/2, h + 5, f'{int(h)}', ha='center', va='bottom', fontsize=7, color=THEME['accent_lime'])
-                for bar in bars2:
-                    h = bar.get_height()
-                    if h > 0:
-                        ax.text(bar.get_x() + bar.get_width()/2, h + 2, f'{int(h)}', ha='center', va='bottom', fontsize=7, color=THEME['accent_red'])
-                fig.tight_layout()
-                st.pyplot(fig)
-                plt.close(fig)
-            
-            with col2:
-                fig2, ax2 = plt.subplots(figsize=(5, 3.5), facecolor=THEME['bg_card'])
-                apply_chart_style(ax2, fig2, "TRS por Turno", ylabel="TRS (%)", accent=THEME['accent_purple'])
-                cores_turno = {'M': THEME['accent_cyan'], 'T': THEME['accent_orange'], 'N': THEME['accent_lime']}
-                bar_colors = [cores_turno.get(str(t), THEME['accent_purple']) for t in df_turnos['Turno']]
-                bars = ax2.bar(range(len(df_turnos)), df_turnos['TRS_num'], color=bar_colors, alpha=0.88, edgecolor=THEME['bg_card'], linewidth=1.5, width=0.55)
-                ax2.axhline(y=80, color=THEME['accent_red'], linestyle='--', alpha=0.5, linewidth=1.5, label='Meta 80%')
-                for i, (_, row) in enumerate(df_turnos.iterrows()):
-                    ax2.text(i, row['TRS_num'] + 1, f"{row['TRS_num']:.1f}%", ha='center', va='bottom', fontweight='bold', fontsize=9, color=THEME['text_primary'])
-                ax2.set_xticks(range(len(df_turnos)))
-                ax2.set_xticklabels(df_turnos['Turno'], fontsize=10)
-                ax2.set_ylim(0, 105)
-                ax2.legend(loc='upper right', fontsize=8)
-                fig2.tight_layout()
-                st.pyplot(fig2)
-                plt.close(fig2)
-            
-            melhor_turno = df_turnos.iloc[0]
-            pior_turno = df_turnos.iloc[-1]
-            st.info(f"🏆 **Melhor turno:** {melhor_turno['Turno']} ({melhor_turno['TRS']}) | ⚠️ **Pior turno:** {pior_turno['Turno']} ({pior_turno['TRS']})")
+            if dados_turnos:
+                df_turnos = pd.DataFrame(dados_turnos)
+                df_turnos = df_turnos.sort_values('TRS_num', ascending=False)
+                
+                df_tabela_turno = df_turnos[['Turno', 'Registros', 'Aprovados', 'Defeitos', 'TRS']].copy()
+                
+                def estilo_turno(row):
+                    styles = [''] * len(row)
+                    try:
+                        trs_val = float(row['TRS'].replace('%', ''))
+                        if trs_val >= 85:
+                            styles[4] = 'color: #107C10; font-weight: bold;'
+                        elif trs_val >= 70:
+                            styles[4] = 'color: #E86C2C; font-weight: bold;'
+                        else:
+                            styles[4] = 'color: #E81123; font-weight: bold;'
+                    except:
+                        pass
+                    styles[2] = 'color: #107C10;'
+                    styles[3] = 'color: #E81123;'
+                    return styles
+                
+                styled_turno = df_tabela_turno.style.apply(estilo_turno, axis=1)
+                st.dataframe(styled_turno, use_container_width=True, height=150)
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    fig, ax = plt.subplots(figsize=(5, 3.5), facecolor=THEME['bg_card'])
+                    apply_chart_style(ax, fig, "Aprovados vs Defeitos por Turno", accent=THEME['accent_purple'])
+                    x = range(len(df_turnos))
+                    width = 0.35
+                    bars1 = ax.bar([i - width/2 for i in x], df_turnos['Aprovados'], width, label='Aprovados', color=THEME['accent_lime'], alpha=0.8)
+                    bars2 = ax.bar([i + width/2 for i in x], df_turnos['Defeitos'], width, label='Defeitos', color=THEME['accent_red'], alpha=0.8)
+                    ax.set_xticks(x)
+                    ax.set_xticklabels(df_turnos['Turno'], fontsize=9)
+                    ax.legend(loc='upper right', fontsize=8)
+                    for bar in bars1:
+                        h = bar.get_height()
+                        if h > 0:
+                            ax.text(bar.get_x() + bar.get_width()/2, h + 5, f'{int(h)}', ha='center', va='bottom', fontsize=7, color=THEME['accent_lime'])
+                    for bar in bars2:
+                        h = bar.get_height()
+                        if h > 0:
+                            ax.text(bar.get_x() + bar.get_width()/2, h + 2, f'{int(h)}', ha='center', va='bottom', fontsize=7, color=THEME['accent_red'])
+                    fig.tight_layout()
+                    st.pyplot(fig)
+                    plt.close(fig)
+                
+                with col2:
+                    fig2, ax2 = plt.subplots(figsize=(5, 3.5), facecolor=THEME['bg_card'])
+                    apply_chart_style(ax2, fig2, "TRS por Turno", ylabel="TRS (%)", accent=THEME['accent_purple'])
+                    cores_turno = {'M': THEME['accent_cyan'], 'T': THEME['accent_orange'], 'N': THEME['accent_lime']}
+                    bar_colors = [cores_turno.get(str(t), THEME['accent_purple']) for t in df_turnos['Turno']]
+                    bars = ax2.bar(range(len(df_turnos)), df_turnos['TRS_num'], color=bar_colors, alpha=0.88, edgecolor=THEME['bg_card'], linewidth=1.5, width=0.55)
+                    ax2.axhline(y=85, color=THEME['accent_lime'], linestyle='--', alpha=0.5, linewidth=1.5, label='Meta 85%')
+                    for i, (_, row) in enumerate(df_turnos.iterrows()):
+                        ax2.text(i, row['TRS_num'] + 1, f"{row['TRS_num']:.1f}%", ha='center', va='bottom', fontweight='bold', fontsize=9, color=THEME['text_primary'])
+                    ax2.set_xticks(range(len(df_turnos)))
+                    ax2.set_xticklabels(df_turnos['Turno'], fontsize=10)
+                    ax2.set_ylim(0, 105)
+                    ax2.legend(loc='upper right', fontsize=8)
+                    fig2.tight_layout()
+                    st.pyplot(fig2)
+                    plt.close(fig2)
+                
+                melhor_turno = df_turnos.iloc[0]
+                pior_turno = df_turnos.iloc[-1]
+                st.info(f"🏆 **Melhor turno:** {melhor_turno['Turno']} ({melhor_turno['TRS']}) | ⚠️ **Pior turno:** {pior_turno['Turno']} ({pior_turno['TRS']})")
+            else:
+                st.info("Sem dados de turno disponíveis.")
         else:
             st.info("Sem dados de turno disponíveis.")
     else:
-        st.info("Coluna TURNO_TEMP não encontrada.")
-
-    # ── Defeitos por Tipo ──
+        st.info("Coluna TURNO não encontrada.")
+    
+    # ── ANÁLISE POR REFERÊNCIA ──
     st.markdown("<hr>", unsafe_allow_html=True)
-    render_section_header("Defeitos por Tipo", "▸", THEME['accent_purple'])
+    render_section_header("📊 Análise por Referência", "▸", THEME['accent_purple'])
     
-    defeitos_totais = {}
-    for codigo, nome in MAPEAMENTO_DEFEITOS.items():
-        nome_clean = nome.upper().replace(' ', '_').replace('Ç', 'C').replace('Ã', 'A').replace('Á', 'A').replace('Ó', 'O')
-        col = f'QTD_{nome_clean}'
-        if col in df.columns:
-            total = int(df[col].sum())
-            if total > 0:
-                defeitos_totais[nome] = total
+    if 'REFERÊNCIA' in df.columns and not df.empty:
+        df_ref = df.groupby('REFERÊNCIA').agg({
+            'TOTAL_PECAS': 'sum',
+            'AP_TEMPERA': 'sum',
+            'REFUGADO_TOTAL': 'sum',
+            'TRS_LIQUIDO': 'mean',
+            'META_LIQUIDA': 'sum'
+        }).reset_index()
+        
+        df_ref = df_ref[df_ref['TOTAL_PECAS'] > 0]
+        df_ref = df_ref.sort_values('TRS_LIQUIDO', ascending=False)
+        
+        if not df_ref.empty:
+            df_ref_top = df_ref.head(10)
+            
+            fig, ax = plt.subplots(figsize=(10, 4), facecolor=THEME['bg_card'])
+            apply_chart_style(ax, fig, "TRS Líquido por Referência (Top 10)", ylabel="TRS (%)", accent=THEME['accent_purple'])
+            
+            cores_ref = [THEME['accent_lime'] if v >= 85 else THEME['accent_orange'] if v >= 70 else THEME['accent_red'] for v in df_ref_top['TRS_LIQUIDO']]
+            bars = ax.bar(range(len(df_ref_top)), df_ref_top['TRS_LIQUIDO'], color=cores_ref, alpha=0.8, edgecolor=THEME['bg_card'], linewidth=1.5)
+            
+            ax.axhline(y=85, color=THEME['accent_lime'], linestyle='--', alpha=0.5, linewidth=1.5, label='Meta 85%')
+            
+            for bar, val in zip(bars, df_ref_top['TRS_LIQUIDO']):
+                ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1, 
+                       f"{val:.1f}%", ha='center', va='bottom', fontsize=9, fontweight='bold')
+            
+            ax.set_xticks(range(len(df_ref_top)))
+            ax.set_xticklabels(df_ref_top['REFERÊNCIA'], rotation=30, ha='right', fontsize=9)
+            ax.legend(loc='upper right', fontsize=9)
+            
+            fig.tight_layout()
+            st.pyplot(fig)
+            plt.close(fig)
+            
+            with st.expander("📋 Ver tabela completa por referência", expanded=False):
+                df_ref_display = df_ref.copy()
+                for col in ['TOTAL_PECAS', 'AP_TEMPERA', 'REFUGADO_TOTAL', 'META_LIQUIDA']:
+                    if col in df_ref_display.columns:
+                        df_ref_display[col] = df_ref_display[col].apply(lambda x: f"{int(x):,}".replace(",", ".") if pd.notna(x) else "0")
+                df_ref_display['TRS_LIQUIDO'] = df_ref_display['TRS_LIQUIDO'].apply(lambda x: f"{x:.1f}%")
+                df_ref_display = df_ref_display.rename(columns={
+                    'REFERÊNCIA': 'Referência',
+                    'TOTAL_PECAS': 'Total Peças',
+                    'AP_TEMPERA': 'Aprovadas',
+                    'REFUGADO_TOTAL': 'Refugado',
+                    'TRS_LIQUIDO': 'TRS Líquido (%)',
+                    'META_LIQUIDA': 'Meta Líquida'
+                })
+                st.dataframe(df_ref_display, use_container_width=True, hide_index=True, height=300)
     
-    if defeitos_totais:
-        df_def = pd.DataFrame(list(defeitos_totais.items()), columns=['Defeito', 'Qtd']).sort_values('Qtd', ascending=False)
+    # ── DEFEITOS POR TIPO (ORIGINAL - MAPEAMENTO) ──
+    if not df_original.empty:
+        st.markdown("<hr>", unsafe_allow_html=True)
+        render_section_header("📊 Defeitos por Tipo (Mapeamento Original)", "▸", THEME['accent_purple'])
         
-        fig, ax = plt.subplots(figsize=(10, 3), facecolor=THEME['bg_card'])
-        apply_chart_style(ax, fig, "", accent=THEME['accent_purple'])
+        # Verificar se as colunas QTD_ existem
+        defeitos_totais = {}
+        for codigo, nome in MAPEAMENTO_DEFEITOS.items():
+            nome_clean = nome.upper().replace(' ', '_').replace('Ç', 'C').replace('Ã', 'A').replace('Á', 'A').replace('Ó', 'O')
+            col = f'QTD_{nome_clean}'
+            if col in df_original.columns:
+                total = int(df_original[col].sum())
+                if total > 0:
+                    defeitos_totais[nome] = total
         
-        colors = [THEME['accent_lime'] if 'Estourou' in d else THEME['accent_red'] for d in df_def['Defeito']]
-        bars = ax.bar(range(len(df_def)), df_def['Qtd'], color=colors, alpha=0.8)
-        ax.set_xticks(range(len(df_def)))
-        ax.set_xticklabels(df_def['Defeito'], rotation=30, ha='right', fontsize=8)
-        
-        for bar, v in zip(bars, df_def['Qtd']):
-            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5, str(v), ha='center', fontsize=9)
-        
-        fig.tight_layout()
-        st.pyplot(fig)
-        plt.close(fig)
-    else:
-        st.info("Nenhum defeito registrado.")
-
+        if defeitos_totais:
+            df_def = pd.DataFrame(list(defeitos_totais.items()), columns=['Defeito', 'Qtd']).sort_values('Qtd', ascending=False)
+            
+            fig, ax = plt.subplots(figsize=(10, 4), facecolor=THEME['bg_card'])
+            apply_chart_style(ax, fig, "Defeitos por Tipo", accent=THEME['accent_purple'])
+            
+            colors = [THEME['accent_lime'] if 'Estourou' in d else THEME['accent_red'] if 'Quebra' in d else THEME['accent_orange'] for d in df_def['Defeito']]
+            bars = ax.bar(range(len(df_def)), df_def['Qtd'], color=colors, alpha=0.8, edgecolor=THEME['bg_card'], linewidth=1.5)
+            ax.set_xticks(range(len(df_def)))
+            ax.set_xticklabels(df_def['Defeito'], rotation=30, ha='right', fontsize=9)
+            
+            for bar, v in zip(bars, df_def['Qtd']):
+                if v > 0:
+                    ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5, 
+                           f"{v:,}", ha='center', fontsize=10, fontweight='bold')
+            
+            fig.tight_layout()
+            st.pyplot(fig)
+            plt.close(fig)
+            
+            total_def_original = df_def['Qtd'].sum()
+            st.caption(f"📊 **Total de defeitos (mapeamento original):** {int(total_def_original):,}".replace(",", "."))
+        else:
+            st.info("📭 Nenhum defeito registrado no mapeamento original.")
+    
+    # ===== FOOTER =====
+    st.markdown(f"""
+    <div style="text-align:right;padding:16px 0 8px;
+        font-family:'JetBrains Mono',monospace;font-size:10px;
+        color:{THEME['text_muted']};letter-spacing:.1em;">
+        TÊMPERA · {get_horario_brasilia()}
+    </div>
+    """, unsafe_allow_html=True)
+    
 # ==================================================================================================
 # AVISO DE REJEIÇÃO (AR)
 # ==================================================================================================
@@ -11576,6 +12146,5619 @@ elif aba_selecionada == 'FERRAMENTARIA':
     </div>
     """, unsafe_allow_html=True)
 
+# ==================================================================================================
+# REPASSES DE PRODUÇÃO - PEDIDOS EM ABERTO (CARTEIRA) COM CRUD DE REPASSES - VERSÃO CORRIGIDA
+# ==================================================================================================
+elif aba_selecionada == 'REPASSES DE PRODUÇÃO':
+    render_page_header("REPASSES DE PRODUÇÃO", 
+                       f"Carteira de Pedidos em Aberto · Atualizado {get_horario_brasilia()}", 
+                       THEME['accent_orange'])
+    
+    # ======================
+    # CONFIGURAÇÃO DA PLANILHA
+    # ======================
+    ID_PLANILHA_URGENCIAS = '1nyMCIeW5_EWkNOU5-6d_QMePq9gilvRaqvtTGekP5dk'
+    ABA_CARTEIRA = 'CARTEIRA'
+    ABA_REPASSE = 'REPASSE'
+    
+    # ======================
+    # INICIALIZAR SESSION STATE
+    # ======================
+    if 'visao_repasses' not in st.session_state:
+        st.session_state.visao_repasses = 'PEDIDOS_SISTEMA'
+    
+    if 'mostrar_formulario_repasse' not in st.session_state:
+        st.session_state.mostrar_formulario_repasse = False
+    
+    if 'editando_repasse' not in st.session_state:
+        st.session_state.editando_repasse = None
+    
+    if 'excluindo_repasse' not in st.session_state:
+        st.session_state.excluindo_repasse = None
+    
+    if 'termo_busca_referencia' not in st.session_state:
+        st.session_state.termo_busca_referencia = ""
+    
+    if 'unificar_codigo_base' not in st.session_state:
+        st.session_state.unificar_codigo_base = False
+    
+    # ======================
+    # DATACLASS PARA REPASSE
+    # ======================
+    @dataclass
+    class RegistroRepasse:
+        id: Optional[str] = None
+        data: Optional[datetime] = None
+        solicitante: str = ""
+        referencia: str = ""
+        cliente: str = ""
+        quantidade: int = 0
+        data_limite: Optional[datetime] = None
+        status: str = "SOLICITADO"
+    
+    # ======================
+    # FUNÇÃO PARA UNIFICAR CÓDIGO BASE (NOVA ABORDAGEM)
+    # ======================
+    def unificar_codigo_base(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Unifica os registros com base no CÓDIGO_BASE.
+        
+        Regras:
+        1. Para cada CÓDIGO_BASE que aparece mais de uma vez, cria uma linha agregada
+        2. CÓDIGO SISTEMA: mantém o valor original do código sistema que tem correspondência
+        3. CÓDIGO BASE: mantém o valor do código base
+        4. REFERÊNCIA: herda do código sistema
+        5. DESCRIÇÃO: herda do código sistema
+        6. ESTOQUE ATUAL: APENAS o valor do código sistema (NÃO soma)
+        7. PEDIDO SISTEMA: SOMA de todos os registros (código sistema + código base)
+        """
+        if df.empty:
+            return df
+        
+        # Garantir que as colunas necessárias existam
+        if 'CODIGO_BASE' not in df.columns:
+            df['CODIGO_BASE'] = df['CODIGO'] if 'CODIGO' in df.columns else ''
+        
+        if 'PEDIDO_EM_ABERTO' not in df.columns:
+            df['PEDIDO_EM_ABERTO'] = 0
+        
+        if 'ESTOQUE' not in df.columns:
+            df['ESTOQUE'] = 0
+        
+        # Normalizar CÓDIGO_BASE
+        df['CODIGO_BASE_NORM'] = df['CODIGO_BASE'].astype(str).str.strip()
+        df['CODIGO_BASE_NORM'] = df['CODIGO_BASE_NORM'].replace(['', 'nan', 'None', '0'], '')
+        
+        # Identificar quais CODIGO_BASE aparecem mais de uma vez
+        counts = df['CODIGO_BASE_NORM'].value_counts()
+        codigos_para_unificar = counts[counts > 1].index.tolist()
+        codigos_para_unificar = [c for c in codigos_para_unificar if c != '']
+        
+        if not codigos_para_unificar:
+            # Se não há códigos para unificar, retorna o dataframe original
+            return df
+        
+        # Separar registros que serão unificados
+        df_para_unificar = df[df['CODIGO_BASE_NORM'].isin(codigos_para_unificar)].copy()
+        df_nao_unificar = df[~df['CODIGO_BASE_NORM'].isin(codigos_para_unificar)].copy()
+        
+        df_resultado = []
+        
+        # ===== PROCESSAR REGISTROS PARA UNIFICAR =====
+        if not df_para_unificar.empty:
+            # Para cada código base que será unificado
+            for codigo_base in codigos_para_unificar:
+                subset = df_para_unificar[df_para_unificar['CODIGO_BASE_NORM'] == codigo_base].copy()
+                
+                # Encontrar o registro principal (com CODIGO igual ao CODIGO_BASE)
+                reg_principal = subset[subset['CODIGO'].astype(str).str.strip() == codigo_base]
+                
+                if reg_principal.empty:
+                    # Se não encontrar, pega o primeiro registro
+                    reg_principal = subset.iloc[0:1]
+                
+                # Registros secundários (CODIGO diferente do CODIGO_BASE)
+                reg_secundarios = subset[subset['CODIGO'].astype(str).str.strip() != codigo_base]
+                
+                # Criar linha agregada
+                nova_linha = {
+                    'CODIGO': reg_principal.iloc[0]['CODIGO'] if not reg_principal.empty else codigo_base,
+                    'CODIGO_BASE': codigo_base,
+                    'REFERENCIA': reg_principal.iloc[0].get('REFERENCIA', codigo_base) if not reg_principal.empty else codigo_base,
+                    'DESCRICAO': reg_principal.iloc[0].get('DESCRICAO', '') if not reg_principal.empty else '',
+                    'ESTOQUE': reg_principal.iloc[0].get('ESTOQUE', 0) if not reg_principal.empty else 0,  # APENAS o valor do principal
+                    'PEDIDO_EM_ABERTO': int(subset['PEDIDO_EM_ABERTO'].sum()),  # SOMA DE TODOS
+                }
+                
+                df_resultado.append(pd.DataFrame([nova_linha]))
+        
+        # ===== ADICIONAR REGISTROS QUE NÃO FORAM UNIFICADOS =====
+        if not df_nao_unificar.empty:
+            df_resultado.append(df_nao_unificar)
+        
+        if df_resultado:
+            df_final = pd.concat(df_resultado, ignore_index=True)
+            
+            # Remover coluna auxiliar
+            if 'CODIGO_BASE_NORM' in df_final.columns:
+                df_final = df_final.drop(columns=['CODIGO_BASE_NORM'])
+            
+            # Ordenar
+            df_final = df_final.sort_values('CODIGO', ascending=True)
+            
+            return df_final
+        
+        return df
+    
+    # ======================
+    # FUNÇÕES DE CARREGAMENTO - CARTEIRA
+    # ======================
+    @retry_on_quota()
+    @st.cache_data(ttl=600)
+    def carregar_carteira_pedidos() -> pd.DataFrame:
+        """Carrega os dados da aba CARTEIRA da planilha URGÊNCIAS"""
+        try:
+            client = get_gspread_client()
+            if client is None:
+                st.error("❌ Erro ao conectar ao Google Sheets")
+                return pd.DataFrame()
+            
+            spreadsheet = client.open_by_key(ID_PLANILHA_URGENCIAS)
+            
+            try:
+                sheet = spreadsheet.worksheet(ABA_CARTEIRA)
+            except Exception as e:
+                st.error(f"❌ Aba '{ABA_CARTEIRA}' não encontrada. Erro: {e}")
+                return pd.DataFrame()
+            
+            todos_dados = sheet.get_all_values()
+            
+            if len(todos_dados) < 2:
+                st.info("📭 Nenhum dado encontrado na aba CARTEIRA.")
+                return pd.DataFrame()
+            
+            cabecalho = todos_dados[0]
+            valores = todos_dados[1:]
+            df = pd.DataFrame(valores, columns=cabecalho)
+            df.columns = df.columns.str.strip()
+            
+            # Mapeamento inteligente de colunas
+            mapa_colunas = {}
+            for col in df.columns:
+                col_upper = col.upper().strip()
+                col_sem_acento = unicodedata.normalize('NFKD', col_upper).encode('ASCII', 'ignore').decode('ASCII')
+                
+                if col_sem_acento in ['CODIGO', 'COD', 'ID', 'CODIGO_SISTEMA']:
+                    mapa_colunas[col] = 'CODIGO'
+                elif col_sem_acento in ['CODIGO_BASE', 'COD_BASE', 'BASE', 'CODIGOBASE']:
+                    mapa_colunas[col] = 'CODIGO_BASE'
+                elif col_sem_acento in ['REFERENCIA', 'REFERÊNCIA', 'REF', 'PRODUTO', 'NOME']:
+                    mapa_colunas[col] = 'REFERENCIA'
+                elif col_sem_acento in ['DESCRICAO', 'DESCRIÇÃO', 'DESC', 'DETALHE']:
+                    mapa_colunas[col] = 'DESCRICAO'
+                elif col_sem_acento in ['ESTOQUE', 'EST', 'QTD_ESTOQUE', 'SALDO']:
+                    mapa_colunas[col] = 'ESTOQUE'
+                elif col_sem_acento in ['PEDIDO_EM_ABERTO', 'PEDIDO', 'PED', 'QTD_PEDIDO', 'ABERTO']:
+                    mapa_colunas[col] = 'PEDIDO_EM_ABERTO'
+            
+            if mapa_colunas:
+                df = df.rename(columns=mapa_colunas)
+            
+            # Garantir colunas mínimas
+            if 'REFERENCIA' not in df.columns and 'DESCRICAO' in df.columns:
+                df['REFERENCIA'] = df['DESCRICAO']
+            
+            if 'PEDIDO_EM_ABERTO' not in df.columns:
+                df['PEDIDO_EM_ABERTO'] = 0
+            
+            # Garantir coluna CODIGO_BASE
+            if 'CODIGO_BASE' not in df.columns:
+                df['CODIGO_BASE'] = df['CODIGO'] if 'CODIGO' in df.columns else ''
+            
+            # Converter colunas numéricas
+            colunas_numericas = ['ESTOQUE', 'PEDIDO_EM_ABERTO']
+            for col in colunas_numericas:
+                if col in df.columns:
+                    df[col] = df[col].astype(str).str.replace('.', '', regex=False)
+                    df[col] = df[col].astype(str).str.replace(',', '.', regex=False)
+                    df[col] = df[col].astype(str).str.replace(r'[^\d\.]', '', regex=True)
+                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+                    df[col] = df[col].astype(int)
+            
+            if 'CODIGO' in df.columns:
+                df = df[df['CODIGO'].astype(str).str.strip() != '']
+                df = df[df['CODIGO'].astype(str).str.strip() != 'nan']
+            
+            if 'ESTOQUE' in df.columns:
+                df = df[df['ESTOQUE'] > 0]
+            
+            if 'CODIGO' in df.columns:
+                df = df.sort_values('CODIGO', ascending=True)
+            
+            return df
+            
+        except Exception as e:
+            st.error(f"❌ Erro ao carregar dados da carteira: {str(e)}")
+            return pd.DataFrame()
+    
+    # ======================
+    # FUNÇÕES DE CARREGAMENTO - REPASSES
+    # ======================
+    def obter_proximo_id_repasse() -> str:
+        """Gera o próximo ID para repasse"""
+        try:
+            client = get_gspread_client()
+            if client is None:
+                return "REP-001"
+            
+            spreadsheet = client.open_by_key(ID_PLANILHA_URGENCIAS)
+            sheet = spreadsheet.worksheet(ABA_REPASSE)
+            todos_dados = sheet.get_all_values()
+            
+            if len(todos_dados) < 2:
+                return "REP-001"
+            
+            ids = []
+            for row in todos_dados[1:]:
+                if row and row[0]:
+                    ids.append(row[0].strip())
+            
+            if not ids:
+                return "REP-001"
+            
+            numeros = []
+            for id_str in ids:
+                if id_str.startswith("REP-"):
+                    try:
+                        num = int(id_str.replace("REP-", ""))
+                        numeros.append(num)
+                    except:
+                        pass
+            
+            if not numeros:
+                return "REP-001"
+            
+            proximo = max(numeros) + 1
+            return f"REP-{proximo:03d}"
+            
+        except:
+            return "REP-001"
+    
+    @retry_on_quota()
+    @st.cache_data(ttl=300)
+    def carregar_referencias_consolidadas() -> List[str]:
+        """Carrega as referências da aba CARTEIRA para o combobox"""
+        try:
+            client = get_gspread_client()
+            if client is None:
+                return []
+            
+            spreadsheet = client.open_by_key(ID_PLANILHA_URGENCIAS)
+            sheet = spreadsheet.worksheet(ABA_CARTEIRA)
+            todos_dados = sheet.get_all_values()
+            
+            if len(todos_dados) < 2:
+                return []
+            
+            cabecalho = todos_dados[0]
+            idx_ref = None
+            
+            for i, col in enumerate(cabecalho):
+                col_clean = str(col).strip().upper()
+                if 'REFERENCIA' in col_clean or 'REFERÊNCIA' in col_clean or 'REF' in col_clean:
+                    idx_ref = i
+                    break
+            
+            if idx_ref is None:
+                return []
+            
+            referencias = set()
+            for row in todos_dados[1:]:
+                if len(row) > idx_ref and row[idx_ref]:
+                    ref = str(row[idx_ref]).strip()
+                    if ref and ref.lower() != 'nan' and ref.lower() != 'none':
+                        referencias.add(ref)
+            
+            return sorted(list(referencias))
+            
+        except Exception as e:
+            print(f"Erro ao carregar referências: {e}")
+            return []
+    
+    @retry_on_quota()
+    @st.cache_data(ttl=300)
+    def carregar_repasse() -> List[RegistroRepasse]:
+        """Carrega todos os registros da aba REPASSE"""
+        registros = []
+        try:
+            client = get_gspread_client()
+            if client is None:
+                return registros
+            
+            spreadsheet = client.open_by_key(ID_PLANILHA_URGENCIAS)
+            
+            try:
+                sheet = spreadsheet.worksheet(ABA_REPASSE)
+            except:
+                sheet = spreadsheet.add_worksheet(title=ABA_REPASSE, rows=1000, cols=20)
+                cabecalho = ["ID", "DATA", "SOLICITANTE", "REFERÊNCIA", "CLIENTE", "QUANTIDADE", "DATA_LIMITE", "STATUS"]
+                sheet.append_row(cabecalho)
+                return registros
+            
+            todos_dados = sheet.get_all_values()
+            
+            if len(todos_dados) < 2:
+                return registros
+            
+            for idx, row in enumerate(todos_dados[1:], start=2):
+                if len(row) < 8:
+                    continue
+                
+                try:
+                    registro = RegistroRepasse()
+                    registro.id = row[0].strip() if row[0] else f"REP-{idx:03d}"
+                    
+                    if len(row) > 1 and row[1]:
+                        try:
+                            registro.data = datetime.strptime(row[1].strip(), "%d/%m/%Y")
+                        except:
+                            registro.data = converter_data_br(row[1])
+                    
+                    registro.solicitante = row[2].strip() if len(row) > 2 else ""
+                    registro.referencia = row[3].strip() if len(row) > 3 else ""
+                    registro.cliente = row[4].strip() if len(row) > 4 else ""
+                    
+                    if len(row) > 5 and row[5]:
+                        try:
+                            registro.quantidade = int(float(str(row[5]).strip().replace(',', '.')))
+                        except:
+                            registro.quantidade = 0
+                    
+                    if len(row) > 6 and row[6]:
+                        try:
+                            registro.data_limite = datetime.strptime(row[6].strip(), "%d/%m/%Y")
+                        except:
+                            registro.data_limite = converter_data_br(row[6])
+                    
+                    registro.status = row[7].strip() if len(row) > 7 else "SOLICITADO"
+                    
+                    registros.append(registro)
+                except:
+                    continue
+            
+            return registros
+            
+        except Exception as e:
+            st.error(f"❌ Erro ao carregar repasses: {str(e)}")
+            return registros
+    
+    # ======================
+    # FUNÇÕES CRUD REPASSE
+    # ======================
+    def salvar_repasse(registro: RegistroRepasse) -> tuple:
+        """Salva um novo repasse na planilha"""
+        try:
+            client = get_gspread_client()
+            if client is None:
+                return False, "❌ Erro ao conectar ao Google Sheets"
+            
+            spreadsheet = client.open_by_key(ID_PLANILHA_URGENCIAS)
+            sheet = spreadsheet.worksheet(ABA_REPASSE)
+            
+            dados = [
+                registro.id,
+                registro.data.strftime("%d/%m/%Y") if registro.data else "",
+                registro.solicitante,
+                registro.referencia,
+                registro.cliente,
+                str(registro.quantidade),
+                registro.data_limite.strftime("%d/%m/%Y") if registro.data_limite else "",
+                registro.status
+            ]
+            
+            sheet.append_row(dados)
+            st.cache_data.clear()
+            return True, "✅ Repasse salvo com sucesso!"
+            
+        except Exception as e:
+            return False, f"❌ Erro ao salvar: {str(e)}"
+    
+    def atualizar_repasse(registro: RegistroRepasse) -> tuple:
+        """Atualiza um repasse existente"""
+        try:
+            client = get_gspread_client()
+            if client is None:
+                return False, "❌ Erro ao conectar ao Google Sheets"
+            
+            spreadsheet = client.open_by_key(ID_PLANILHA_URGENCIAS)
+            sheet = spreadsheet.worksheet(ABA_REPASSE)
+            
+            # Procurar a linha do registro
+            cell = sheet.find(registro.id, in_column=1)
+            if not cell:
+                return False, f"❌ Repasse {registro.id} não encontrado"
+            
+            dados = [
+                registro.id,
+                registro.data.strftime("%d/%m/%Y") if registro.data else "",
+                registro.solicitante,
+                registro.referencia,
+                registro.cliente,
+                str(registro.quantidade),
+                registro.data_limite.strftime("%d/%m/%Y") if registro.data_limite else "",
+                registro.status
+            ]
+            
+            for col, valor in enumerate(dados, start=1):
+                sheet.update_cell(cell.row, col, valor)
+            
+            st.cache_data.clear()
+            return True, "✅ Repasse atualizado com sucesso!"
+            
+        except Exception as e:
+            return False, f"❌ Erro ao atualizar: {str(e)}"
+    
+    def excluir_repasse(id_repasse: str) -> tuple:
+        """Exclui um repasse"""
+        try:
+            client = get_gspread_client()
+            if client is None:
+                return False, "❌ Erro ao conectar ao Google Sheets"
+            
+            spreadsheet = client.open_by_key(ID_PLANILHA_URGENCIAS)
+            sheet = spreadsheet.worksheet(ABA_REPASSE)
+            
+            cell = sheet.find(id_repasse, in_column=1)
+            if not cell:
+                return False, f"❌ Repasse {id_repasse} não encontrado"
+            
+            sheet.delete_rows(cell.row)
+            st.cache_data.clear()
+            return True, "✅ Repasse excluído com sucesso!"
+            
+        except Exception as e:
+            return False, f"❌ Erro ao excluir: {str(e)}"
+    
+    # ======================
+    # FUNÇÃO PARA GERAR GRÁFICOS
+    # ======================
+    def gerar_graficos_carteira(df: pd.DataFrame, visao: str = 'PEDIDOS_SISTEMA'):
+        """Gera gráficos interativos com os dados da carteira"""
+        
+        if df.empty:
+            st.info("📭 Sem dados para gerar gráficos.")
+            return
+        
+        colunas_necessarias = ['REFERENCIA', 'ESTOQUE']
+        if visao == 'PEDIDOS_SISTEMA':
+            colunas_necessarias.append('PEDIDO_EM_ABERTO')
+        
+        colunas_faltando = [col for col in colunas_necessarias if col not in df.columns]
+        
+        if colunas_faltando:
+            st.warning(f"⚠️ Colunas necessárias não encontradas: {', '.join(colunas_faltando)}")
+            return
+        
+        df = df.copy()
+        df['ESTOQUE'] = pd.to_numeric(df['ESTOQUE'], errors='coerce').fillna(0)
+        df['REFERENCIA'] = df['REFERENCIA'].astype(str).fillna('Sem Referência')
+        
+        if visao == 'PEDIDOS_SISTEMA':
+            df['PEDIDO_EM_ABERTO'] = pd.to_numeric(df['PEDIDO_EM_ABERTO'], errors='coerce').fillna(0)
+            coluna_valor = 'PEDIDO_EM_ABERTO'
+            titulo = 'Pedidos em Aberto no Sistema'
+            cor = '#E86C2C'
+            label = 'Pedido Sistema'
+        else:
+            coluna_valor = 'ESTOQUE'
+            titulo = 'Estoque Atual'
+            cor = '#0078D4'
+            label = 'Estoque'
+        
+        df_com_valor = df[df[coluna_valor] > 0].copy()
+        
+        if df_com_valor.empty:
+            st.info(f"📭 Nenhum dado com {label} > 0 para gerar gráficos.")
+            return
+        
+        # Gráfico Top 10
+        st.markdown("---")
+        st.markdown(f"### 📊 Top 10 {titulo}")
+        
+        top10 = df_com_valor.nlargest(10, coluna_valor).copy()
+        
+        if not top10.empty and len(top10) > 0:
+            try:
+                # Usar CODIGO_BASE se disponível, senão REFERENCIA
+                if 'CODIGO_BASE' in top10.columns and st.session_state.unificar_codigo_base:
+                    label_x = 'CODIGO_BASE'
+                    top10[label_x] = top10[label_x].astype(str).fillna('-')
+                else:
+                    label_x = 'REFERENCIA'
+                    top10[label_x] = top10[label_x].astype(str)
+                
+                top10[coluna_valor] = top10[coluna_valor].astype(float)
+                
+                fig = px.bar(
+                    top10,
+                    x=label_x,
+                    y=coluna_valor,
+                    color=coluna_valor,
+                    color_continuous_scale='Oranges' if visao == 'PEDIDOS_SISTEMA' else 'Blues',
+                    title=f'Top 10 com Maior {titulo}',
+                    labels={label_x: 'Código Base' if label_x == 'CODIGO_BASE' else 'Referência', coluna_valor: label},
+                    text=coluna_valor
+                )
+                
+                fig.update_layout(
+                    height=400,
+                    xaxis_tickangle=-45,
+                    font=dict(size=12),
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    coloraxis_showscale=False,
+                    margin=dict(l=20, r=20, t=40, b=80)
+                )
+                
+                fig.update_traces(
+                    textposition='outside',
+                    textfont=dict(size=11, color='#333'),
+                    texttemplate='%{text:,.0f}',
+                    marker_color=cor
+                )
+                
+                st.plotly_chart(fig, use_container_width=True, key=f"grafico_top10_{visao}")
+                
+            except Exception as e:
+                st.warning(f"⚠️ Não foi possível gerar o gráfico Top 10: {str(e)}")
+        
+        # Gráfico de distribuição
+        st.markdown("### 📊 Distribuição dos Valores")
+        
+        def classificar_valor(row):
+            valor = row.get(coluna_valor, 0)
+            if valor == 0:
+                return '✅ Sem Valor'
+            elif valor <= 10:
+                return '🟢 Baixo (1-10)'
+            elif valor <= 50:
+                return '🟡 Médio (11-50)'
+            elif valor <= 100:
+                return '🟠 Alto (51-100)'
+            else:
+                return '🔴 Muito Alto (>100)'
+        
+        df_status = df.copy()
+        df_status['STATUS'] = df_status.apply(classificar_valor, axis=1)
+        status_counts = df_status['STATUS'].value_counts()
+        
+        cores = {
+            '✅ Sem Valor': '#28a745',
+            '🟢 Baixo (1-10)': '#0078D4',
+            '🟡 Médio (11-50)': '#FFB900',
+            '🟠 Alto (51-100)': '#FF6B35',
+            '🔴 Muito Alto (>100)': '#E81123'
+        }
+        
+        if not status_counts.empty:
+            try:
+                status_counts = status_counts[status_counts > 0]
+                
+                if not status_counts.empty:
+                    fig = px.pie(
+                        status_counts,
+                        values=status_counts.values,
+                        names=status_counts.index,
+                        title=f'Distribuição dos {label}s',
+                        color=status_counts.index,
+                        color_discrete_map=cores,
+                        hole=0.4
+                    )
+                    
+                    fig.update_layout(
+                        height=380,
+                        font=dict(size=12),
+                        plot_bgcolor='rgba(0,0,0,0)',
+                        paper_bgcolor='rgba(0,0,0,0)',
+                        legend=dict(
+                            orientation='v',
+                            yanchor='middle',
+                            y=0.5,
+                            xanchor='left',
+                            x=1.1
+                        ),
+                        margin=dict(l=20, r=120, t=40, b=20)
+                    )
+                    
+                    fig.update_traces(
+                        textposition='inside',
+                        textinfo='percent+label',
+                        textfont=dict(size=11, color='white'),
+                        hovertemplate='<b>%{label}</b><br>Quantidade: %{value}<br>Percentual: %{percent}<extra></extra>'
+                    )
+                    
+                    st.plotly_chart(fig, use_container_width=True, key=f"grafico_pizza_{visao}")
+                    
+            except Exception as e:
+                st.warning(f"⚠️ Não foi possível gerar o gráfico de pizza: {str(e)}")
+    
+    # ======================
+    # FUNÇÃO PARA RENDERIZAR CRUD DE REPASSES
+    # ======================
+    def renderizar_crud_repasse():
+        """Renderiza o CRUD completo da aba REPASSE"""
+        
+        st.markdown("---")
+        st.markdown("### 📋 Gerenciamento de Repasses")
+        
+        # Botão Novo Repasse
+        col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
+        with col_btn2:
+            if st.button("➕ NOVO REPASSE", type="primary", use_container_width=True):
+                st.session_state.mostrar_formulario_repasse = True
+                st.session_state.editando_repasse = None
+                st.rerun()
+        
+        # ===== FORMULÁRIO NOVO/EDITAR =====
+        if st.session_state.mostrar_formulario_repasse:
+            st.markdown("---")
+            st.markdown("### ✏️ " + ("Editar Repasse" if st.session_state.editando_repasse else "Novo Repasse"))
+            
+            referencias_disponiveis = carregar_referencias_consolidadas()
+            
+            if st.session_state.editando_repasse:
+                registro_edit = st.session_state.editando_repasse
+                id_edit = registro_edit.id
+                data_edit = registro_edit.data
+                solicitante_edit = registro_edit.solicitante
+                referencia_edit = registro_edit.referencia
+                cliente_edit = registro_edit.cliente
+                quantidade_edit = registro_edit.quantidade
+                data_limite_edit = registro_edit.data_limite
+                status_edit = registro_edit.status
+            else:
+                id_edit = obter_proximo_id_repasse()
+                data_edit = datetime.now()
+                solicitante_edit = ""
+                referencia_edit = ""
+                cliente_edit = ""
+                quantidade_edit = 0
+                data_limite_edit = None
+                status_edit = "SOLICITADO"
+            
+            st.info(f"📌 ID: {id_edit}")
+            
+            with st.form("form_repasse"):
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    data_form = st.date_input(
+                        "📅 Data",
+                        value=data_edit if data_edit else datetime.now(),
+                        key="data_repasse"
+                    )
+                    
+                    solicitante_form = st.text_input(
+                        "👤 Solicitante",
+                        value=solicitante_edit,
+                        key="solicitante_repasse"
+                    )
+                    
+                    st.markdown("**🔍 Referência***")
+                    
+                    termo_busca = st.text_input(
+                        "Pesquisar referência",
+                        value=st.session_state.termo_busca_referencia,
+                        placeholder="Digite para filtrar...",
+                        key="busca_referencia_repasse",
+                        label_visibility="collapsed"
+                    )
+                    st.session_state.termo_busca_referencia = termo_busca
+                    
+                    if termo_busca:
+                        termo_lower = termo_busca.lower()
+                        opcoes_filtradas = [r for r in referencias_disponiveis if termo_lower in r.lower()]
+                    else:
+                        opcoes_filtradas = referencias_disponiveis
+                    
+                    if opcoes_filtradas:
+                        if referencia_edit and referencia_edit in opcoes_filtradas:
+                            idx_default = opcoes_filtradas.index(referencia_edit)
+                        else:
+                            idx_default = 0
+                        
+                        referencia_form = st.selectbox(
+                            "Selecione a referência",
+                            options=opcoes_filtradas,
+                            index=idx_default if referencia_edit and referencia_edit in opcoes_filtradas else 0,
+                            key="referencia_repasse_select",
+                            label_visibility="collapsed"
+                        )
+                    else:
+                        referencia_form = st.text_input(
+                            "Referência (digite manualmente)",
+                            value=referencia_edit,
+                            key="referencia_repasse_manual",
+                            label_visibility="collapsed"
+                        )
+                    
+                    cliente_form = st.text_input(
+                        "🏢 Cliente",
+                        value=cliente_edit,
+                        key="cliente_repasse"
+                    )
+                
+                with col2:
+                    quantidade_form = st.number_input(
+                        "📦 Quantidade",
+                        min_value=0,
+                        value=quantidade_edit,
+                        step=1,
+                        key="quantidade_repasse"
+                    )
+                    
+                    data_limite_form = st.date_input(
+                        "⏰ Data Limite",
+                        value=data_limite_edit if data_limite_edit else datetime.now() + timedelta(days=7),
+                        key="data_limite_repasse"
+                    )
+                    
+                    status_form = st.selectbox(
+                        "📊 Status",
+                        options=["SOLICITADO", "PROGRAMADO", "PRODUZIDO"],
+                        index=["SOLICITADO", "PROGRAMADO", "PRODUZIDO"].index(status_edit) if status_edit in ["SOLICITADO", "PROGRAMADO", "PRODUZIDO"] else 0,
+                        key="status_repasse"
+                    )
+                    
+                    if status_form == "SOLICITADO":
+                        st.info("🟡 Aguardando programação")
+                    elif status_form == "PROGRAMADO":
+                        st.info("🟢 Programado para produção")
+                    else:
+                        st.success("✅ Produzido / Finalizado")
+                
+                st.markdown("---")
+                col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
+                with col_btn2:
+                    submitted = st.form_submit_button(
+                        "💾 SALVAR REPASSE",
+                        type="primary",
+                        use_container_width=True
+                    )
+                
+                if submitted:
+                    if not referencia_form or not referencia_form.strip():
+                        st.error("❌ A referência é obrigatória!")
+                    elif quantidade_form <= 0:
+                        st.error("❌ A quantidade deve ser maior que zero!")
+                    else:
+                        novo_registro = RegistroRepasse(
+                            id=id_edit,
+                            data=datetime.combine(data_form, datetime.min.time()),
+                            solicitante=solicitante_form,
+                            referencia=referencia_form.strip(),
+                            cliente=cliente_form,
+                            quantidade=quantidade_form,
+                            data_limite=datetime.combine(data_limite_form, datetime.min.time()),
+                            status=status_form
+                        )
+                        
+                        if st.session_state.editando_repasse:
+                            sucesso, msg = atualizar_repasse(novo_registro)
+                        else:
+                            sucesso, msg = salvar_repasse(novo_registro)
+                        
+                        if sucesso:
+                            st.success(msg)
+                            st.balloons()
+                            st.session_state.mostrar_formulario_repasse = False
+                            st.session_state.editando_repasse = None
+                            st.session_state.termo_busca_referencia = ""
+                            st.rerun()
+                        else:
+                            st.error(msg)
+            
+            if st.button("❌ Cancelar", use_container_width=True):
+                st.session_state.mostrar_formulario_repasse = False
+                st.session_state.editando_repasse = None
+                st.session_state.termo_busca_referencia = ""
+                st.rerun()
+        
+        # ===== LISTA DE REPASSES =====
+        st.markdown("---")
+        st.markdown("### 📋 Lista de Repasses")
+        
+        with st.spinner("Carregando repasses..."):
+            repasses = carregar_repasse()
+        
+        if not repasses:
+            st.info("📭 Nenhum repasse cadastrado.")
+            return
+        
+        # Filtros
+        col_f1, col_f2, col_f3 = st.columns(3)
+        with col_f1:
+            filtro_status = st.selectbox(
+                "Filtrar por Status",
+                ["(Todos)", "SOLICITADO", "PROGRAMADO", "PRODUZIDO"],
+                key="filtro_status_repasse"
+            )
+        with col_f2:
+            filtro_referencia_lista = st.text_input(
+                "Filtrar por Referência",
+                placeholder="Digite parte da referência...",
+                key="filtro_ref_repasse"
+            )
+        with col_f3:
+            filtro_solicitante = st.text_input(
+                "Filtrar por Solicitante",
+                placeholder="Digite o nome...",
+                key="filtro_solicitante_repasse"
+            )
+        
+        # Aplicar filtros
+        repasses_filtrados = repasses.copy()
+        if filtro_status != "(Todos)":
+            repasses_filtrados = [r for r in repasses_filtrados if r.status == filtro_status]
+        if filtro_referencia_lista:
+            repasses_filtrados = [r for r in repasses_filtrados if filtro_referencia_lista.lower() in r.referencia.lower()]
+        if filtro_solicitante:
+            repasses_filtrados = [r for r in repasses_filtrados if filtro_solicitante.lower() in r.solicitante.lower()]
+        
+        # CARDS
+        total_repasses = len(repasses_filtrados)
+        total_solicitado = sum(r.quantidade for r in repasses_filtrados if r.status == "SOLICITADO")
+        total_programado = sum(r.quantidade for r in repasses_filtrados if r.status == "PROGRAMADO")
+        total_produzido = sum(r.quantidade for r in repasses_filtrados if r.status == "PRODUZIDO")
+        
+        col_c1, col_c2, col_c3, col_c4 = st.columns(4)
+        with col_c1:
+            st.metric("📋 Total de Repasses", f"{total_repasses:,}")
+        with col_c2:
+            st.metric("🟡 Solicitado", f"{total_solicitado:,}")
+        with col_c3:
+            st.metric("🟢 Programado", f"{total_programado:,}")
+        with col_c4:
+            st.metric("✅ Produzido", f"{total_produzido:,}")
+        
+        st.markdown("---")
+        
+        # ===== TABELA DE REPASSES =====
+        if repasses_filtrados:
+            dados_tabela = []
+            for r in repasses_filtrados:
+                status_icons = {
+                    "SOLICITADO": "🟡",
+                    "PROGRAMADO": "🟢",
+                    "PRODUZIDO": "✅"
+                }
+                
+                dados_tabela.append({
+                    "ID": r.id,
+                    "Data": r.data.strftime("%d/%m/%Y") if r.data else "-",
+                    "Solicitante": r.solicitante,
+                    "Referência": r.referencia,
+                    "Cliente": r.cliente,
+                    "Quantidade": f"{r.quantidade:,}".replace(",", "."),
+                    "Data Limite": r.data_limite.strftime("%d/%m/%Y") if r.data_limite else "-",
+                    "Status": f"{status_icons.get(r.status, '📌')} {r.status}",
+                    "_status_raw": r.status
+                })
+            
+            df_repasses = pd.DataFrame(dados_tabela)
+            
+            # Aplicar estilo
+            def estilo_status(row):
+                status = row['_status_raw']
+                if status == "PRODUZIDO":
+                    return ['background-color: #d4edda; color: #155724; font-weight: bold;'] * len(row)
+                elif status == "PROGRAMADO":
+                    return ['background-color: #fff3cd; color: #856404;'] * len(row)
+                else:
+                    return ['background-color: #f8d7da; color: #721c24;'] * len(row)
+            
+            styled_df = df_repasses.style.apply(estilo_status, axis=1)
+            st.dataframe(styled_df, use_container_width=True, height=400, hide_index=True)
+            
+            # ===== AÇÕES =====
+            st.markdown("---")
+            st.markdown("### 🔧 Ações")
+            
+            opcoes_ids = [f"{r.id} - {r.referencia}" for r in repasses_filtrados]
+            if opcoes_ids:
+                selecao = st.selectbox(
+                    "Selecione um repasse para editar ou excluir:",
+                    options=opcoes_ids,
+                    key="select_repasse_acao"
+                )
+                
+                if selecao:
+                    id_selecionado = selecao.split(" - ")[0]
+                    registro_selecionado = next((r for r in repasses_filtrados if r.id == id_selecionado), None)
+                    
+                    if registro_selecionado:
+                        col_btn1, col_btn2 = st.columns(2)
+                        
+                        with col_btn1:
+                            if st.button("✏️ Editar", use_container_width=True):
+                                st.session_state.editando_repasse = registro_selecionado
+                                st.session_state.mostrar_formulario_repasse = True
+                                st.session_state.termo_busca_referencia = registro_selecionado.referencia
+                                st.rerun()
+                        
+                        with col_btn2:
+                            if st.button("🗑️ Excluir", use_container_width=True):
+                                if st.session_state.excluindo_repasse == id_selecionado:
+                                    if st.button("⚠️ CONFIRMAR EXCLUSÃO", type="primary", use_container_width=True):
+                                        sucesso, msg = excluir_repasse(id_selecionado)
+                                        if sucesso:
+                                            st.success(msg)
+                                            st.session_state.excluindo_repasse = None
+                                            st.rerun()
+                                        else:
+                                            st.error(msg)
+                                else:
+                                    st.session_state.excluindo_repasse = id_selecionado
+                                    st.warning(f"⚠️ Clique novamente em 'Excluir' para confirmar")
+                                    st.rerun()
+        else:
+            st.info("📭 Nenhum repasse encontrado com os filtros selecionados.")
+    
+    # ======================
+    # CARREGAR DADOS DA CARTEIRA
+    # ======================
+    with st.spinner("🔄 Carregando dados da carteira de pedidos..."):
+        df_carteira = carregar_carteira_pedidos()
+    
+    # ======================
+    # BOTÕES DE NAVEGAÇÃO
+    # ======================
+    st.markdown("### 📊 Selecione a Visualização")
+    
+    col_b1, col_b2, col_b3 = st.columns(3)
+    
+    with col_b1:
+        if st.button(
+            "📋 Pedidos Sistema", 
+            use_container_width=True,
+            type="primary" if st.session_state.visao_repasses == 'PEDIDOS_SISTEMA' else "secondary"
+        ):
+            st.session_state.visao_repasses = 'PEDIDOS_SISTEMA'
+            st.rerun()
+    
+    with col_b2:
+        if st.button(
+            "🔄 Repasses", 
+            use_container_width=True,
+            type="primary" if st.session_state.visao_repasses == 'REPASSES' else "secondary"
+        ):
+            st.session_state.visao_repasses = 'REPASSES'
+            st.rerun()
+    
+    with col_b3:
+        if st.button(
+            "📦 Estoque Atual", 
+            use_container_width=True,
+            type="primary" if st.session_state.visao_repasses == 'ESTOQUE_ATUAL' else "secondary"
+        ):
+            st.session_state.visao_repasses = 'ESTOQUE_ATUAL'
+            st.rerun()
+    
+    st.markdown("---")
+    
+    # ======================
+    # RENDERIZAR CONTEÚDO
+    # ======================
+    if st.session_state.visao_repasses == 'REPASSES':
+        renderizar_crud_repasse()
+    else:
+        # ===== PEDIDOS_SISTEMA e ESTOQUE_ATUAL =====
+        st.markdown("### 🔍 Filtros")
+        
+        col_f1, col_f2, col_f3 = st.columns(3)
+        
+        with col_f1:
+            if not df_carteira.empty and 'REFERENCIA' in df_carteira.columns:
+                opcoes_ref = ["(Todas)"] + sorted(df_carteira['REFERENCIA'].dropna().unique().tolist())
+                filtro_referencia = st.selectbox(
+                    "🔎 Referência",
+                    options=opcoes_ref,
+                    key="filtro_ref_repasses"
+                )
+            else:
+                filtro_referencia = "(Todas)"
+        
+        with col_f2:
+            if not df_carteira.empty and 'CODIGO' in df_carteira.columns:
+                opcoes_codigo = ["(Todos)"] + sorted(df_carteira['CODIGO'].dropna().unique().tolist())
+                filtro_codigo = st.selectbox(
+                    "📋 Código Sistema",
+                    options=opcoes_codigo,
+                    key="filtro_codigo_repasses"
+                )
+            else:
+                filtro_codigo = "(Todos)"
+        
+        with col_f3:
+            # Checkbox para unificar CÓDIGO BASE
+            if 'CODIGO_BASE' in df_carteira.columns and not df_carteira.empty:
+                unificar = st.checkbox(
+                    "🔗 Unificar por CÓDIGO BASE",
+                    value=st.session_state.unificar_codigo_base,
+                    key="chk_unificar_base",
+                    help="Unifica registros com mesmo CÓDIGO_BASE somando PEDIDO SISTEMA"
+                )
+                if unificar != st.session_state.unificar_codigo_base:
+                    st.session_state.unificar_codigo_base = unificar
+                    st.rerun()
+            else:
+                st.caption("ℹ️ Coluna CÓDIGO_BASE não encontrada")
+        
+        df_filtrado = df_carteira.copy()
+        
+        if not df_filtrado.empty:
+            if filtro_referencia != "(Todas)":
+                df_filtrado = df_filtrado[df_filtrado['REFERENCIA'] == filtro_referencia]
+            if filtro_codigo != "(Todos)":
+                df_filtrado = df_filtrado[df_filtrado['CODIGO'] == filtro_codigo]
+        
+        # Aplicar unificação se ativado
+        if st.session_state.unificar_codigo_base and 'CODIGO_BASE' in df_filtrado.columns and not df_filtrado.empty:
+            df_filtrado = unificar_codigo_base(df_filtrado)
+        
+        if st.session_state.visao_repasses == 'PEDIDOS_SISTEMA':
+            coluna_valor = 'PEDIDO_EM_ABERTO'
+            label_valor = 'Pedido Sistema'
+            icone_valor = '📋'
+            titulo_tabela = 'PEDIDOS EM ABERTO NO SISTEMA LUVIDARTE'
+        else:
+            coluna_valor = 'ESTOQUE'
+            label_valor = 'Estoque Atual'
+            icone_valor = '📦'
+            titulo_tabela = 'ESTOQUE ATUAL'
+        
+        total_valor = 0
+        total_estoque = 0
+        total_itens = 0
+        itens_criticos = 0
+        
+        if not df_filtrado.empty:
+            # Verificar se a coluna de valor existe
+            if coluna_valor in df_filtrado.columns:
+                total_valor = int(df_filtrado[coluna_valor].sum())
+            
+            # Estoque
+            estoque_col = 'ESTOQUE' if 'ESTOQUE' in df_filtrado.columns else 'ESTOQUE ATUAL'
+            if estoque_col in df_filtrado.columns:
+                total_estoque = int(df_filtrado[estoque_col].sum())
+            
+            total_itens = len(df_filtrado)
+            
+            # Itens críticos: quando pedido > estoque
+            if coluna_valor in df_filtrado.columns and estoque_col in df_filtrado.columns:
+                itens_criticos = len(df_filtrado[df_filtrado[coluna_valor] > df_filtrado[estoque_col]])
+        
+        st.markdown("---")
+        
+        col_k1, col_k2, col_k3, col_k4 = st.columns(4)
+        with col_k1:
+            st.metric(f"{icone_valor} Total {label_valor}", f"{total_valor:,.0f}".replace(",", "."))
+        with col_k2:
+            st.metric("📦 Estoque Total", f"{total_estoque:,.0f}".replace(",", "."))
+        with col_k3:
+            st.metric("📋 Itens na Carteira", f"{total_itens:,}".replace(",", "."))
+        with col_k4:
+            cor_critico = "🔴" if itens_criticos > 0 else "🟢"
+            st.metric(f"{cor_critico} Itens Críticos", f"{itens_criticos:,}".replace(",", "."))
+        
+        st.markdown("---")
+        st.markdown(f"### 📋 {titulo_tabela}")
+        
+        if df_filtrado.empty:
+            st.info("📭 Nenhum dado encontrado com os filtros selecionados.")
+        else:
+            df_exibicao = df_filtrado.copy()
+            
+            # Mapeamento de colunas para exibição
+            mapa_exibicao = {
+                'CODIGO': 'CÓDIGO SISTEMA',
+                'CODIGO_BASE': 'CÓDIGO BASE',
+                'REFERENCIA': 'REFERÊNCIA',
+                'DESCRICAO': 'DESCRIÇÃO',
+                'ESTOQUE': 'ESTOQUE ATUAL',
+                'PEDIDO_EM_ABERTO': 'PEDIDO SISTEMA'
+            }
+            
+            # Renomear apenas colunas que existem
+            for old, new in mapa_exibicao.items():
+                if old in df_exibicao.columns:
+                    df_exibicao = df_exibicao.rename(columns={old: new})
+            
+            # Determinar colunas para exibição (incluindo CÓDIGO BASE após CÓDIGO SISTEMA)
+            colunas_base = ['CÓDIGO SISTEMA', 'CÓDIGO BASE', 'REFERÊNCIA', 'DESCRIÇÃO', 'ESTOQUE ATUAL']
+            if 'PEDIDO SISTEMA' in df_exibicao.columns and st.session_state.visao_repasses == 'PEDIDOS_SISTEMA':
+                colunas_base.append('PEDIDO SISTEMA')
+            
+            colunas_existentes = [col for col in colunas_base if col in df_exibicao.columns]
+            df_exibicao = df_exibicao[colunas_existentes]
+            
+            def definir_status(row):
+                # Usar os nomes das colunas já renomeados
+                if 'PEDIDO SISTEMA' in row:
+                    valor = row.get('PEDIDO SISTEMA', 0)
+                    estoque = row.get('ESTOQUE ATUAL', 0)
+                    if valor == 0:
+                        return '✅ ZERADO'
+                    elif estoque >= valor:
+                        return '🟢 SUFICIENTE'
+                    elif estoque >= valor * 0.5:
+                        return '🟡 PARCIAL'
+                    else:
+                        return '🔴 CRÍTICO'
+                else:
+                    # Modo Estoque
+                    estoque = row.get('ESTOQUE ATUAL', 0)
+                    if estoque == 0:
+                        return '🔴 ZERADO'
+                    elif estoque <= 10:
+                        return '🟡 BAIXO'
+                    elif estoque <= 50:
+                        return '🟢 NORMAL'
+                    else:
+                        return '🟣 ALTO'
+            
+            df_exibicao['STATUS'] = df_exibicao.apply(definir_status, axis=1)
+            
+            # Formatar colunas numéricas
+            colunas_formatar = ['ESTOQUE ATUAL']
+            if 'PEDIDO SISTEMA' in df_exibicao.columns:
+                colunas_formatar.append('PEDIDO SISTEMA')
+            
+            for col in colunas_formatar:
+                if col in df_exibicao.columns:
+                    df_exibicao[col] = df_exibicao[col].apply(lambda x: f"{int(x):,}".replace(",", "."))
+            
+            def estilo_tabela(row):
+                status = row['STATUS']
+                if '🔴' in status:
+                    return ['background-color: #f8d7da; color: #721c24; font-weight: bold;'] * len(row)
+                elif '🟡' in status:
+                    return ['background-color: #fff3cd; color: #856404;'] * len(row)
+                elif '🟢' in status:
+                    return ['background-color: #d4edda; color: #155724;'] * len(row)
+                elif '🟣' in status:
+                    return ['background-color: #e8d4f8; color: #4a1a6b;'] * len(row)
+                else:
+                    return [''] * len(row)
+            
+            styled_df = df_exibicao.style.apply(estilo_tabela, axis=1)
+            st.dataframe(styled_df, use_container_width=True, height=500, hide_index=True)
+            
+            with st.expander("📊 Ver Gráficos Analíticos", expanded=False):
+                gerar_graficos_carteira(df_filtrado, st.session_state.visao_repasses)
+    
+    # ======================
+    # INFORMAÇÕES ADICIONAIS
+    # ======================
+    with st.expander("ℹ️ Sobre a Carteira de Pedidos", expanded=False):
+        st.markdown("""
+        **📊 O que é esta carteira?**
+        
+        Esta seção exibe os dados da carteira de pedidos no sistema Luvidarte.
+        
+        **📋 Visões disponíveis:**
+        - **Pedidos Sistema**: Mostra os pedidos em aberto no sistema ERP
+        - **Repasses**: CRUD completo para gerenciar repasses de produção
+        - **Estoque Atual**: Mostra o estoque disponível
+        
+        **🔗 Unificação por CÓDIGO BASE:**
+        - Quando ativado, registros com mesmo CÓDIGO_BASE são unificados
+        - **ESTOQUE ATUAL**: Mantém o valor do CÓDIGO SISTEMA (NÃO soma)
+        - **PEDIDO SISTEMA**: SOMA de todos os registros com mesmo CÓDIGO_BASE
+        - **REFERÊNCIA/DESCRIÇÃO**: Herdadas do CÓDIGO SISTEMA
+        
+        **🎯 Classificação por Status:**
+        - 🟢 **Suficiente**: Estoque >= Pedido
+        - 🟡 **Parcial**: Estoque >= Pedido/2 e < Pedido
+        - 🔴 **Crítico**: Estoque < Pedido/2
+        
+        **🔄 Atualização:** Os dados são carregados automaticamente a cada 10 minutos.
+        """)
+    
+    st.markdown(f"""
+    <div style="text-align:right;padding:16px 0 8px;
+        font-family:'JetBrains Mono',monospace;font-size:10px;
+        color:{THEME['text_muted']};letter-spacing:.1em;">
+        REPASSES DE PRODUÇÃO · {get_horario_brasilia()}
+    </div>
+    """, unsafe_allow_html=True)
+
+# ==================================================================================================
+# CONTROLE DO FORNO - VERSÃO COMPLETA CORRIGIDA
+# ==================================================================================================
+
+elif aba_selecionada == 'CONTROLE DO FORNO':
+    render_page_header("CONTROLE DO FORNO", 
+                       f"Controle do Forno de Fusão · Atualizado {get_horario_brasilia()}", 
+                       THEME['accent_red'])
+    
+    # ======================
+    # CONFIGURAÇÃO DA PLANILHA
+    # ======================
+    ID_PLANILHA_ENFORNADEIRA = '1Gfaf_J5OA0nHLMR2nPUPnEmIltfOoXA7j_7ARoD_U8Q'
+    ABA_ENFORNADEIRA = 'ENFORNADEIRA'
+    
+    # ======================
+    # CONSTANTES - ALARMES E METAS (COM FAIXAS INDIVIDUAIS POR BOQUETA)
+    # ======================
+    ALARMES_CONFIG = {
+        'nivel_min': 75,
+        'nivel_max': 83,
+        'tiragem_meta': 350,
+        'relacao_o2_gas_ideal': 2.0,
+        'relacao_o2_gas_min': 1.8,
+        'relacao_o2_gas_max': 2.2,
+        'consumo_gas_alerta': 500,
+        'consumo_oxi_alerta': 400,
+        'osc_nivel_alerta': 5,
+        'diferenca_temp_max': 30,
+    }
+    
+    BOQUETAS_CONFIG = {
+        'BOQUETA_1': {'min': 1220, 'max': 1240, 'display': 'BOQUETA-1 - COMAL', 'cor': '#0078D4'},
+        'BOQUETA_2': {'min': 1270, 'max': 1280, 'display': 'BOQUETA-2 - PRENSA AUT.', 'cor': '#E86C2C'},
+        'BOQUETA_3': {'min': 1240, 'max': 1260, 'display': 'BOQUETA-3 ODILON', 'cor': '#FFB900'},
+        'BOQUETA_4': {'min': 1100, 'max': 1240, 'display': 'BOQUETA-4 CABEÇA', 'cor': '#107C10'},
+        'BOQUETA_5': {'min': 1100, 'max': 1240, 'display': 'BOQUETA-5', 'cor': '#6B46C1'},
+    }
+    
+    NOMES_BOQUETAS_DISPLAY = ['BOQUETA-1 - COMAL', 'BOQUETA-2 - PRENSA AUT.', 'BOQUETA-3 ODILON', 'BOQUETA-4 CABEÇA', 'BOQUETA-5']
+    NOMES_BOQUETAS_DF = ['BOQUETA_1', 'BOQUETA_2', 'BOQUETA_3', 'BOQUETA_4', 'BOQUETA_5']
+    CORES_BOQUETAS = ['#0078D4', '#E86C2C', '#FFB900', '#107C10', '#6B46C1']
+    
+    # ======================
+    # INICIALIZAR SESSION STATE
+    # ======================
+    if 'enfornadeira_filtro_data' not in st.session_state:
+        st.session_state.enfornadeira_filtro_data = datetime.now().date()
+    
+    if 'enfornadeira_periodo' not in st.session_state:
+        st.session_state.enfornadeira_periodo = 'DIA'
+    
+    if 'enfornadeira_confirmar_salvar' not in st.session_state:
+        st.session_state.enfornadeira_confirmar_salvar = False
+    
+    if 'enfornadeira_dados_lancamento' not in st.session_state:
+        st.session_state.enfornadeira_dados_lancamento = {}
+    
+    if 'enfornadeira_alertas_mostrar' not in st.session_state:
+        st.session_state.enfornadeira_alertas_mostrar = False
+    
+    # ======================
+    # FUNÇÃO PARA CONVERTER HORA
+    # ======================
+    def converter_hora_str(valor):
+        """Converte string de hora para objeto time (aceita HH:MM ou HH:MM:SS)"""
+        if pd.isna(valor) or valor is None:
+            return None
+        try:
+            valor_str = str(valor).strip()
+            if ':' in valor_str:
+                partes = valor_str.split(':')
+                if len(partes) >= 2:
+                    h = int(partes[0])
+                    m = int(partes[1])
+                    s = int(partes[2]) if len(partes) > 2 else 0
+                    if 0 <= h <= 23 and 0 <= m <= 59 and 0 <= s <= 59:
+                        return dt_time(h, m, s)
+            return None
+        except:
+            return None
+    
+    # ======================
+    # FUNÇÃO PARA CONVERTER DATA/HORA COMPLETA
+    # ======================
+    def converter_datetime_completo(data_val, hora_val):
+        """Converte data e hora para datetime completo"""
+        if pd.isna(data_val) or pd.isna(hora_val):
+            return pd.NaT
+        
+        try:
+            if isinstance(data_val, (datetime, pd.Timestamp)):
+                data_obj = data_val
+            elif isinstance(data_val, date):
+                data_obj = datetime.combine(data_val, dt_time.min)
+            else:
+                data_obj = converter_data_br(data_val)
+                if data_obj is None:
+                    return pd.NaT
+            
+            hora_str = str(hora_val).strip()
+            if ':' in hora_str:
+                partes = hora_str.split(':')
+                if len(partes) >= 2:
+                    h = int(partes[0])
+                    m = int(partes[1])
+                    s = int(partes[2]) if len(partes) > 2 else 0
+                    if 0 <= h <= 23 and 0 <= m <= 59 and 0 <= s <= 59:
+                        return datetime(data_obj.year, data_obj.month, data_obj.day, h, m, s)
+            return data_obj
+        except:
+            return pd.NaT
+    
+    # ======================
+    # FUNÇÃO PARA OBTER FAIXA IDEAL DA BOQUETA
+    # ======================
+    def get_faixa_boqueta(nome_boqueta: str) -> tuple:
+        config = BOQUETAS_CONFIG.get(nome_boqueta, {})
+        return config.get('min', 0), config.get('max', 0)
+    
+    # ======================
+    # FUNÇÃO PARA GERAR ALERTAS E SUGESTÕES
+    # ======================
+    def gerar_alertas_sugestoes(dados: Dict) -> List[Dict]:
+        alertas = []
+        
+        nivel = dados.get('nivel', 0)
+        if nivel < ALARMES_CONFIG['nivel_min']:
+            diferenca = ALARMES_CONFIG['nivel_min'] - nivel
+            alertas.append({
+                'tipo': 'CRÍTICO',
+                'cor': '#E81123',
+                'mensagem': f"🔴 NÍVEL DO VIDRO ABAIXO DO IDEAL: {nivel} cm (ideal: {ALARMES_CONFIG['nivel_min']}-{ALARMES_CONFIG['nivel_max']} cm)",
+                'sugestao': f"⚠️ O nível está {diferenca:.1f} cm abaixo do mínimo. AUMENTE a alimentação (aumente voltas ou reduza ciclo) para elevar o nível."
+            })
+        elif nivel > ALARMES_CONFIG['nivel_max']:
+            diferenca = nivel - ALARMES_CONFIG['nivel_max']
+            alertas.append({
+                'tipo': 'ALERTA',
+                'cor': '#FFB900',
+                'mensagem': f"🟡 NÍVEL DO VIDRO ACIMA DO IDEAL: {nivel} cm (ideal: {ALARMES_CONFIG['nivel_min']}-{ALARMES_CONFIG['nivel_max']} cm)",
+                'sugestao': f"⚠️ O nível está {diferenca:.1f} cm acima do máximo. REDUZA a alimentação (diminua voltas ou aumente ciclo) para baixar o nível."
+            })
+        
+        temperaturas = []
+        for i in range(1, 6):
+            temp = dados.get(f'boqueta_{i}', 0)
+            if temp > 0:
+                temperaturas.append(temp)
+        
+        if temperaturas:
+            for i, temp in enumerate(temperaturas, 1):
+                nome_boqueta = f'BOQUETA_{i}'
+                nome_display = f'BOQUETA-{i}'
+                temp_min, temp_max = get_faixa_boqueta(nome_boqueta)
+                
+                if temp < temp_min:
+                    diferenca = temp_min - temp
+                    alertas.append({
+                        'tipo': 'CRÍTICO' if diferenca > 20 else 'ALERTA',
+                        'cor': '#E81123' if diferenca > 20 else '#FFB900',
+                        'mensagem': f"🔴 {nome_display} ABAIXO DO IDEAL: {temp} °C (ideal: {temp_min}-{temp_max} °C)",
+                        'sugestao': f"⚠️ A boqueta {i} está {diferenca:.0f}°C abaixo do mínimo. AUMENTE a vazão de gás ou oxigênio para esta boqueta."
+                    })
+                elif temp > temp_max:
+                    diferenca = temp - temp_max
+                    alertas.append({
+                        'tipo': 'ALERTA',
+                        'cor': '#FFB900',
+                        'mensagem': f"🟡 {nome_display} ACIMA DO IDEAL: {temp} °C (ideal: {temp_min}-{temp_max} °C)",
+                        'sugestao': f"⚠️ A boqueta {i} está {diferenca:.0f}°C acima do máximo. REDUZA a vazão de gás ou oxigênio para esta boqueta."
+                    })
+            
+            if len(temperaturas) > 1:
+                temp_max = max(temperaturas)
+                temp_min = min(temperaturas)
+                diferenca = temp_max - temp_min
+                
+                if diferenca > ALARMES_CONFIG['diferenca_temp_max']:
+                    boqueta_max = temperaturas.index(temp_max) + 1
+                    boqueta_min = temperaturas.index(temp_min) + 1
+                    alertas.append({
+                        'tipo': 'ALERTA',
+                        'cor': '#FFB900',
+                        'mensagem': f"🟡 DIFERENÇA DE TEMPERATURA ENTRE BOQUETAS: {diferenca:.0f}°C (máximo recomendado: {ALARMES_CONFIG['diferenca_temp_max']}°C)",
+                        'sugestao': f"⚠️ A diferença entre a boqueta mais quente ({boqueta_max}: {temp_max:.0f}°C) e a mais fria ({boqueta_min}: {temp_min:.0f}°C) é de {diferenca:.0f}°C. Verifique a distribuição de chama."
+                    })
+        
+        tiragem = dados.get('tiragem', 0)
+        if tiragem < ALARMES_CONFIG['tiragem_meta']:
+            diferenca = ALARMES_CONFIG['tiragem_meta'] - tiragem
+            alertas.append({
+                'tipo': 'ALERTA',
+                'cor': '#FFB900',
+                'mensagem': f"🟡 TIRAGEM ABAIXO DA CAPACIDADE MÁXIMA: {tiragem:.1f} kg/h (capacidade máxima: {ALARMES_CONFIG['tiragem_meta']} kg/h)",
+                'sugestao': f"⚠️ Estamos trabalhando {diferenca:.1f} kg/h abaixo da capacidade máxima. Verifique a produção e aumente a alimentação se necessário."
+            })
+        elif tiragem > ALARMES_CONFIG['tiragem_meta']:
+            excesso = ((tiragem - ALARMES_CONFIG['tiragem_meta']) / ALARMES_CONFIG['tiragem_meta']) * 100
+            alertas.append({
+                'tipo': 'ALERTA',
+                'cor': '#FFB900',
+                'mensagem': f"🟡 TIRAGEM ACIMA DA CAPACIDADE MÁXIMA: {tiragem:.1f} kg/h (capacidade máxima: {ALARMES_CONFIG['tiragem_meta']} kg/h)",
+                'sugestao': f"⚠️ Estamos trabalhando {excesso:.1f}% acima da capacidade máxima. Isso pode sobrecarregar o forno."
+            })
+        
+        oxi_total = dados.get('oxi_1', 0) + dados.get('oxi_2', 0)
+        gas_total = dados.get('gas_1', 0) + dados.get('gas_2', 0)
+        
+        if gas_total > 0:
+            relacao = oxi_total / gas_total
+            if relacao < ALARMES_CONFIG['relacao_o2_gas_min']:
+                diferenca = ALARMES_CONFIG['relacao_o2_gas_ideal'] - relacao
+                alertas.append({
+                    'tipo': 'CRÍTICO',
+                    'cor': '#E81123',
+                    'mensagem': f"🔴 RELAÇÃO O₂/GÁS BAIXA: {relacao:.2f} (ideal: {ALARMES_CONFIG['relacao_o2_gas_ideal']:.1f} - faixa: {ALARMES_CONFIG['relacao_o2_gas_min']:.1f} a {ALARMES_CONFIG['relacao_o2_gas_max']:.1f})",
+                    'sugestao': f"⚠️ A relação está {diferenca:.2f} abaixo do ideal (2.0 = dobro de oxigênio). AUMENTE oxigênio ou DIMINUA gás."
+                })
+            elif relacao > ALARMES_CONFIG['relacao_o2_gas_max']:
+                diferenca = relacao - ALARMES_CONFIG['relacao_o2_gas_ideal']
+                alertas.append({
+                    'tipo': 'ALERTA',
+                    'cor': '#FFB900',
+                    'mensagem': f"🟡 RELAÇÃO O₂/GÁS ALTA: {relacao:.2f} (ideal: {ALARMES_CONFIG['relacao_o2_gas_ideal']:.1f} - faixa: {ALARMES_CONFIG['relacao_o2_gas_min']:.1f} a {ALARMES_CONFIG['relacao_o2_gas_max']:.1f})",
+                    'sugestao': f"⚠️ A relação está {diferenca:.2f} acima do ideal (2.0 = dobro de oxigênio). DIMINUA oxigênio ou AUMENTE gás."
+                })
+        
+        if gas_total > ALARMES_CONFIG['consumo_gas_alerta']:
+            alertas.append({
+                'tipo': 'ALERTA',
+                'cor': '#FFB900',
+                'mensagem': f"🟡 CONSUMO DE GÁS ELEVADO: {gas_total:.1f} m³ (alerta: {ALARMES_CONFIG['consumo_gas_alerta']} m³)",
+                'sugestao': "⚠️ Verifique se há vazamentos ou ajuste a relação O₂/Gás."
+            })
+        
+        if oxi_total > ALARMES_CONFIG['consumo_oxi_alerta']:
+            alertas.append({
+                'tipo': 'ALERTA',
+                'cor': '#FFB900',
+                'mensagem': f"🟡 CONSUMO DE OXIGÊNIO ELEVADO: {oxi_total:.1f} m³ (alerta: {ALARMES_CONFIG['consumo_oxi_alerta']} m³)",
+                'sugestao': "⚠️ Verifique a relação O₂/Gás e reduza o excesso de oxigênio."
+            })
+        
+        return alertas
+    
+    # ======================
+    # FUNÇÃO PARA SALVAR NA PLANILHA
+    # ======================
+    def salvar_registro_enfornadeira(dados: Dict) -> tuple:
+        try:
+            client = get_gspread_client()
+            if client is None:
+                return False, "❌ Erro ao conectar ao Google Sheets"
+            
+            spreadsheet = client.open_by_key(ID_PLANILHA_ENFORNADEIRA)
+            
+            try:
+                sheet = spreadsheet.worksheet(ABA_ENFORNADEIRA)
+            except:
+                cabecalho = ["DATA", "HORA", "NÍVEL", "CICLO(SEG)", "VOLTAS", "TIRAGEM KG", 
+                            "OXI M³ - 1", "GÁS M³ - 1", "OXI M³ - 2", "GÁS M³ - 2", 
+                            "BOQUETA-1", "BOQUETA-2", "BOQUETA-3", "BOQUETA-4", "BOQUETA-5"]
+                sheet = spreadsheet.add_worksheet(title=ABA_ENFORNADEIRA, rows=1000, cols=20)
+                sheet.append_row(cabecalho)
+            
+            agora = get_horario_brasilia_obj()
+            data_str = agora.strftime("%d/%m/%Y")
+            hora_str = agora.strftime("%H:%M:%S")
+            
+            linha = [
+                data_str, hora_str,
+                str(dados.get('nivel', '')),
+                str(dados.get('ciclo', '')),
+                str(dados.get('voltas', '')),
+                str(dados.get('tiragem', '')),
+                str(dados.get('oxi_1', '')),
+                str(dados.get('gas_1', '')),
+                str(dados.get('oxi_2', '')),
+                str(dados.get('gas_2', '')),
+                str(dados.get('boqueta_1', '')),
+                str(dados.get('boqueta_2', '')),
+                str(dados.get('boqueta_3', '')),
+                str(dados.get('boqueta_4', '')),
+                str(dados.get('boqueta_5', ''))
+            ]
+            
+            sheet.append_row(linha)
+            st.cache_data.clear()
+            return True, "✅ Registro salvo com sucesso!"
+        except Exception as e:
+            return False, f"❌ Erro ao salvar: {str(e)}"
+    
+    # ======================
+    # FUNÇÃO DE CARREGAMENTO
+    # ======================
+    @retry_on_quota()
+    @st.cache_data(ttl=300)
+    def carregar_dados_enfornadeira() -> pd.DataFrame:
+        try:
+            client = get_gspread_client()
+            if client is None:
+                st.error("❌ Erro ao conectar ao Google Sheets")
+                return pd.DataFrame()
+            
+            spreadsheet = client.open_by_key(ID_PLANILHA_ENFORNADEIRA)
+            
+            try:
+                sheet = spreadsheet.worksheet(ABA_ENFORNADEIRA)
+            except Exception as e:
+                st.error(f"❌ Aba '{ABA_ENFORNADEIRA}' não encontrada. Erro: {e}")
+                return pd.DataFrame()
+            
+            todos_dados = sheet.get_all_values()
+            
+            if len(todos_dados) < 2:
+                st.info("📭 Nenhum dado encontrado na aba ENFORNADEIRA.")
+                return pd.DataFrame()
+            
+            cabecalho = todos_dados[0]
+            valores = todos_dados[1:]
+            df = pd.DataFrame(valores, columns=cabecalho)
+            
+            mapa_colunas = {}
+            
+            for col in df.columns:
+                col_str = str(col).strip()
+                col_upper = col_str.upper()
+                col_sem_acento = unicodedata.normalize('NFKD', col_upper).encode('ASCII', 'ignore').decode('ASCII')
+                
+                if col_sem_acento in ['DATA', 'DATE']:
+                    mapa_colunas[col] = 'DATA'
+                elif col_sem_acento in ['HORA', 'TIME', 'HORARIO']:
+                    mapa_colunas[col] = 'HORA'
+                elif col_sem_acento in ['NIVEL', 'NÍVEL', 'LEVEL']:
+                    mapa_colunas[col] = 'NIVEL'
+                elif 'CICLO' in col_sem_acento:
+                    mapa_colunas[col] = 'CICLO'
+                elif col_sem_acento in ['VOLTAS', 'VOLTA']:
+                    mapa_colunas[col] = 'VOLTAS'
+                elif 'TIRAGEM' in col_sem_acento:
+                    mapa_colunas[col] = 'TIRAGEM_KG'
+                elif col_sem_acento in ['OXI M3 - 1', 'OXI_M3_-_1', 'OXI_1']:
+                    mapa_colunas[col] = 'OXI_1'
+                elif col_sem_acento in ['GAS M3 - 1', 'GÁS M3 - 1', 'GAS_M3_-_1', 'GAS_1']:
+                    mapa_colunas[col] = 'GAS_1'
+                elif col_sem_acento in ['OXI M3 - 2', 'OXI_M3_-_2', 'OXI_2']:
+                    mapa_colunas[col] = 'OXI_2'
+                elif col_sem_acento in ['GAS M3 - 2', 'GÁS M3 - 2', 'GAS_M3_-_2', 'GAS_2']:
+                    mapa_colunas[col] = 'GAS_2'
+                elif 'BOQUETA-1' in col_sem_acento or 'BOQUETA_1' in col_sem_acento:
+                    mapa_colunas[col] = 'BOQUETA_1'
+                elif 'BOQUETA-2' in col_sem_acento or 'BOQUETA_2' in col_sem_acento:
+                    mapa_colunas[col] = 'BOQUETA_2'
+                elif 'BOQUETA-3' in col_sem_acento or 'BOQUETA_3' in col_sem_acento:
+                    mapa_colunas[col] = 'BOQUETA_3'
+                elif 'BOQUETA-4' in col_sem_acento or 'BOQUETA_4' in col_sem_acento:
+                    mapa_colunas[col] = 'BOQUETA_4'
+                elif 'BOQUETA-5' in col_sem_acento or 'BOQUETA_5' in col_sem_acento:
+                    mapa_colunas[col] = 'BOQUETA_5'
+            
+            if mapa_colunas:
+                df = df.rename(columns=mapa_colunas)
+            
+            if 'DATA' in df.columns:
+                df['DATA'] = df['DATA'].apply(converter_data_br)
+                df = df.dropna(subset=['DATA'])
+            
+            if 'HORA' in df.columns:
+                df['HORA_OBJ'] = df['HORA'].apply(converter_hora_str)
+                mask_invalida = df['HORA_OBJ'].isna()
+                if mask_invalida.any():
+                    df.loc[mask_invalida, 'HORA_OBJ'] = df.loc[mask_invalida, 'HORA'].apply(
+                        lambda x: converter_hora_str(str(x).strip())
+                    )
+                df['HORA_DEC'] = df['HORA_OBJ'].apply(
+                    lambda x: x.hour + x.minute/60 + x.second/3600 if x else 0
+                )
+            
+            colunas_numericas = ['NIVEL', 'CICLO', 'VOLTAS', 'TIRAGEM_KG', 
+                                'OXI_1', 'GAS_1', 'OXI_2', 'GAS_2',
+                                'BOQUETA_1', 'BOQUETA_2', 'BOQUETA_3', 'BOQUETA_4', 'BOQUETA_5']
+            
+            for col in colunas_numericas:
+                if col in df.columns:
+                    df[col] = df[col].astype(str).str.replace(',', '.')
+                    df[col] = df[col].astype(str).str.replace(r'[^\d\.]', '', regex=True)
+                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+            
+            boquetas = ['BOQUETA_1', 'BOQUETA_2', 'BOQUETA_3', 'BOQUETA_4', 'BOQUETA_5']
+            boquetas_existentes = [b for b in boquetas if b in df.columns]
+            
+            if boquetas_existentes:
+                df_temp = df[boquetas_existentes].replace(0, np.nan)
+                df['TEMP_MEDIA'] = df_temp.mean(axis=1, skipna=True).fillna(0)
+                df['TEMP_MAX'] = df_temp.max(axis=1, skipna=True).fillna(0)
+                df['TEMP_MIN'] = df_temp.min(axis=1, skipna=True).fillna(0)
+                df['TEMP_DIFERENCA'] = (df['TEMP_MAX'] - df['TEMP_MIN']).fillna(0)
+            
+            if 'OXI_1' in df.columns and 'OXI_2' in df.columns:
+                df['OXI_TOTAL'] = df['OXI_1'] + df['OXI_2']
+            
+            if 'GAS_1' in df.columns and 'GAS_2' in df.columns:
+                df['GAS_TOTAL'] = df['GAS_1'] + df['GAS_2']
+            
+            if 'OXI_TOTAL' in df.columns and 'GAS_TOTAL' in df.columns:
+                df['ENERGIA_TOTAL'] = df['OXI_TOTAL'] + df['GAS_TOTAL']
+                df['RELACAO_O2_GAS'] = df['OXI_TOTAL'] / df['GAS_TOTAL'].replace(0, np.nan)
+                df['RELACAO_O2_GAS'] = df['RELACAO_O2_GAS'].fillna(0)
+            
+            if 'TIRAGEM_KG' in df.columns:
+                df['TIRAGEM_TON'] = df['TIRAGEM_KG'] / 1000
+                if 'OXI_TOTAL' in df.columns:
+                    df['OXI_POR_TON'] = df['OXI_TOTAL'] / df['TIRAGEM_TON'].replace(0, np.nan)
+                    df['OXI_POR_TON'] = df['OXI_POR_TON'].fillna(0)
+                if 'GAS_TOTAL' in df.columns:
+                    df['GAS_POR_TON'] = df['GAS_TOTAL'] / df['TIRAGEM_TON'].replace(0, np.nan)
+                    df['GAS_POR_TON'] = df['GAS_POR_TON'].fillna(0)
+                if 'ENERGIA_TOTAL' in df.columns:
+                    df['ENERGIA_POR_TON'] = df['ENERGIA_TOTAL'] / df['TIRAGEM_TON'].replace(0, np.nan)
+                    df['ENERGIA_POR_TON'] = df['ENERGIA_POR_TON'].fillna(0)
+            
+            if 'CICLO' in df.columns and 'VOLTAS' in df.columns:
+                df['INDICE_ALIMENTACAO'] = df['CICLO'] / df['VOLTAS'].replace(0, 1)
+            
+            if 'HORA_DEC' in df.columns:
+                def classificar_turno(hora):
+                    if pd.isna(hora):
+                        return 'N/A'
+                    if 6 <= hora < 14:
+                        return 'MANHÃ'
+                    elif 14 <= hora < 22:
+                        return 'TARDE'
+                    else:
+                        return 'NOITE'
+                df['TURNO'] = df['HORA_DEC'].apply(classificar_turno)
+            
+            if 'DATA' in df.columns and 'HORA' in df.columns:
+                df['DATETIME'] = df.apply(
+                    lambda row: converter_datetime_completo(row['DATA'], row['HORA']),
+                    axis=1
+                )
+                mask_invalid = df['DATETIME'].isna()
+                if mask_invalid.any():
+                    df.loc[mask_invalid, 'DATETIME'] = df.loc[mask_invalid, 'DATA']
+            
+            if 'DATETIME' in df.columns:
+                df = df.sort_values('DATETIME', ascending=True)
+            
+            return df
+            
+        except Exception as e:
+            st.error(f"❌ Erro ao carregar dados: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return pd.DataFrame()
+    
+    # ======================
+    # FUNÇÃO PARA GERAR HTML DE ALERTA
+    # ======================
+    def renderizar_alertas(alertas: List[Dict]):
+        if not alertas:
+            return
+        
+        st.markdown("""
+        <style>
+        .alerta-container {
+            background: #fff8f0;
+            border: 2px solid #E81123;
+            border-radius: 12px;
+            padding: 20px;
+            margin: 15px 0;
+            box-shadow: 0 4px 20px rgba(232, 17, 35, 0.15);
+        }
+        .alerta-titulo {
+            font-size: 18px;
+            font-weight: 700;
+            color: #E81123;
+            margin-bottom: 15px;
+        }
+        .alerta-item {
+            background: white;
+            border-radius: 8px;
+            padding: 12px 16px;
+            margin-bottom: 10px;
+            border-left: 4px solid #E81123;
+        }
+        .alerta-mensagem {
+            font-size: 14px;
+            font-weight: 600;
+            color: #1a1a2e;
+        }
+        .alerta-sugestao {
+            font-size: 13px;
+            color: #555;
+            margin-top: 5px;
+            padding-left: 20px;
+            border-left: 2px solid #FFB900;
+        }
+        .alerta-sugestao::before {
+            content: "💡 ";
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        
+        st.markdown('<div class="alerta-container">', unsafe_allow_html=True)
+        st.markdown('<div class="alerta-titulo">🚨 ALERTAS IDENTIFICADOS</div>', unsafe_allow_html=True)
+        
+        for alerta in alertas:
+            cor = alerta.get('cor', '#E81123')
+            st.markdown(f'''
+            <div class="alerta-item" style="border-left-color: {cor};">
+                <div class="alerta-mensagem">{alerta['mensagem']}</div>
+                <div class="alerta-sugestao">{alerta.get('sugestao', '')}</div>
+            </div>
+            ''', unsafe_allow_html=True)
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    # ======================
+    # FUNÇÃO PARA RENDERIZAR FORMULÁRIO DE LANÇAMENTO
+    # ======================
+    def renderizar_formulario_lancamento():
+        """Renderiza o formulário para lançamento de apontamentos com layout organizado"""
+        
+        st.markdown("---")
+        st.markdown("### ✏️ Lançamento de Apontamentos")
+        
+        agora = get_horario_brasilia_obj()
+        
+        st.info(f"📅 Data e hora do lançamento: **{agora.strftime('%d/%m/%Y %H:%M:%S')}** (Horário de Brasília)")
+        st.caption("⏰ Data e hora são registradas automaticamente pelo sistema no momento do salvamento")
+        
+        st.markdown("---")
+        
+        with st.form("form_lancamento_enfornadeira"):
+            st.markdown("### 📊 Parâmetros de Processo")
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.markdown("#### 📊 Tanque")
+                nivel = st.number_input(
+                    "Nível do Vidro (cm)*",
+                    min_value=0.0,
+                    max_value=120.0,
+                    value=0.0,
+                    step=0.5,
+                    key="enfornadeira_nivel",
+                    help="Nível atual do vidro no tanque (ideal: 75-85 cm)"
+                )
+            
+            with col2:
+                st.markdown("#### 🔧 Alimentação")
+                ciclo = st.number_input(
+                    "Ciclo (segundos)*",
+                    min_value=0.0,
+                    max_value=60.0,
+                    value=0.0,
+                    step=0.1,
+                    key="enfornadeira_ciclo",
+                    help="Tempo de ciclo da enfornadeira (máximo: 60s)"
+                )
+            
+            with col3:
+                st.markdown("#### 📦 Produção")
+                voltas = st.number_input(
+                    "Voltas*",
+                    min_value=0.0,
+                    max_value=50.0,
+                    value=0.0,
+                    step=0.5,
+                    key="enfornadeira_voltas",
+                    help="Número de voltas da enfornadeira"
+                )
+                tiragem = st.number_input(
+                    "Tiragem (kg/h)*",
+                    min_value=0.0,
+                    max_value=600.0,
+                    value=0.0,
+                    step=5.0,
+                    key="enfornadeira_tiragem",
+                    help="Quantidade de vidro extraída por hora (máx: 350 kg/h)"
+                )
+            
+            st.markdown("---")
+            
+            st.markdown("### 🌡️ Temperaturas das Boquetas")
+            
+            col_info1, col_info2, col_info3, col_info4, col_info5 = st.columns(5)
+            with col_info1:
+                st.caption("B1: 1220-1240°C")
+            with col_info2:
+                st.caption("B2: 1270-1280°C")
+            with col_info3:
+                st.caption("B3: 1240-1260°C")
+            with col_info4:
+                st.caption("B4: 1220-1240°C")
+            with col_info5:
+                st.caption("B5: 1250-1270°C")
+            
+            col_b1, col_b2, col_b3, col_b4, col_b5 = st.columns(5)
+            
+            with col_b1:
+                boqueta_1 = st.number_input(
+                    "BOQUETA-1 (°C)",
+                    min_value=0.0,
+                    max_value=1350.0,
+                    value=0.0,
+                    step=5.0,
+                    key="enfornadeira_boqueta_1",
+                    help="Faixa ideal: 1220-1240°C"
+                )
+            
+            with col_b2:
+                boqueta_2 = st.number_input(
+                    "BOQUETA-2 (°C)",
+                    min_value=0.0,
+                    max_value=1350.0,
+                    value=0.0,
+                    step=5.0,
+                    key="enfornadeira_boqueta_2",
+                    help="Faixa ideal: 1270-1280°C"
+                )
+            
+            with col_b3:
+                boqueta_3 = st.number_input(
+                    "BOQUETA-3 (°C)",
+                    min_value=0.0,
+                    max_value=1350.0,
+                    value=0.0,
+                    step=5.0,
+                    key="enfornadeira_boqueta_3",
+                    help="Faixa ideal: 1240-1260°C"
+                )
+            
+            with col_b4:
+                boqueta_4 = st.number_input(
+                    "BOQUETA-4 (°C)",
+                    min_value=0.0,
+                    max_value=1350.0,
+                    value=0.0,
+                    step=5.0,
+                    key="enfornadeira_boqueta_4",
+                    help="Faixa ideal: 1220-1240°C"
+                )
+            
+            with col_b5:
+                boqueta_5 = st.number_input(
+                    "BOQUETA-5 (°C)",
+                    min_value=0.0,
+                    max_value=1350.0,
+                    value=0.0,
+                    step=5.0,
+                    key="enfornadeira_boqueta_5",
+                    help="Faixa ideal: 1250-1270°C"
+                )
+            
+            st.markdown("---")
+            
+            st.markdown("### 🔥 Consumo de Combustível")
+            
+            col_f1, col_f2 = st.columns(2)
+            
+            with col_f1:
+                st.markdown("#### 🔥 Maçarico 1")
+                oxi_1 = st.number_input(
+                    "O₂ M³ - 1*",
+                    min_value=0.0,
+                    max_value=600.0,
+                    value=0.0,
+                    step=1.0,
+                    key="enfornadeira_oxi_1",
+                    help="Consumo de oxigênio do maçarico 1"
+                )
+                gas_1 = st.number_input(
+                    "Gás M³ - 1*",
+                    min_value=0.0,
+                    max_value=600.0,
+                    value=0.0,
+                    step=1.0,
+                    key="enfornadeira_gas_1",
+                    help="Consumo de gás do maçarico 1"
+                )
+            
+            with col_f2:
+                st.markdown("#### 🔥 Maçarico 2")
+                oxi_2 = st.number_input(
+                    "O₂ M³ - 2*",
+                    min_value=0.0,
+                    max_value=600.0,
+                    value=0.0,
+                    step=1.0,
+                    key="enfornadeira_oxi_2",
+                    help="Consumo de oxigênio do maçarico 2"
+                )
+                gas_2 = st.number_input(
+                    "Gás M³ - 2*",
+                    min_value=0.0,
+                    max_value=600.0,
+                    value=0.0,
+                    step=1.0,
+                    key="enfornadeira_gas_2",
+                    help="Consumo de gás do maçarico 2"
+                )
+            
+            st.markdown("---")
+            st.caption("* Campos obrigatórios")
+            
+            col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
+            with col_btn2:
+                submitted = st.form_submit_button(
+                    "💾 SALVAR REGISTRO",
+                    type="primary",
+                    use_container_width=True
+                )
+            
+            if submitted:
+                campos_obrigatorios = {
+                    'Nível': nivel,
+                    'Ciclo': ciclo,
+                    'Voltas': voltas,
+                    'Tiragem': tiragem,
+                    'O₂ M³ - 1': oxi_1,
+                    'Gás M³ - 1': gas_1,
+                    'O₂ M³ - 2': oxi_2,
+                    'Gás M³ - 2': gas_2
+                }
+                
+                campos_vazios = [nome for nome, valor in campos_obrigatorios.items() if valor <= 0]
+                
+                if campos_vazios:
+                    st.error(f"❌ Preencha todos os campos obrigatórios: {', '.join(campos_vazios)}")
+                else:
+                    st.session_state.enfornadeira_dados_lancamento = {
+                        'nivel': nivel,
+                        'boqueta_1': boqueta_1,
+                        'boqueta_2': boqueta_2,
+                        'boqueta_3': boqueta_3,
+                        'boqueta_4': boqueta_4,
+                        'boqueta_5': boqueta_5,
+                        'ciclo': ciclo,
+                        'voltas': voltas,
+                        'tiragem': tiragem,
+                        'oxi_1': oxi_1,
+                        'gas_1': gas_1,
+                        'oxi_2': oxi_2,
+                        'gas_2': gas_2
+                    }
+                    st.session_state.enfornadeira_confirmar_salvar = True
+                    st.rerun()
+        
+        if st.session_state.enfornadeira_confirmar_salvar:
+            dados = st.session_state.enfornadeira_dados_lancamento
+            
+            st.markdown("---")
+            st.markdown("### ⚠️ Confirmação")
+            st.warning("⚠️ Você está prestes a salvar um novo registro na planilha.")
+            
+            st.markdown("**📋 Resumo dos dados:**")
+            
+            col_r1, col_r2, col_r3 = st.columns(3)
+            with col_r1:
+                st.markdown("**📊 Tanque**")
+                st.write(f"Nível: **{dados['nivel']} cm**")
+            with col_r2:
+                st.markdown("**🔧 Alimentação**")
+                st.write(f"Ciclo: **{dados['ciclo']} s**")
+            with col_r3:
+                st.markdown("**📦 Produção**")
+                st.write(f"Voltas: **{dados['voltas']}**")
+                st.write(f"Tiragem: **{dados['tiragem']} kg/h**")
+            
+            st.markdown("**🌡️ Temperaturas das Boquetas**")
+            col_t1, col_t2, col_t3, col_t4, col_t5 = st.columns(5)
+            with col_t1:
+                st.write(f"B1: **{dados['boqueta_1']} °C**")
+            with col_t2:
+                st.write(f"B2: **{dados['boqueta_2']} °C**")
+            with col_t3:
+                st.write(f"B3: **{dados['boqueta_3']} °C**")
+            with col_t4:
+                st.write(f"B4: **{dados['boqueta_4']} °C**")
+            with col_t5:
+                st.write(f"B5: **{dados['boqueta_5']} °C**")
+            
+            st.markdown("**🔥 Combustível**")
+            col_c1, col_c2 = st.columns(2)
+            with col_c1:
+                st.markdown("**Maçarico 1**")
+                st.write(f"O₂: **{dados['oxi_1']} m³**")
+                st.write(f"Gás: **{dados['gas_1']} m³**")
+            with col_c2:
+                st.markdown("**Maçarico 2**")
+                st.write(f"O₂: **{dados['oxi_2']} m³**")
+                st.write(f"Gás: **{dados['gas_2']} m³**")
+            
+            alertas = gerar_alertas_sugestoes(dados)
+            if alertas:
+                renderizar_alertas(alertas)
+            
+            col_conf1, col_conf2, col_conf3 = st.columns(3)
+            with col_conf1:
+                if st.button("✅ SIM, SALVAR", type="primary", use_container_width=True):
+                    sucesso, mensagem = salvar_registro_enfornadeira(dados)
+                    if sucesso:
+                        st.success(mensagem)
+                        st.balloons()
+                        if alertas:
+                            st.info("📢 **Alertas identificados!** Consulte as sugestões acima para regularizar o processo.")
+                        st.session_state.enfornadeira_confirmar_salvar = False
+                        st.session_state.enfornadeira_dados_lancamento = {}
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error(mensagem)
+            
+            with col_conf2:
+                if st.button("❌ NÃO, CANCELAR", use_container_width=True):
+                    st.session_state.enfornadeira_confirmar_salvar = False
+                    st.session_state.enfornadeira_dados_lancamento = {}
+                    st.rerun()
+            
+            with col_conf3:
+                if st.button("📊 Ver Gráficos", use_container_width=True):
+                    st.session_state.enfornadeira_confirmar_salvar = False
+                    st.rerun()
+    
+    # ======================================================================
+    # ANÁLISE PREDITIVA E RECOMENDAÇÕES DE SETUP - VERSÃO CORRIGIDA
+    # ======================================================================
+    
+    def analisar_padrao_excelencia(df: pd.DataFrame) -> Dict:
+        """
+        Analisa os dados históricos para identificar o padrão de excelência
+        e gerar recomendações de setup baseadas nas últimas extrações
+        """
+        if df.empty:
+            return {}
+        
+        # ===== 1. SEMPRE USAR OS 10 ÚLTIMOS REGISTROS =====
+        df_ultimos = df.sort_values('DATETIME', ascending=False).head(10).copy()
+        
+        # ===== 2. IDENTIFICAR PADRÃO DE EXCELÊNCIA =====
+        df_produtivo = df[df['TIRAGEM_KG'] > 250].copy()
+        
+        if df_produtivo.empty:
+            return {"erro": "Dados insuficientes para análise. Necessário mais registros com tiragem > 250 kg/h."}
+        
+        n_top = max(3, min(10, int(len(df_produtivo) * 0.2)))
+        df_top = df_produtivo.nlargest(n_top, 'TIRAGEM_KG')
+        
+        # ===== 3. CALCULAR CONSTANTE TEÓRICA =====
+        # Tiragem = (Voltas / Ciclo) * CONSTANTE
+        # CONSTANTE = Tiragem / (Voltas / Ciclo)
+        
+        df_top['RELACAO_VOLTAS_CICLO'] = df_top['VOLTAS'] / df_top['CICLO']
+        
+        # Constante calculada a partir das melhores produções
+        constante_teorica = (df_top['TIRAGEM_KG'] / df_top['RELACAO_VOLTAS_CICLO']).mean()
+        
+        # ===== 4. CALCULAR PARÂMETROS IDEAL =====
+        padrao = {
+            'nivel_ideal': df_top['NIVEL'].mean(),
+            'nivel_min': df_top['NIVEL'].min(),
+            'nivel_max': df_top['NIVEL'].max(),
+            'nivel_std': df_top['NIVEL'].std(),
+            'ciclo_ideal': df_top['CICLO'].mean(),
+            'ciclo_min': df_top['CICLO'].min(),
+            'ciclo_max': df_top['CICLO'].max(),
+            'ciclo_std': df_top['CICLO'].std(),
+            'voltas_ideal': df_top['VOLTAS'].mean(),
+            'voltas_min': df_top['VOLTAS'].min(),
+            'voltas_max': df_top['VOLTAS'].max(),
+            'voltas_std': df_top['VOLTAS'].std(),
+            'relacao_voltas_ciclo_ideal': df_top['RELACAO_VOLTAS_CICLO'].mean(),
+            'tiragem_media_top': df_top['TIRAGEM_KG'].mean(),
+            'tiragem_max_top': df_top['TIRAGEM_KG'].max(),
+            'tiragem_min_top': df_top['TIRAGEM_KG'].min(),
+            'tiragem_std_top': df_top['TIRAGEM_KG'].std(),
+            'constante_teorica': constante_teorica,
+            'relacao_o2_gas_ideal': df_top['RELACAO_O2_GAS'].mean(),
+            'relacao_o2_gas_min': df_top['RELACAO_O2_GAS'].min(),
+            'relacao_o2_gas_max': df_top['RELACAO_O2_GAS'].max(),
+            'n_registros_top': len(df_top),
+            'n_registros_total': len(df_produtivo),
+            'boquetas': {}
+        }
+        
+        boquetas = ['BOQUETA_1', 'BOQUETA_2', 'BOQUETA_3', 'BOQUETA_4', 'BOQUETA_5']
+        for boqueta in boquetas:
+            if boqueta in df_top.columns:
+                valores = df_top[boqueta][df_top[boqueta] > 0]
+                if not valores.empty:
+                    padrao['boquetas'][boqueta] = {
+                        'media': valores.mean(),
+                        'min': valores.min(),
+                        'max': valores.max(),
+                        'std': valores.std()
+                    }
+        
+        # ===== 5. ANALISAR OS 10 ÚLTIMOS REGISTROS =====
+        df_ultimos['RELACAO_VOLTAS_CICLO'] = df_ultimos['VOLTAS'] / df_ultimos['CICLO']
+        
+        analise_atual = {
+            'nivel_atual': df_ultimos['NIVEL'].mean() if 'NIVEL' in df_ultimos.columns else 0,
+            'nivel_std': df_ultimos['NIVEL'].std() if 'NIVEL' in df_ultimos.columns else 0,
+            'nivel_min': df_ultimos['NIVEL'].min() if 'NIVEL' in df_ultimos.columns else 0,
+            'nivel_max': df_ultimos['NIVEL'].max() if 'NIVEL' in df_ultimos.columns else 0,
+            'ciclo_atual': df_ultimos['CICLO'].mean() if 'CICLO' in df_ultimos.columns else 0,
+            'ciclo_std': df_ultimos['CICLO'].std() if 'CICLO' in df_ultimos.columns else 0,
+            'ciclo_min': df_ultimos['CICLO'].min() if 'CICLO' in df_ultimos.columns else 0,
+            'ciclo_max': df_ultimos['CICLO'].max() if 'CICLO' in df_ultimos.columns else 0,
+            'voltas_atual': df_ultimos['VOLTAS'].mean() if 'VOLTAS' in df_ultimos.columns else 0,
+            'voltas_std': df_ultimos['VOLTAS'].std() if 'VOLTAS' in df_ultimos.columns else 0,
+            'voltas_min': df_ultimos['VOLTAS'].min() if 'VOLTAS' in df_ultimos.columns else 0,
+            'voltas_max': df_ultimos['VOLTAS'].max() if 'VOLTAS' in df_ultimos.columns else 0,
+            'relacao_voltas_ciclo_atual': df_ultimos['RELACAO_VOLTAS_CICLO'].mean(),
+            'relacao_voltas_ciclo_std': df_ultimos['RELACAO_VOLTAS_CICLO'].std(),
+            'tiragem_atual': df_ultimos['TIRAGEM_KG'].mean() if 'TIRAGEM_KG' in df_ultimos.columns else 0,
+            'tiragem_std': df_ultimos['TIRAGEM_KG'].std() if 'TIRAGEM_KG' in df_ultimos.columns else 0,
+            'tiragem_min': df_ultimos['TIRAGEM_KG'].min() if 'TIRAGEM_KG' in df_ultimos.columns else 0,
+            'tiragem_max': df_ultimos['TIRAGEM_KG'].max() if 'TIRAGEM_KG' in df_ultimos.columns else 0,
+            'relacao_o2_gas_atual': df_ultimos['RELACAO_O2_GAS'].mean() if 'RELACAO_O2_GAS' in df_ultimos.columns else 0,
+            'n_registros_analisados': len(df_ultimos),
+            'boquetas': {}
+        }
+        
+        for boqueta in boquetas:
+            if boqueta in df_ultimos.columns:
+                valores = df_ultimos[boqueta][df_ultimos[boqueta] > 0]
+                if not valores.empty:
+                    analise_atual['boquetas'][boqueta] = {
+                        'media': valores.mean(),
+                        'min': valores.min(),
+                        'max': valores.max(),
+                        'std': valores.std()
+                    }
+        
+        # ===== 6. CALCULAR EFICIÊNCIA DO SETUP =====
+        # Tiragem Teórica = Constante * (Voltas Atual / Ciclo Atual)
+        tiragem_teorica = constante_teorica * analise_atual['relacao_voltas_ciclo_atual']
+        tiragem_atual = analise_atual['tiragem_atual']
+        
+        eficiencia_setup = (tiragem_atual / tiragem_teorica * 100) if tiragem_teorica > 0 else 0
+        
+        # ===== 7. GERAR RECOMENDAÇÕES =====
+        recomendacoes = []
+        
+        # 7.1 RECOMENDAÇÃO PRINCIPAL - AJUSTE DE VOLTAS E CICLO
+        if tiragem_atual > 0 and tiragem_teorica > 0:
+            tiragem_ideal = padrao['tiragem_media_top']
+            tiragem_diferenca = tiragem_ideal - tiragem_atual
+            
+            if abs(tiragem_diferenca) > 10:
+                voltas_atual = analise_atual['voltas_atual']
+                ciclo_atual = analise_atual['ciclo_atual']
+                
+                # Calcular ajustes baseados na diferença percentual
+                perc_diferenca = tiragem_diferenca / tiragem_atual if tiragem_atual > 0 else 0
+                
+                # Ajuste de voltas (60% do ajuste)
+                voltas_ajuste = voltas_atual * (1 + perc_diferenca * 0.6)
+                voltas_ajuste = max(0.5, min(10.0, voltas_ajuste))
+                
+                # Ajuste de ciclo (40% do ajuste)
+                ciclo_ajuste = ciclo_atual * (1 - perc_diferenca * 0.4)
+                ciclo_ajuste = max(0.5, min(20.0, ciclo_ajuste))
+                
+                voltas_ajuste = round(voltas_ajuste, 1)
+                ciclo_ajuste = round(ciclo_ajuste, 1)
+                
+                if voltas_ajuste < 0.5:
+                    voltas_ajuste = 0.5
+                if ciclo_ajuste < 0.5:
+                    ciclo_ajuste = 0.5
+                
+                # Calcular tempo estimado
+                if abs(tiragem_diferenca) > 50:
+                    tempo_estimado_horas = 6
+                    num_ajustes = 3
+                elif abs(tiragem_diferenca) > 30:
+                    tempo_estimado_horas = 4
+                    num_ajustes = 2
+                else:
+                    tempo_estimado_horas = 2
+                    num_ajustes = 1
+                
+                tempo_str = f"Aproximadamente {tempo_estimado_horas} horas ({num_ajustes} ajuste{'s' if num_ajustes > 1 else ''} progressivo{'s' if num_ajustes > 1 else ''})"
+                
+                if tiragem_diferenca > 0:
+                    # Precisa AUMENTAR a tiragem
+                    recomendacoes.append({
+                        'parametro': 'Setup - Aumentar Tiragem',
+                        'status': '🔧 AJUSTE DE SETUP',
+                        'atual': f"Tiragem: {tiragem_atual:.1f} kg/h",
+                        'ideal': f"Meta: {tiragem_ideal:.1f} kg/h",
+                        'acao': f"🔄 AUMENTE voltas para {voltas_ajuste:.1f} (atual: {voltas_atual:.1f}) e REDUZA ciclo para {ciclo_ajuste:.1f}s (atual: {ciclo_atual:.1f}s)",
+                        'detalhe': f"Aumentar voltas em {voltas_ajuste - voltas_atual:.1f} e reduzir ciclo em {ciclo_atual - ciclo_ajuste:.1f}s",
+                        'prioridade': 'ALTA' if abs(tiragem_diferenca) > 50 else 'MÉDIA',
+                        'setup_ajuste': {
+                            'voltas_atual': voltas_atual,
+                            'voltas_sugerido': voltas_ajuste,
+                            'voltas_delta': voltas_ajuste - voltas_atual,
+                            'ciclo_atual': ciclo_atual,
+                            'ciclo_sugerido': ciclo_ajuste,
+                            'ciclo_delta': ciclo_ajuste - ciclo_atual,
+                            'tiragem_meta': round(tiragem_ideal, 1),
+                            'tiragem_atual': round(tiragem_atual, 1),
+                            'tiragem_teorica': round(tiragem_teorica, 1),
+                            'diferenca': round(tiragem_diferenca, 1),
+                            'eficiencia_setup': round(eficiencia_setup, 1),
+                            'tempo_estimado': tempo_str,
+                            'num_ajustes': num_ajustes
+                        }
+                    })
+                else:
+                    # Precisa DIMINUIR a tiragem
+                    recomendacoes.append({
+                        'parametro': 'Setup - Diminuir Tiragem',
+                        'status': '🔧 AJUSTE DE SETUP',
+                        'atual': f"Tiragem: {tiragem_atual:.1f} kg/h",
+                        'ideal': f"Meta: {tiragem_ideal:.1f} kg/h",
+                        'acao': f"🔄 DIMINUA voltas para {voltas_ajuste:.1f} (atual: {voltas_atual:.1f}) e AUMENTE ciclo para {ciclo_ajuste:.1f}s (atual: {ciclo_atual:.1f}s)",
+                        'detalhe': f"Diminuir voltas em {voltas_atual - voltas_ajuste:.1f} e aumentar ciclo em {ciclo_ajuste - ciclo_atual:.1f}s",
+                        'prioridade': 'ALTA' if abs(tiragem_diferenca) > 50 else 'MÉDIA',
+                        'setup_ajuste': {
+                            'voltas_atual': voltas_atual,
+                            'voltas_sugerido': voltas_ajuste,
+                            'voltas_delta': voltas_ajuste - voltas_atual,
+                            'ciclo_atual': ciclo_atual,
+                            'ciclo_sugerido': ciclo_ajuste,
+                            'ciclo_delta': ciclo_ajuste - ciclo_atual,
+                            'tiragem_meta': round(tiragem_ideal, 1),
+                            'tiragem_atual': round(tiragem_atual, 1),
+                            'tiragem_teorica': round(tiragem_teorica, 1),
+                            'diferenca': round(tiragem_diferenca, 1),
+                            'eficiencia_setup': round(eficiencia_setup, 1),
+                            'tempo_estimado': tempo_str,
+                            'num_ajustes': num_ajustes
+                        }
+                    })
+        
+        # 7.2 RECOMENDAÇÃO DE NÍVEL
+        if 'nivel_atual' in analise_atual and analise_atual['nivel_atual'] > 0:
+            nivel_atual = analise_atual['nivel_atual']
+            nivel_ideal = padrao['nivel_ideal']
+            tolerancia = 2.0
+            
+            if abs(nivel_atual - nivel_ideal) > tolerancia:
+                if nivel_atual < nivel_ideal:
+                    recomendacoes.append({
+                        'parametro': 'Nível do Vidro',
+                        'status': '⚠️ ABAIXO DO IDEAL',
+                        'atual': f"{nivel_atual:.1f} cm",
+                        'ideal': f"{nivel_ideal:.1f} cm (faixa: {padrao['nivel_min']:.1f}-{padrao['nivel_max']:.1f})",
+                        'acao': f"AUMENTE a alimentação: +{2.0} voltas ou -{1.0}s no ciclo",
+                        'detalhe': f"Elevar o nível em ~{abs(nivel_atual - nivel_ideal):.1f}cm",
+                        'prioridade': 'ALTA' if abs(nivel_atual - nivel_ideal) > 5 else 'MÉDIA',
+                        'setup_ajuste': {
+                            'tipo': 'nivel',
+                            'acao': 'aumentar',
+                            'sugestao': f"Aumentar voltas em 2 ou reduzir ciclo em 1s",
+                            'tempo_estimado': '1-2 horas'
+                        }
+                    })
+                else:
+                    recomendacoes.append({
+                        'parametro': 'Nível do Vidro',
+                        'status': '⚠️ ACIMA DO IDEAL',
+                        'atual': f"{nivel_atual:.1f} cm",
+                        'ideal': f"{nivel_ideal:.1f} cm (faixa: {padrao['nivel_min']:.1f}-{padrao['nivel_max']:.1f})",
+                        'acao': f"REDUZA a alimentação: -{2.0} voltas ou +{1.0}s no ciclo",
+                        'detalhe': f"Baixar o nível em ~{abs(nivel_atual - nivel_ideal):.1f}cm",
+                        'prioridade': 'ALTA' if abs(nivel_atual - nivel_ideal) > 5 else 'MÉDIA',
+                        'setup_ajuste': {
+                            'tipo': 'nivel',
+                            'acao': 'diminuir',
+                            'sugestao': f"Diminuir voltas em 2 ou aumentar ciclo em 1s",
+                            'tempo_estimado': '1-2 horas'
+                        }
+                    })
+        
+        # 7.3 RECOMENDAÇÃO DE RELAÇÃO O₂/GÁS
+        if 'relacao_o2_gas_atual' in analise_atual and analise_atual['relacao_o2_gas_atual'] > 0:
+            relacao_atual = analise_atual['relacao_o2_gas_atual']
+            relacao_ideal = padrao['relacao_o2_gas_ideal']
+            tolerancia_rel = 0.15
+            
+            if abs(relacao_atual - relacao_ideal) > tolerancia_rel:
+                if relacao_atual < relacao_ideal:
+                    recomendacoes.append({
+                        'parametro': 'Relação O₂/Gás',
+                        'status': '⚠️ O₂ ABAIXO DO IDEAL',
+                        'atual': f"{relacao_atual:.2f}",
+                        'ideal': f"{relacao_ideal:.2f} (faixa: {padrao['relacao_o2_gas_min']:.2f}-{padrao['relacao_o2_gas_max']:.2f})",
+                        'acao': f"AUMENTE O₂ em 10-15% ou REDUZA Gás em 10-15%",
+                        'detalhe': f"Relação ideal: 2.0 (dobro de oxigênio). Atual: {relacao_atual:.2f}",
+                        'prioridade': 'ALTA' if abs(relacao_atual - relacao_ideal) > 0.3 else 'MÉDIA',
+                        'setup_ajuste': {
+                            'tipo': 'relacao_o2_gas',
+                            'acao': 'aumentar_oxi',
+                            'sugestao': f"Aumentar O₂ em 10-15% ou reduzir Gás em 10-15%",
+                            'tempo_estimado': '30 min - 1 hora'
+                        }
+                    })
+                else:
+                    recomendacoes.append({
+                        'parametro': 'Relação O₂/Gás',
+                        'status': '⚠️ O₂ ACIMA DO IDEAL',
+                        'atual': f"{relacao_atual:.2f}",
+                        'ideal': f"{relacao_ideal:.2f} (faixa: {padrao['relacao_o2_gas_min']:.2f}-{padrao['relacao_o2_gas_max']:.2f})",
+                        'acao': f"REDUZA O₂ em 10-15% ou AUMENTE Gás em 10-15%",
+                        'detalhe': f"Relação ideal: 2.0 (dobro de oxigênio). Atual: {relacao_atual:.2f}",
+                        'prioridade': 'ALTA' if abs(relacao_atual - relacao_ideal) > 0.3 else 'MÉDIA',
+                        'setup_ajuste': {
+                            'tipo': 'relacao_o2_gas',
+                            'acao': 'diminuir_oxi',
+                            'sugestao': f"Reduzir O₂ em 10-15% ou aumentar Gás em 10-15%",
+                            'tempo_estimado': '30 min - 1 hora'
+                        }
+                    })
+        
+        # 7.4 RECOMENDAÇÃO DE TEMPERATURAS DAS BOQUETAS
+        for boqueta, dados_top in padrao['boquetas'].items():
+            if boqueta in analise_atual['boquetas'] and analise_atual['boquetas'][boqueta].get('media', 0) > 0:
+                temp_atual = analise_atual['boquetas'][boqueta]['media']
+                temp_ideal = dados_top['media']
+                tolerancia_temp = 15
+                nome_display = boqueta.replace('_', '-')
+                
+                if abs(temp_atual - temp_ideal) > tolerancia_temp:
+                    if temp_atual < temp_ideal:
+                        recomendacoes.append({
+                            'parametro': f'{nome_display}',
+                            'status': '⚠️ TEMP. BAIXA',
+                            'atual': f"{temp_atual:.0f} °C",
+                            'ideal': f"{temp_ideal:.0f} °C (faixa: {dados_top['min']:.0f}-{dados_top['max']:.0f})",
+                            'acao': f"AUMENTE vazão de gás/oxigênio na {nome_display}",
+                            'detalhe': f"Elevar temperatura em {temp_ideal - temp_atual:.0f}°C",
+                            'prioridade': 'ALTA' if abs(temp_atual - temp_ideal) > 30 else 'MÉDIA',
+                            'setup_ajuste': {
+                                'tipo': 'temperatura',
+                                'acao': 'aumentar',
+                                'boqueta': nome_display,
+                                'temp_delta': round(temp_ideal - temp_atual, 1),
+                                'sugestao': f"Aumentar vazão de gás na {nome_display}",
+                                'tempo_estimado': '1-2 horas'
+                            }
+                        })
+                    else:
+                        recomendacoes.append({
+                            'parametro': f'{nome_display}',
+                            'status': '⚠️ TEMP. ALTA',
+                            'atual': f"{temp_atual:.0f} °C",
+                            'ideal': f"{temp_ideal:.0f} °C (faixa: {dados_top['min']:.0f}-{dados_top['max']:.0f})",
+                            'acao': f"REDUZA vazão de gás/oxigênio na {nome_display}",
+                            'detalhe': f"Baixar temperatura em {temp_atual - temp_ideal:.0f}°C",
+                            'prioridade': 'ALTA' if abs(temp_atual - temp_ideal) > 30 else 'MÉDIA',
+                            'setup_ajuste': {
+                                'tipo': 'temperatura',
+                                'acao': 'diminuir',
+                                'boqueta': nome_display,
+                                'temp_delta': round(temp_atual - temp_ideal, 1),
+                                'sugestao': f"Reduzir vazão de gás na {nome_display}",
+                                'tempo_estimado': '1-2 horas'
+                            }
+                        })
+        
+        # ===== 8. GERAR RELATÓRIO DE DESEMPENHO =====
+        desempenho = {
+            'tiragem_media_atual': analise_atual.get('tiragem_atual', 0),
+            'tiragem_media_top': padrao['tiragem_media_top'],
+            'diferenca_tiragem': analise_atual.get('tiragem_atual', 0) - padrao['tiragem_media_top'],
+            'percentual_capacidade': (analise_atual.get('tiragem_atual', 0) / padrao['tiragem_media_top'] * 100) if padrao['tiragem_media_top'] > 0 else 0,
+            'nivel_media_atual': analise_atual.get('nivel_atual', 0),
+            'nivel_media_top': padrao['nivel_ideal'],
+            'relacao_o2_gas_atual': analise_atual.get('relacao_o2_gas_atual', 0),
+            'relacao_o2_gas_top': padrao['relacao_o2_gas_ideal'],
+            'eficiencia_setup': eficiencia_setup,
+            'n_registros_analisados': analise_atual['n_registros_analisados'],
+            'n_registros_top': padrao['n_registros_top']
+        }
+        
+        return {
+            'padrao_excelencia': padrao,
+            'analise_atual': analise_atual,
+            'recomendacoes': recomendacoes,
+            'desempenho': desempenho
+        }
+
+    # ======================================================================
+    # RENDERIZAR ANÁLISE PREDITIVA
+    # ======================================================================
+    
+    def renderizar_analise_preditiva(df: pd.DataFrame):
+        """Renderiza o painel de análise preditiva e recomendações de setup"""
+        
+        st.markdown("---")
+        st.markdown("### 🔮 ANÁLISE PREDITIVA E RECOMENDAÇÕES DE SETUP")
+        
+        if df.empty:
+            st.warning("⚠️ Dados insuficientes para análise preditiva.")
+            return
+        
+        if len(df) < 10:
+            st.info(f"📊 São necessários pelo menos 10 registros para análise preditiva. Atualmente: {len(df)} registros. Use os filtros para ampliar o período.")
+            return
+        
+        with st.spinner("🔄 Analisando dados históricos e gerando recomendações..."):
+            analise = analisar_padrao_excelencia(df)
+        
+        if "erro" in analise:
+            st.warning(f"⚠️ {analise['erro']}")
+            return
+        
+        # ===== 1. RESUMO DE DESEMPENHO =====
+        desempenho = analise['desempenho']
+        
+        st.markdown("#### 📊 Resumo do Desempenho Atual (Últimos 10 Registros)")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            perc_capacidade = desempenho['percentual_capacidade']
+            cor = "🟢" if perc_capacidade >= 90 else "🟡" if perc_capacidade >= 75 else "🔴"
+            st.metric(
+                f"{cor} Capacidade Utilizada",
+                f"{perc_capacidade:.1f}%",
+                delta=f"{desempenho['diferenca_tiragem']:+.1f} kg/h"
+            )
+        with col2:
+            st.metric(
+                "🎯 Tiragem Atual",
+                f"{desempenho['tiragem_media_atual']:.1f} kg/h",
+                delta=f"meta: {desempenho['tiragem_media_top']:.1f} kg/h"
+            )
+        with col3:
+            st.metric(
+                "📈 Nível Médio",
+                f"{desempenho['nivel_media_atual']:.1f} cm",
+                delta=f"ideal: {desempenho['nivel_media_top']:.1f} cm"
+            )
+        with col4:
+            st.metric(
+                "⚖️ Relação O₂/Gás",
+                f"{desempenho['relacao_o2_gas_atual']:.2f}",
+                delta=f"ideal: {desempenho['relacao_o2_gas_top']:.2f}"
+            )
+        
+        # Adicionar eficiência do setup
+        st.caption(f"📊 Eficiência do Setup: {desempenho['eficiencia_setup']:.1f}% | Análise baseada nos {desempenho['n_registros_analisados']} últimos registros | Padrão: {desempenho['n_registros_top']} melhores produções")
+        
+        st.markdown("---")
+        
+        # ===== 2. RECOMENDAÇÕES DE SETUP =====
+        recomendacoes = analise['recomendacoes']
+        
+        if recomendacoes:
+            st.markdown("#### 🛠️ Recomendações de Setup e Ajustes")
+            st.caption("Ajustes sugeridos baseados nos 10 últimos registros para aproximar do padrão de excelência")
+            
+            recomendacoes_alta = [r for r in recomendacoes if r['prioridade'] == 'ALTA']
+            recomendacoes_media = [r for r in recomendacoes if r['prioridade'] == 'MÉDIA']
+            
+            if recomendacoes_alta:
+                st.markdown("##### 🔴 Prioridade Alta (Ação Imediata)")
+                for rec in recomendacoes_alta:
+                    if 'setup_ajuste' in rec:
+                        setup = rec['setup_ajuste']
+                        if 'voltas_sugerido' in setup:
+                            seta_voltas = "⬆️" if setup['voltas_delta'] > 0 else "⬇️" if setup['voltas_delta'] < 0 else "➡️"
+                            seta_ciclo = "⬆️" if setup['ciclo_delta'] > 0 else "⬇️" if setup['ciclo_delta'] < 0 else "➡️"
+                            
+                            st.markdown(f"""
+                            <div style="background: #fff5f5; border-left: 4px solid #E81123; padding: 15px 18px; margin: 10px 0; border-radius: 8px;">
+                                <div style="display: flex; justify-content: space-between; align-items: center;">
+                                    <div>
+                                        <strong style="color: #E81123; font-size: 15px;">🔧 {rec['parametro']}</strong>
+                                        <span style="margin-left: 10px; font-size: 13px; color: #E81123;">{rec['status']}</span>
+                                    </div>
+                                    <span style="background: #E81123; color: white; padding: 2px 14px; border-radius: 12px; font-size: 11px; font-weight: bold;">ALTA</span>
+                                </div>
+                                <div style="margin-top: 8px; font-size: 13px;">
+                                    <span style="color: #666;">Atual:</span> <strong>{rec['atual']}</strong>
+                                    <span style="color: #666; margin-left: 20px;">Ideal:</span> <strong>{rec['ideal']}</strong>
+                                </div>
+                                <div style="margin-top: 8px; font-size: 13px; background: #e8f0fe; padding: 8px 12px; border-radius: 6px;">
+                                    <strong>🎯 Ação de Setup:</strong><br>
+                                    <span style="font-size: 14px; color: #0078D4;">{rec['acao']}</span>
+                                </div>
+                                <div style="margin-top: 6px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; font-size: 12px;">
+                                    <div style="background: #f0f0f0; padding: 6px 10px; border-radius: 4px; text-align: center;">
+                                        <strong>Voltas</strong><br>
+                                        <span style="color: #666;">Atual: {setup['voltas_atual']:.1f}</span><br>
+                                        <span style="color: #0078D4;">{seta_voltas} Sugerido: {setup['voltas_sugerido']:.1f}</span>
+                                    </div>
+                                    <div style="background: #f0f0f0; padding: 6px 10px; border-radius: 4px; text-align: center;">
+                                        <strong>Ciclo</strong><br>
+                                        <span style="color: #666;">Atual: {setup['ciclo_atual']:.1f}s</span><br>
+                                        <span style="color: #0078D4;">{seta_ciclo} Sugerido: {setup['ciclo_sugerido']:.1f}s</span>
+                                    </div>
+                                    <div style="background: #f0f0f0; padding: 6px 10px; border-radius: 4px; text-align: center;">
+                                        <strong>Tiragem</strong><br>
+                                        <span style="color: #666;">Atual: {setup['tiragem_atual']:.1f}</span><br>
+                                        <span style="color: #0078D4;">Meta: {setup['tiragem_meta']:.1f}</span>
+                                    </div>
+                                </div>
+                                <div style="margin-top: 6px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 12px;">
+                                    <div style="background: #e8f5e9; padding: 4px 10px; border-radius: 4px;">
+                                        <strong>📊 Eficiência do Setup:</strong> {setup.get('eficiencia_setup', 0):.1f}%
+                                    </div>
+                                    <div style="background: #fff8e7; padding: 4px 10px; border-radius: 4px;">
+                                        <span>⏰ <strong>Tempo estimado:</strong> {setup['tempo_estimado']}</span>
+                                    </div>
+                                </div>
+                                <div style="margin-top: 4px; font-size: 12px; color: #666;">
+                                    📝 {rec['detalhe']}
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                        else:
+                            st.markdown(f"""
+                            <div style="background: #fff5f5; border-left: 4px solid #E81123; padding: 12px 16px; margin: 8px 0; border-radius: 6px;">
+                                <div style="display: flex; justify-content: space-between; align-items: center;">
+                                    <div>
+                                        <strong style="color: #E81123;">{rec['parametro']}</strong>
+                                        <span style="margin-left: 10px; font-size: 13px;">{rec['status']}</span>
+                                    </div>
+                                    <span style="background: #E81123; color: white; padding: 2px 12px; border-radius: 12px; font-size: 11px; font-weight: bold;">ALTA</span>
+                                </div>
+                                <div style="margin-top: 6px; font-size: 13px;">
+                                    <span style="color: #666;">Atual:</span> <strong>{rec['atual']}</strong>
+                                    <span style="color: #666; margin-left: 15px;">Ideal:</span> <strong>{rec['ideal']}</strong>
+                                </div>
+                                <div style="margin-top: 4px; font-size: 13px; color: #0078D4;">
+                                    <strong>💡 Ação:</strong> {rec['acao']}
+                                </div>
+                                <div style="margin-top: 2px; font-size: 12px; color: #666;">
+                                    {rec['detalhe']}
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                    else:
+                        st.markdown(f"""
+                        <div style="background: #fff5f5; border-left: 4px solid #E81123; padding: 12px 16px; margin: 8px 0; border-radius: 6px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <div>
+                                    <strong style="color: #E81123;">{rec['parametro']}</strong>
+                                    <span style="margin-left: 10px; font-size: 13px;">{rec['status']}</span>
+                                </div>
+                                <span style="background: #E81123; color: white; padding: 2px 12px; border-radius: 12px; font-size: 11px; font-weight: bold;">ALTA</span>
+                            </div>
+                            <div style="margin-top: 6px; font-size: 13px;">
+                                <span style="color: #666;">Atual:</span> <strong>{rec['atual']}</strong>
+                                <span style="color: #666; margin-left: 15px;">Ideal:</span> <strong>{rec['ideal']}</strong>
+                            </div>
+                            <div style="margin-top: 4px; font-size: 13px; color: #0078D4;">
+                                <strong>💡 Ação:</strong> {rec['acao']}
+                            </div>
+                            <div style="margin-top: 2px; font-size: 12px; color: #666;">
+                                {rec['detalhe']}
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+            
+            if recomendacoes_media:
+                st.markdown("##### 🟡 Prioridade Média (Ajuste Progressivo)")
+                for rec in recomendacoes_media:
+                    if 'setup_ajuste' in rec:
+                        setup = rec['setup_ajuste']
+                        if 'voltas_sugerido' in setup:
+                            seta_voltas = "⬆️" if setup['voltas_delta'] > 0 else "⬇️" if setup['voltas_delta'] < 0 else "➡️"
+                            seta_ciclo = "⬆️" if setup['ciclo_delta'] > 0 else "⬇️" if setup['ciclo_delta'] < 0 else "➡️"
+                            
+                            st.markdown(f"""
+                            <div style="background: #fffdf5; border-left: 4px solid #FFB900; padding: 15px 18px; margin: 10px 0; border-radius: 8px;">
+                                <div style="display: flex; justify-content: space-between; align-items: center;">
+                                    <div>
+                                        <strong style="color: #E86C2C; font-size: 15px;">🔧 {rec['parametro']}</strong>
+                                        <span style="margin-left: 10px; font-size: 13px; color: #E86C2C;">{rec['status']}</span>
+                                    </div>
+                                    <span style="background: #FFB900; color: #333; padding: 2px 14px; border-radius: 12px; font-size: 11px; font-weight: bold;">MÉDIA</span>
+                                </div>
+                                <div style="margin-top: 8px; font-size: 13px;">
+                                    <span style="color: #666;">Atual:</span> <strong>{rec['atual']}</strong>
+                                    <span style="color: #666; margin-left: 20px;">Ideal:</span> <strong>{rec['ideal']}</strong>
+                                </div>
+                                <div style="margin-top: 8px; font-size: 13px; background: #e8f0fe; padding: 8px 12px; border-radius: 6px;">
+                                    <strong>🎯 Ação de Setup:</strong><br>
+                                    <span style="font-size: 14px; color: #0078D4;">{rec['acao']}</span>
+                                </div>
+                                <div style="margin-top: 6px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; font-size: 12px;">
+                                    <div style="background: #f0f0f0; padding: 6px 10px; border-radius: 4px; text-align: center;">
+                                        <strong>Voltas</strong><br>
+                                        <span style="color: #666;">Atual: {setup['voltas_atual']:.1f}</span><br>
+                                        <span style="color: #0078D4;">{seta_voltas} Sugerido: {setup['voltas_sugerido']:.1f}</span>
+                                    </div>
+                                    <div style="background: #f0f0f0; padding: 6px 10px; border-radius: 4px; text-align: center;">
+                                        <strong>Ciclo</strong><br>
+                                        <span style="color: #666;">Atual: {setup['ciclo_atual']:.1f}s</span><br>
+                                        <span style="color: #0078D4;">{seta_ciclo} Sugerido: {setup['ciclo_sugerido']:.1f}s</span>
+                                    </div>
+                                    <div style="background: #f0f0f0; padding: 6px 10px; border-radius: 4px; text-align: center;">
+                                        <strong>Tiragem</strong><br>
+                                        <span style="color: #666;">Atual: {setup['tiragem_atual']:.1f}</span><br>
+                                        <span style="color: #0078D4;">Meta: {setup['tiragem_meta']:.1f}</span>
+                                    </div>
+                                </div>
+                                <div style="margin-top: 6px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 12px;">
+                                    <div style="background: #e8f5e9; padding: 4px 10px; border-radius: 4px;">
+                                        <strong>📊 Eficiência do Setup:</strong> {setup.get('eficiencia_setup', 0):.1f}%
+                                    </div>
+                                    <div style="background: #fff8e7; padding: 4px 10px; border-radius: 4px;">
+                                        <span>⏰ <strong>Tempo estimado:</strong> {setup['tempo_estimado']}</span>
+                                    </div>
+                                </div>
+                                <div style="margin-top: 4px; font-size: 12px; color: #666;">
+                                    📝 {rec['detalhe']}
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                        else:
+                            st.markdown(f"""
+                            <div style="background: #fffdf5; border-left: 4px solid #FFB900; padding: 12px 16px; margin: 8px 0; border-radius: 6px;">
+                                <div style="display: flex; justify-content: space-between; align-items: center;">
+                                    <div>
+                                        <strong style="color: #E86C2C;">{rec['parametro']}</strong>
+                                        <span style="margin-left: 10px; font-size: 13px;">{rec['status']}</span>
+                                    </div>
+                                    <span style="background: #FFB900; color: #333; padding: 2px 12px; border-radius: 12px; font-size: 11px; font-weight: bold;">MÉDIA</span>
+                                </div>
+                                <div style="margin-top: 6px; font-size: 13px;">
+                                    <span style="color: #666;">Atual:</span> <strong>{rec['atual']}</strong>
+                                    <span style="color: #666; margin-left: 15px;">Ideal:</span> <strong>{rec['ideal']}</strong>
+                                </div>
+                                <div style="margin-top: 4px; font-size: 13px; color: #0078D4;">
+                                    <strong>💡 Ação:</strong> {rec['acao']}
+                                </div>
+                                <div style="margin-top: 2px; font-size: 12px; color: #666;">
+                                    {rec['detalhe']}
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
+            
+            col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
+            with col_btn2:
+                if st.button("📥 Baixar Relatório de Recomendações (PDF)", use_container_width=True, type="primary"):
+                    gerar_pdf_recomendacoes(analise)
+        else:
+            st.success("✅ **Parabéns!** Todos os parâmetros estão dentro do padrão de excelência.")
+            st.markdown("""
+            <div style="background: #d4edda; border-left: 4px solid #28a745; padding: 15px 20px; border-radius: 8px; margin: 10px 0;">
+                <strong>🎯 Processo Estável</strong><br>
+                O forno está operando dentro dos parâmetros ideais. Continue monitorando para manter a estabilidade.
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # ===== 3. TABELA DE PARÂMETROS IDEAL X ATUAL =====
+        with st.expander("📋 Comparativo Detalhado: Ideal vs Atual (Últimos 10 Registros)", expanded=False):
+            padrao = analise['padrao_excelencia']
+            atual = analise['analise_atual']
+            
+            dados_comparativo = []
+            
+            dados_comparativo.append({
+                'Parâmetro': 'Nível do Vidro',
+                'Ideal (Média)': f"{padrao['nivel_ideal']:.1f} cm",
+                'Ideal (Faixa)': f"{padrao['nivel_min']:.1f} - {padrao['nivel_max']:.1f} cm",
+                'Atual (Média)': f"{atual['nivel_atual']:.1f} cm",
+                'Status': '✅ OK' if abs(atual['nivel_atual'] - padrao['nivel_ideal']) <= 2 else '⚠️ Ajustar'
+            })
+            
+            dados_comparativo.append({
+                'Parâmetro': 'Ciclo (s)',
+                'Ideal (Média)': f"{padrao['ciclo_ideal']:.1f} s",
+                'Ideal (Faixa)': f"{padrao['ciclo_min']:.1f} - {padrao['ciclo_max']:.1f} s",
+                'Atual (Média)': f"{atual['ciclo_atual']:.1f} s",
+                'Status': '✅ OK' if abs(atual['ciclo_atual'] - padrao['ciclo_ideal']) <= 2 else '⚠️ Ajustar'
+            })
+            
+            dados_comparativo.append({
+                'Parâmetro': 'Voltas',
+                'Ideal (Média)': f"{padrao['voltas_ideal']:.1f}",
+                'Ideal (Faixa)': f"{padrao['voltas_min']:.1f} - {padrao['voltas_max']:.1f}",
+                'Atual (Média)': f"{atual['voltas_atual']:.1f}",
+                'Status': '✅ OK' if abs(atual['voltas_atual'] - padrao['voltas_ideal']) <= 2 else '⚠️ Ajustar'
+            })
+            
+            dados_comparativo.append({
+                'Parâmetro': 'Relação Voltas/Ciclo',
+                'Ideal (Média)': f"{padrao['relacao_voltas_ciclo_ideal']:.2f}",
+                'Ideal (Faixa)': f"{padrao['voltas_min']/padrao['ciclo_max']:.2f} - {padrao['voltas_max']/padrao['ciclo_min']:.2f}",
+                'Atual (Média)': f"{atual['relacao_voltas_ciclo_atual']:.2f}",
+                'Status': '✅ OK' if abs(atual['relacao_voltas_ciclo_atual'] - padrao['relacao_voltas_ciclo_ideal']) <= 0.1 else '⚠️ Ajustar'
+            })
+            
+            dados_comparativo.append({
+                'Parâmetro': 'Tiragem (kg/h)',
+                'Ideal (Média)': f"{padrao['tiragem_media_top']:.1f} kg/h",
+                'Ideal (Faixa)': f"{padrao['tiragem_min_top']:.1f} - {padrao['tiragem_max_top']:.1f} kg/h",
+                'Atual (Média)': f"{atual['tiragem_atual']:.1f} kg/h",
+                'Status': '✅ OK' if atual['tiragem_atual'] >= padrao['tiragem_media_top'] * 0.85 else '⚠️ Ajustar'
+            })
+            
+            dados_comparativo.append({
+                'Parâmetro': 'Relação O₂/Gás',
+                'Ideal (Média)': f"{padrao['relacao_o2_gas_ideal']:.2f}",
+                'Ideal (Faixa)': f"{padrao['relacao_o2_gas_min']:.2f} - {padrao['relacao_o2_gas_max']:.2f}",
+                'Atual (Média)': f"{atual['relacao_o2_gas_atual']:.2f}",
+                'Status': '✅ OK' if abs(atual['relacao_o2_gas_atual'] - padrao['relacao_o2_gas_ideal']) <= 0.15 else '⚠️ Ajustar'
+            })
+            
+            for boqueta in ['BOQUETA_1', 'BOQUETA_2', 'BOQUETA_3', 'BOQUETA_4', 'BOQUETA_5']:
+                if boqueta in padrao['boquetas'] and boqueta in atual['boquetas']:
+                    nome_display = boqueta.replace('_', '-')
+                    dados_top = padrao['boquetas'][boqueta]
+                    dados_atual = atual['boquetas'][boqueta]
+                    
+                    dados_comparativo.append({
+                        'Parâmetro': f'{nome_display} (Temp.)',
+                        'Ideal (Média)': f"{dados_top['media']:.0f} °C",
+                        'Ideal (Faixa)': f"{dados_top['min']:.0f} - {dados_top['max']:.0f} °C",
+                        'Atual (Média)': f"{dados_atual['media']:.0f} °C",
+                        'Status': '✅ OK' if abs(dados_atual['media'] - dados_top['media']) <= 15 else '⚠️ Ajustar'
+                    })
+            
+            df_comparativo = pd.DataFrame(dados_comparativo)
+            
+            def style_comparativo(row):
+                if '✅' in row['Status']:
+                    return ['background-color: #d4edda; color: #155724;'] * len(row)
+                else:
+                    return ['background-color: #fff3cd; color: #856404;'] * len(row)
+            
+            styled_df = df_comparativo.style.apply(style_comparativo, axis=1)
+            st.dataframe(styled_df, use_container_width=True, hide_index=True, height=400)
+
+    # ======================================================================
+    # GERAR PDF DAS RECOMENDAÇÕES
+    # ======================================================================
+    
+    def gerar_pdf_recomendacoes(analise: Dict):
+        try:
+            from reportlab.lib.pagesizes import A4
+            from reportlab.lib import colors
+            from reportlab.lib.units import cm
+            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            
+            buffer = io.BytesIO()
+            doc = SimpleDocTemplate(
+                buffer,
+                pagesize=A4,
+                topMargin=2*cm,
+                bottomMargin=2*cm,
+                leftMargin=2*cm,
+                rightMargin=2*cm
+            )
+            
+            story = []
+            styles = getSampleStyleSheet()
+            
+            style_title = ParagraphStyle('Title', parent=styles['Heading1'], fontSize=16, alignment=1, spaceAfter=12)
+            story.append(Paragraph("<b>RELATÓRIO DE RECOMENDAÇÕES - FORNO DE FUSÃO</b>", style_title))
+            story.append(Spacer(1, 0.5*cm))
+            story.append(Paragraph(f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}", styles['Normal']))
+            story.append(Paragraph(f"Baseado nos últimos {analise['desempenho']['n_registros_analisados']} registros", styles['Normal']))
+            story.append(Spacer(1, 0.5*cm))
+            
+            desempenho = analise['desempenho']
+            story.append(Paragraph("<b>📊 RESUMO DE DESEMPENHO</b>", styles['Heading2']))
+            
+            dados_resumo = [
+                ['Métrica', 'Valor Atual', 'Meta/Ideal'],
+                ['Tiragem (kg/h)', f"{desempenho['tiragem_media_atual']:.1f}", f"{desempenho['tiragem_media_top']:.1f}"],
+                ['Capacidade Utilizada', f"{desempenho['percentual_capacidade']:.1f}%", "> 85%"],
+                ['Eficiência do Setup', f"{desempenho['eficiencia_setup']:.1f}%", "> 90%"],
+                ['Nível (cm)', f"{desempenho['nivel_media_atual']:.1f}", f"{desempenho['nivel_media_top']:.1f}"],
+                ['Relação Voltas/Ciclo', f"{analise['analise_atual']['relacao_voltas_ciclo_atual']:.2f}", f"{analise['padrao_excelencia']['relacao_voltas_ciclo_ideal']:.2f}"],
+                ['Relação O₂/Gás', f"{desempenho['relacao_o2_gas_atual']:.2f}", f"{desempenho['relacao_o2_gas_top']:.2f}"],
+            ]
+            
+            tabela_resumo = Table(dados_resumo, colWidths=[5*cm, 3.5*cm, 4.5*cm])
+            tabela_resumo.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (-1,0), colors.grey),
+                ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+                ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+                ('GRID', (0,0), (-1,-1), 0.5, colors.black),
+                ('PADDING', (0,0), (-1,-1), 6),
+                ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ]))
+            story.append(tabela_resumo)
+            story.append(Spacer(1, 0.5*cm))
+            
+            recomendacoes = analise['recomendacoes']
+            if recomendacoes:
+                story.append(Paragraph("<b>🛠️ RECOMENDAÇÕES DE SETUP</b>", styles['Heading2']))
+                
+                for i, rec in enumerate(recomendacoes, 1):
+                    prioridade = rec['prioridade']
+                    emoji = "🔴" if prioridade == "ALTA" else "🟡"
+                    story.append(Paragraph(
+                        f"{emoji} <b>{rec['parametro']}</b> - {rec['status']}",
+                        ParagraphStyle(f'Rec_{i}', parent=styles['Normal'], spaceAfter=4)
+                    ))
+                    story.append(Paragraph(
+                        f"   Atual: {rec['atual']} | Ideal: {rec['ideal']}",
+                        styles['Normal']
+                    ))
+                    story.append(Paragraph(
+                        f"   💡 Ação: {rec['acao']}",
+                        ParagraphStyle(f'RecDet_{i}', parent=styles['Normal'], textColor=colors.blue)
+                    ))
+                    
+                    if 'setup_ajuste' in rec:
+                        setup = rec['setup_ajuste']
+                        if 'voltas_sugerido' in setup:
+                            story.append(Paragraph(
+                                f"   📊 Ajustes: Voltas {setup['voltas_atual']:.1f} → {setup['voltas_sugerido']:.1f} | "
+                                f"Ciclo {setup['ciclo_atual']:.1f}s → {setup['ciclo_sugerido']:.1f}s | "
+                                f"Eficiência: {setup.get('eficiencia_setup', 0):.1f}% | "
+                                f"⏰ {setup['tempo_estimado']}",
+                                ParagraphStyle(f'RecSetup_{i}', parent=styles['Normal'], fontSize=9, textColor=colors.grey)
+                            ))
+                    
+                    story.append(Paragraph(
+                        f"   {rec['detalhe']}",
+                        ParagraphStyle(f'RecDet2_{i}', parent=styles['Normal'], fontSize=9, textColor=colors.grey)
+                    ))
+                    story.append(Spacer(1, 0.2*cm))
+            else:
+                story.append(Paragraph("✅ Todos os parâmetros estão dentro do padrão de excelência.", styles['Normal']))
+            
+            story.append(Spacer(1, 1*cm))
+            story.append(Paragraph(
+                "Documento gerado automaticamente pelo Sistema TRS Dashboard - Luvidarte",
+                ParagraphStyle('Footer', parent=styles['Normal'], fontSize=8, alignment=1)
+            ))
+            
+            doc.build(story)
+            buffer.seek(0)
+            
+            st.download_button(
+                label="📥 Baixar PDF",
+                data=buffer.getvalue(),
+                file_name=f"recomendacoes_forno_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
+            
+        except Exception as e:
+            st.error(f"❌ Erro ao gerar PDF: {str(e)}")
+
+    # ======================================================================
+    # CARREGAR DADOS
+    # ======================================================================
+    with st.spinner("🔄 Carregando dados do Forno..."):
+        df = carregar_dados_enfornadeira()
+    
+    if df.empty:
+        st.warning("⚠️ Não foi possível carregar os dados do Forno.")
+        renderizar_formulario_lancamento()
+        st.stop()
+    
+    # ======================================================================
+    # FILTROS
+    # ======================================================================
+    st.markdown("### 🔍 Filtros")
+    
+    col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+    
+    with col_f1:
+        periodos = ['DIA', 'SEMANA', 'MÊS', 'PERSONALIZADO']
+        periodo = st.selectbox("📅 Período", periodos, key="enfornadeira_periodo_select")
+    
+    with col_f2:
+        if periodo == 'PERSONALIZADO':
+            data_ini = st.date_input("Data Inicial", key="enfornadeira_data_ini")
+        else:
+            data_ini = None
+    
+    with col_f3:
+        if periodo == 'PERSONALIZADO':
+            data_fim = st.date_input("Data Final", key="enfornadeira_data_fim")
+        else:
+            data_fim = None
+    
+    with col_f4:
+        turnos = ["(Todos)", "MANHÃ", "TARDE", "NOITE"]
+        turno_filtro = st.selectbox("🕐 Turno", turnos, key="enfornadeira_turno")
+    
+    df_filtrado = df.copy()
+    
+    if periodo == 'DIA':
+        data_ref = datetime.now().date()
+        df_filtrado = df_filtrado[df_filtrado['DATA'].dt.date == data_ref]
+    elif periodo == 'SEMANA':
+        data_ref = datetime.now().date()
+        inicio_semana = data_ref - timedelta(days=data_ref.weekday())
+        df_filtrado = df_filtrado[df_filtrado['DATA'].dt.date >= inicio_semana]
+    elif periodo == 'MÊS':
+        data_ref = datetime.now().date()
+        inicio_mes = data_ref.replace(day=1)
+        df_filtrado = df_filtrado[df_filtrado['DATA'].dt.date >= inicio_mes]
+    elif periodo == 'PERSONALIZADO' and data_ini and data_fim:
+        df_filtrado = df_filtrado[df_filtrado['DATA'].dt.date >= data_ini]
+        df_filtrado = df_filtrado[df_filtrado['DATA'].dt.date <= data_fim]
+    
+    if turno_filtro != "(Todos)" and 'TURNO' in df_filtrado.columns:
+        df_filtrado = df_filtrado[df_filtrado['TURNO'] == turno_filtro]
+    
+    if df_filtrado.empty:
+        st.warning("⚠️ Nenhum dado encontrado com os filtros selecionados.")
+        renderizar_formulario_lancamento()
+        st.stop()
+    
+    # ======================================================================
+    # CALCULAR INDICADORES
+    # ======================================================================
+    def calcular_indicadores(df: pd.DataFrame) -> Dict:
+        indicadores = {}
+        
+        if df.empty:
+            return indicadores
+        
+        if 'TIRAGEM_KG' in df.columns:
+            tiragem = df['TIRAGEM_KG']
+            indicadores['tiragem_media'] = tiragem.mean()
+            indicadores['tiragem_max'] = tiragem.max()
+            indicadores['tiragem_min'] = tiragem.min()
+            indicadores['tiragem_std'] = tiragem.std()
+            indicadores['tiragem_total'] = tiragem.sum()
+            horas = len(df)
+            indicadores['producao_diaria'] = tiragem.sum() / (horas / 24) if horas > 0 else 0
+        
+        if 'NIVEL' in df.columns:
+            nivel = df['NIVEL']
+            indicadores['nivel_atual'] = nivel.iloc[-1] if not nivel.empty else 0
+            indicadores['nivel_media'] = nivel.mean()
+            indicadores['nivel_max'] = nivel.max()
+            indicadores['nivel_min'] = nivel.min()
+            indicadores['nivel_osc'] = nivel.max() - nivel.min() if not nivel.empty else 0
+            indicadores['nivel_std'] = nivel.std()
+        
+        boquetas = ['BOQUETA_1', 'BOQUETA_2', 'BOQUETA_3', 'BOQUETA_4', 'BOQUETA_5']
+        boquetas_existentes = [b for b in boquetas if b in df.columns]
+        
+        if boquetas_existentes:
+            indicadores['temp_boquetas'] = {}
+            for b in boquetas_existentes:
+                valores = df[b]
+                valores_validos = valores[valores > 0]
+                if not valores_validos.empty:
+                    temp_min, temp_max = get_faixa_boqueta(b)
+                    indicadores['temp_boquetas'][b] = {
+                        'atual': valores_validos.iloc[-1] if not valores_validos.empty else 0,
+                        'media': valores_validos.mean() if not valores_validos.empty else 0,
+                        'max': valores_validos.max() if not valores_validos.empty else 0,
+                        'min': valores_validos.min() if not valores_validos.empty else 0,
+                        'std': valores_validos.std() if not valores_validos.empty else 0,
+                        'tem_dados': True,
+                        'count': len(valores_validos),
+                        'faixa_min': temp_min,
+                        'faixa_max': temp_max
+                    }
+                else:
+                    temp_min, temp_max = get_faixa_boqueta(b)
+                    indicadores['temp_boquetas'][b] = {
+                        'atual': 0, 'media': 0, 'max': 0, 'min': 0, 'std': 0, 
+                        'tem_dados': False, 'count': 0,
+                        'faixa_min': temp_min,
+                        'faixa_max': temp_max
+                    }
+            
+            df_temp = df[boquetas_existentes].replace(0, np.nan)
+            temp_medias = df_temp.mean(axis=1, skipna=True)
+            temp_medias_validas = temp_medias.dropna()
+            indicadores['temp_media_geral'] = temp_medias_validas.mean() if not temp_medias_validas.empty else 0
+            
+            ultima_linha = df_temp.iloc[-1] if not df_temp.empty else pd.Series()
+            ultima_linha_valida = ultima_linha.dropna()
+            if not ultima_linha_valida.empty:
+                indicadores['temp_diferenca_atual'] = ultima_linha_valida.max() - ultima_linha_valida.min()
+                indicadores['temp_media_atual'] = ultima_linha_valida.mean()
+            else:
+                indicadores['temp_diferenca_atual'] = 0
+                indicadores['temp_media_atual'] = 0
+            
+            diferencas = df_temp.max(axis=1, skipna=True) - df_temp.min(axis=1, skipna=True)
+            diferencas_validas = diferencas.dropna()
+            indicadores['temp_diferenca_media'] = diferencas_validas.mean() if not diferencas_validas.empty else 0
+        
+        if 'CICLO' in df.columns:
+            indicadores['ciclo_media'] = df['CICLO'].mean()
+            indicadores['ciclo_atual'] = df['CICLO'].iloc[-1] if not df.empty else 0
+        
+        if 'VOLTAS' in df.columns:
+            indicadores['voltas_media'] = df['VOLTAS'].mean()
+            indicadores['voltas_atual'] = df['VOLTAS'].iloc[-1] if not df.empty else 0
+        
+        if 'INDICE_ALIMENTACAO' in df.columns:
+            indicadores['indice_alimentacao_media'] = df['INDICE_ALIMENTACAO'].mean()
+        
+        if 'OXI_TOTAL' in df.columns:
+            indicadores['oxi_media'] = df['OXI_TOTAL'].mean()
+        
+        if 'GAS_TOTAL' in df.columns:
+            indicadores['gas_media'] = df['GAS_TOTAL'].mean()
+        
+        if 'ENERGIA_TOTAL' in df.columns:
+            indicadores['energia_media'] = df['ENERGIA_TOTAL'].mean()
+        
+        if 'RELACAO_O2_GAS' in df.columns:
+            relacao_validas = df['RELACAO_O2_GAS'].replace([np.inf, -np.inf], np.nan).dropna()
+            if not relacao_validas.empty:
+                indicadores['relacao_o2_gas_media'] = relacao_validas.mean()
+                indicadores['relacao_o2_gas_atual'] = relacao_validas.iloc[-1] if not relacao_validas.empty else 0
+        
+        if 'OXI_POR_TON' in df.columns:
+            indicadores['oxi_por_ton_media'] = df['OXI_POR_TON'].replace([np.inf, -np.inf], 0).mean()
+        
+        if 'GAS_POR_TON' in df.columns:
+            indicadores['gas_por_ton_media'] = df['GAS_POR_TON'].replace([np.inf, -np.inf], 0).mean()
+        
+        if 'ENERGIA_POR_TON' in df.columns:
+            indicadores['energia_por_ton_media'] = df['ENERGIA_POR_TON'].replace([np.inf, -np.inf], 0).mean()
+        
+        return indicadores
+    
+    def identificar_alarmes(df: pd.DataFrame, indicadores: Dict) -> List[Dict]:
+        alarmes = []
+        
+        if df.empty or not indicadores:
+            return alarmes
+        
+        if 'nivel_atual' in indicadores and indicadores['nivel_atual'] < ALARMES_CONFIG['nivel_min']:
+            alarmes.append({
+                'tipo': 'CRÍTICO',
+                'mensagem': f"🔴 NÍVEL ABAIXO DO IDEAL: {indicadores['nivel_atual']:.1f} cm (ideal: {ALARMES_CONFIG['nivel_min']}-{ALARMES_CONFIG['nivel_max']} cm)",
+                'cor': '#E81123'
+            })
+        
+        if 'nivel_atual' in indicadores and indicadores['nivel_atual'] > ALARMES_CONFIG['nivel_max']:
+            alarmes.append({
+                'tipo': 'ALERTA',
+                'mensagem': f"🟡 NÍVEL ACIMA DO IDEAL: {indicadores['nivel_atual']:.1f} cm (ideal: {ALARMES_CONFIG['nivel_min']}-{ALARMES_CONFIG['nivel_max']} cm)",
+                'cor': '#FFB900'
+            })
+        
+        boquetas_temp = indicadores.get('temp_boquetas', {})
+        for boqueta, dados_temp in boquetas_temp.items():
+            if dados_temp.get('tem_dados', False):
+                atual = dados_temp.get('atual', 0)
+                faixa_min = dados_temp.get('faixa_min', 0)
+                faixa_max = dados_temp.get('faixa_max', 0)
+                if atual > 0:
+                    nome_display = boqueta.replace('_', '-')
+                    if atual < faixa_min:
+                        alarmes.append({
+                            'tipo': 'CRÍTICO',
+                            'mensagem': f"🔴 {nome_display} ABAIXO: {atual:.0f} °C (ideal: {faixa_min}-{faixa_max} °C)",
+                            'cor': '#E81123'
+                        })
+                    elif atual > faixa_max:
+                        alarmes.append({
+                            'tipo': 'ALERTA',
+                            'mensagem': f"🟡 {nome_display} ACIMA: {atual:.0f} °C (ideal: {faixa_min}-{faixa_max} °C)",
+                            'cor': '#FFB900'
+                        })
+        
+        if 'temp_diferenca_atual' in indicadores:
+            diff = indicadores['temp_diferenca_atual']
+            if diff > 0 and diff > ALARMES_CONFIG['diferenca_temp_max']:
+                alarmes.append({
+                    'tipo': 'ALERTA',
+                    'mensagem': f"🟡 DIFERENÇA BOQUETAS: {diff:.0f}°C (máx: {ALARMES_CONFIG['diferenca_temp_max']}°C)",
+                    'cor': '#FFB900'
+                })
+        
+        if 'tiragem_media' in indicadores:
+            tiragem = indicadores['tiragem_media']
+            if tiragem < ALARMES_CONFIG['tiragem_meta']:
+                diff = ALARMES_CONFIG['tiragem_meta'] - tiragem
+                alarmes.append({
+                    'tipo': 'ALERTA',
+                    'mensagem': f"🟡 TIRAGEM ABAIXO: {tiragem:.1f} kg/h (máx: {ALARMES_CONFIG['tiragem_meta']} kg/h) - {diff:.1f} kg/h abaixo",
+                    'cor': '#FFB900'
+                })
+        
+        if 'relacao_o2_gas_atual' in indicadores:
+            rel = indicadores['relacao_o2_gas_atual']
+            if rel > 0:
+                if rel < ALARMES_CONFIG['relacao_o2_gas_min']:
+                    alarmes.append({
+                        'tipo': 'CRÍTICO',
+                        'mensagem': f"🔴 O₂/GÁS BAIXA: {rel:.2f} (ideal: 2.0 - faixa: 1.8-2.2)",
+                        'cor': '#E81123'
+                    })
+                elif rel > ALARMES_CONFIG['relacao_o2_gas_max']:
+                    alarmes.append({
+                        'tipo': 'ALERTA',
+                        'mensagem': f"🟡 O₂/GÁS ALTA: {rel:.2f} (ideal: 2.0 - faixa: 1.8-2.2)",
+                        'cor': '#FFB900'
+                    })
+        
+        return alarmes
+    
+    indicadores = calcular_indicadores(df_filtrado)
+    alarmes = identificar_alarmes(df_filtrado, indicadores)
+    
+    # ======================================================================
+    # HEADER E KPIS
+    # ======================================================================
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, {THEME['bg_card']} 0%, {THEME['bg_card2']} 100%); 
+                padding: 15px 20px; border-radius: 10px; 
+                border-left: 4px solid {THEME['accent_red']}; margin: 10px 0 20px 0;">
+        <span style="font-size: 18px; margin-right: 10px;">🔥</span>
+        <span style="font-family: 'Rajdhani', sans-serif; font-size: 16px; font-weight: bold; color: {THEME['accent_red']};">
+            CONTROLE DO FORNO - Fusão
+        </span>
+        <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: {THEME['text_muted']}; margin-left: 15px;">
+            {len(df_filtrado)} registros carregados
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("### 📊 Indicadores do Forno")
+    
+    col1, col2, col3, col4, col5 = st.columns(5)
+    
+    with col1:
+        valor = indicadores.get('tiragem_media', 0)
+        st.metric("📦 Tiragem Média", f"{valor:.1f} kg/h")
+    
+    with col2:
+        valor = indicadores.get('producao_diaria', 0)
+        st.metric("📊 Produção Diária", f"{valor:,.0f} kg")
+    
+    with col3:
+        valor = indicadores.get('nivel_atual', 0)
+        meta = f"ideal: {ALARMES_CONFIG['nivel_min']}-{ALARMES_CONFIG['nivel_max']} cm"
+        cor = "normal" if ALARMES_CONFIG['nivel_min'] <= valor <= ALARMES_CONFIG['nivel_max'] else "inverse"
+        st.metric("📈 Nível Atual", f"{valor:.1f} cm", delta=meta, delta_color=cor)
+    
+    with col4:
+        valor = indicadores.get('temp_media_geral', 0)
+        st.metric("🌡️ Temp. Média", f"{valor:.0f} °C")
+    
+    with col5:
+        valor = indicadores.get('nivel_osc', 0)
+        st.metric("📉 Oscilação Nível", f"{valor:.1f} cm")
+    
+    # ======================================================================
+    # TEMPERATURAS DAS BOQUETAS
+    # ======================================================================
+    st.markdown("#### 🌡️ Temperaturas por Boqueta")
+    
+    boquetas_cols = st.columns(5)
+    boquetas_temp = indicadores.get('temp_boquetas', {})
+    
+    for i, (col, nome_df) in enumerate(zip(boquetas_cols, NOMES_BOQUETAS_DF)):
+        with col:
+            nome_display = NOMES_BOQUETAS_DISPLAY[i]
+            if nome_df in boquetas_temp:
+                dados_temp = boquetas_temp[nome_df]
+                tem_dados = dados_temp.get('tem_dados', False)
+                faixa_min = dados_temp.get('faixa_min', 0)
+                faixa_max = dados_temp.get('faixa_max', 0)
+                
+                if tem_dados:
+                    atual = dados_temp.get('atual', 0)
+                    media = dados_temp.get('media', 0)
+                    count = dados_temp.get('count', 0)
+                    
+                    if atual >= faixa_min and atual <= faixa_max:
+                        st.metric(f"✅ {nome_display}", f"{atual:.0f} °C", delta=f"faixa: {faixa_min}-{faixa_max}°C ({count})")
+                    elif atual < faixa_min:
+                        st.metric(f"🔴 {nome_display}", f"{atual:.0f} °C", delta=f"↓ abaixo de {faixa_min}°C ({count})", delta_color="inverse")
+                    else:
+                        st.metric(f"🟡 {nome_display}", f"{atual:.0f} °C", delta=f"↑ acima de {faixa_max}°C ({count})", delta_color="inverse")
+                else:
+                    st.metric(f"📭 {nome_display}", "Sem dados", delta=f"faixa: {faixa_min}-{faixa_max}°C")
+            else:
+                st.metric(f"❌ {nome_display}", "Coluna não encontrada")
+    
+    st.markdown("---")
+    
+    # ======================================================================
+    # ALARMES
+    # ======================================================================
+    if alarmes:
+        st.markdown("### 🚨 Alarmes")
+        for alarme in alarmes:
+            cor = alarme.get('cor', '#E81123')
+            st.markdown(f"""
+            <div style="background: {cor}10; padding: 10px 15px; border-radius: 8px; 
+                        border-left: 4px solid {cor}; margin: 5px 0;">
+                <span style="font-weight: bold; color: {cor};">{alarme['tipo']}</span>
+                <span style="color: {THEME['text_primary']};">{alarme['mensagem']}</span>
+            </div>
+            """, unsafe_allow_html=True)
+        st.markdown("---")
+    
+    # ======================================================================
+    # GRÁFICOS
+    # ======================================================================
+    st.markdown("### 📈 Gráficos Analíticos")
+    
+    def criar_grafico_linha(df: pd.DataFrame, coluna: str, titulo: str, cor: str, 
+                            meta_min: float = None, meta_max: float = None):
+        if df.empty or coluna not in df.columns:
+            return None
+        
+        df_plot = df.dropna(subset=[coluna])
+        if df_plot.empty:
+            return None
+        
+        fig = px.line(
+            df_plot,
+            x='DATETIME' if 'DATETIME' in df_plot.columns else df_plot.index,
+            y=coluna,
+            title=titulo,
+            labels={'x': 'Data/Hora', coluna: titulo},
+            color_discrete_sequence=[cor]
+        )
+        
+        if meta_min is not None and meta_max is not None:
+            fig.add_hrect(
+                y0=meta_min, y1=meta_max,
+                line_width=0,
+                fillcolor="green",
+                opacity=0.1,
+                annotation_text="Faixa Ideal",
+                annotation_position="top right"
+            )
+            fig.add_hline(y=meta_min, line_dash="dash", line_color="green", annotation_text=f"Mín: {meta_min}")
+            fig.add_hline(y=meta_max, line_dash="dash", line_color="green", annotation_text=f"Máx: {meta_max}")
+        
+        fig.update_layout(
+            height=300,
+            margin=dict(l=20, r=20, t=40, b=40),
+            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor='rgba(0,0,0,0)',
+            font=dict(size=11)
+        )
+        
+        fig.update_xaxes(showgrid=True, gridcolor='#e0e0e0')
+        fig.update_yaxes(showgrid=True, gridcolor='#e0e0e0')
+        
+        return fig
+    
+    def criar_grafico_linha_multiplas(df: pd.DataFrame, colunas: List[str], titulo: str, cores: List[str],
+                                       faixas: Dict = None):
+        if df.empty or not colunas:
+            return None
+        
+        colunas_existentes = [c for c in colunas if c in df.columns]
+        if not colunas_existentes:
+            return None
+        
+        df_plot = df.dropna(subset=colunas_existentes, how='all')
+        if df_plot.empty:
+            return None
+        
+        fig = px.line(
+            df_plot,
+            x='DATETIME' if 'DATETIME' in df_plot.columns else df_plot.index,
+            y=colunas_existentes,
+            title=titulo,
+            labels={'x': 'Data/Hora', 'value': 'Temperatura (°C)'},
+            color_discrete_sequence=cores[:len(colunas_existentes)]
+        )
+        
+        if faixas:
+            for i, coluna in enumerate(colunas_existentes):
+                if coluna in faixas:
+                    min_val, max_val = faixas[coluna]
+                    fig.add_hrect(
+                        y0=min_val, y1=max_val,
+                        line_width=1,
+                        line_color=cores[i % len(cores)],
+                        fillcolor=cores[i % len(cores)],
+                        opacity=0.1,
+                        annotation_text=f"{coluna.replace('_', '-')}: {min_val}-{max_val}°C",
+                        annotation_position="top left",
+                        annotation_font_size=8
+                    )
+        
+        fig.update_yaxes(range=[1150, 1350])
+        
+        fig.update_layout(
+            height=350,
+            margin=dict(l=20, r=20, t=40, b=40),
+            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor='rgba(0,0,0,0)',
+            font=dict(size=11),
+            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1)
+        )
+        
+        fig.update_xaxes(showgrid=True, gridcolor='#e0e0e0')
+        fig.update_yaxes(showgrid=True, gridcolor='#e0e0e0')
+        
+        return fig
+    
+    def criar_grafico_consumo_turno(df: pd.DataFrame):
+        if df.empty or 'TURNO' not in df.columns:
+            return None
+        
+        colunas_consumo = []
+        if 'OXI_TOTAL' in df.columns:
+            colunas_consumo.append('OXI_TOTAL')
+        if 'GAS_TOTAL' in df.columns:
+            colunas_consumo.append('GAS_TOTAL')
+        if 'ENERGIA_TOTAL' in df.columns:
+            colunas_consumo.append('ENERGIA_TOTAL')
+        
+        if not colunas_consumo:
+            return None
+        
+        df_turno = df.groupby('TURNO')[colunas_consumo].mean().reset_index()
+        
+        rename_map = {
+            'OXI_TOTAL': 'Oxigênio (m³)',
+            'GAS_TOTAL': 'Gás (m³)',
+            'ENERGIA_TOTAL': 'Energia Total (m³)'
+        }
+        
+        for old, new in rename_map.items():
+            if old in df_turno.columns:
+                df_turno = df_turno.rename(columns={old: new})
+        
+        cores = ['#0078D4', '#E86C2C', '#6B46C1']
+        colunas_exibir = [c for c in rename_map.values() if c in df_turno.columns]
+        
+        if not colunas_exibir:
+            return None
+        
+        fig = px.bar(
+            df_turno,
+            x='TURNO',
+            y=colunas_exibir,
+            title='Consumo Médio por Turno',
+            barmode='group',
+            color_discrete_sequence=cores[:len(colunas_exibir)],
+            labels={'value': 'Consumo (m³)', 'TURNO': 'Turno'}
+        )
+        
+        fig.update_layout(
+            height=350,
+            margin=dict(l=20, r=20, t=40, b=40),
+            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor='rgba(0,0,0,0)',
+            font=dict(size=11),
+            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1)
+        )
+        
+        fig.update_xaxes(showgrid=True, gridcolor='#e0e0e0')
+        fig.update_yaxes(showgrid=True, gridcolor='#e0e0e0')
+        
+        return fig
+    
+    # ======================================================================
+    # EXIBIR GRÁFICOS
+    # ======================================================================
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        fig = criar_grafico_linha(
+            df_filtrado, 'NIVEL', 'Nível do Tanque (cm)', THEME['accent_cyan'],
+            meta_min=ALARMES_CONFIG['nivel_min'], meta_max=ALARMES_CONFIG['nivel_max']
+        )
+        if fig:
+            st.plotly_chart(fig, use_container_width=True, key="grafico_nivel")
+        else:
+            st.info("📭 Dados de Nível insuficientes")
+    
+    with col2:
+        fig = criar_grafico_linha(
+            df_filtrado, 'TIRAGEM_KG', 'Tiragem (kg/h)', THEME['accent_lime'],
+            meta_min=0, meta_max=ALARMES_CONFIG['tiragem_meta']
+        )
+        if fig:
+            st.plotly_chart(fig, use_container_width=True, key="grafico_tiragem")
+        else:
+            st.info("📭 Dados de Tiragem insuficientes")
+    
+    st.markdown("#### 🌡️ Evolução das Temperaturas por Boqueta")
+    
+    boquetas_graf = ['BOQUETA_1', 'BOQUETA_2', 'BOQUETA_3', 'BOQUETA_4', 'BOQUETA_5']
+    boquetas_graf_existentes = [b for b in boquetas_graf if b in df_filtrado.columns and df_filtrado[b].sum() > 0]
+    
+    if boquetas_graf_existentes:
+        faixas_graf = {}
+        for b in boquetas_graf_existentes:
+            min_val, max_val = get_faixa_boqueta(b)
+            faixas_graf[b] = (min_val, max_val)
+        
+        fig = criar_grafico_linha_multiplas(
+            df_filtrado, 
+            boquetas_graf_existentes, 
+            'Temperaturas das Boquetas', 
+            CORES_BOQUETAS[:len(boquetas_graf_existentes)],
+            faixas_graf
+        )
+        if fig:
+            st.plotly_chart(fig, use_container_width=True, key="grafico_boquetas")
+        else:
+            st.info("📭 Dados das Boquetas insuficientes")
+    else:
+        st.info("📭 Nenhuma boqueta com dados disponíveis para o gráfico")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if 'TEMP_MEDIA' in df_filtrado.columns:
+            fig = criar_grafico_linha(
+                df_filtrado, 'TEMP_MEDIA', 'Temperatura Média (°C)', THEME['accent_red']
+            )
+            if fig:
+                st.plotly_chart(fig, use_container_width=True, key="grafico_temp_media")
+            else:
+                st.info("📭 Dados de Temperatura Média insuficientes")
+        else:
+            st.info("📭 Dados de Temperatura Média não disponíveis")
+    
+    with col2:
+        if 'RELACAO_O2_GAS' in df_filtrado.columns:
+            fig = criar_grafico_linha(
+                df_filtrado, 'RELACAO_O2_GAS', 'Relação O₂/Gás (Ideal: 2.0)', THEME['accent_yellow'],
+                meta_min=ALARMES_CONFIG['relacao_o2_gas_min'], meta_max=ALARMES_CONFIG['relacao_o2_gas_max']
+            )
+            if fig:
+                valor_atual = df_filtrado['RELACAO_O2_GAS'].iloc[-1] if not df_filtrado.empty else 0
+                fig.add_annotation(
+                    x=0.5, y=1.08,
+                    xref="paper", yref="paper",
+                    text=f"⚖️ Ideal: O₂ = 2 × Gás (faixa: 1.8 a 2.2) | Atual: {valor_atual:.2f}",
+                    showarrow=False,
+                    font=dict(size=11, color="#333"),
+                    bgcolor="rgba(255,255,255,0.8)",
+                    bordercolor="#ccc",
+                    borderwidth=1,
+                    borderpad=4
+                )
+                st.plotly_chart(fig, use_container_width=True, key="grafico_relacao")
+            else:
+                st.info("📭 Dados de Relação insuficientes")
+        else:
+            st.info("📭 Dados de Relação O₂/Gás não disponíveis")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if 'OXI_TOTAL' in df_filtrado.columns:
+            fig = criar_grafico_linha(
+                df_filtrado, 'OXI_TOTAL', 'Consumo de Oxigênio (m³)', THEME['accent_purple']
+            )
+            if fig:
+                st.plotly_chart(fig, use_container_width=True, key="grafico_oxi")
+            else:
+                st.info("📭 Dados de Oxigênio insuficientes")
+        else:
+            st.info("📭 Dados de Oxigênio não disponíveis")
+    
+    with col2:
+        if 'GAS_TOTAL' in df_filtrado.columns:
+            fig = criar_grafico_linha(
+                df_filtrado, 'GAS_TOTAL', 'Consumo de Gás (m³)', THEME['accent_red']
+            )
+            if fig:
+                st.plotly_chart(fig, use_container_width=True, key="grafico_gas")
+            else:
+                st.info("📭 Dados de Gás insuficientes")
+        else:
+            st.info("📭 Dados de Gás não disponíveis")
+    
+    st.markdown("#### 📊 Consumo por Turno")
+    
+    fig_consumo_turno = criar_grafico_consumo_turno(df_filtrado)
+    if fig_consumo_turno:
+        st.plotly_chart(fig_consumo_turno, use_container_width=True, key="grafico_consumo_turno")
+    else:
+        st.info("📭 Dados insuficientes para gráfico de consumo por turno")
+    
+    # ======================================================================
+    # ANÁLISE PREDITIVA E RECOMENDAÇÕES (NOVO)
+    # ======================================================================
+    renderizar_analise_preditiva(df_filtrado)
+    
+    # ======================================================================
+    # FORMULÁRIO DE LANÇAMENTO
+    # ======================================================================
+    renderizar_formulario_lancamento()
+    
+    # ======================================================================
+    # TABELA DE DADOS
+    # ======================================================================
+    with st.expander("📋 Ver dados detalhados", expanded=False):
+        df_exibicao = df_filtrado.copy()
+        
+        colunas_exibir = ['DATA', 'HORA', 'TURNO', 'NIVEL', 
+                         'BOQUETA_1', 'BOQUETA_2', 'BOQUETA_3', 'BOQUETA_4', 'BOQUETA_5',
+                         'TEMP_MEDIA', 'TEMP_DIFERENCA', 'CICLO', 'VOLTAS', 'TIRAGEM_KG', 
+                         'OXI_1', 'GAS_1', 'OXI_2', 'GAS_2', 'OXI_TOTAL', 'GAS_TOTAL', 
+                         'ENERGIA_TOTAL', 'RELACAO_O2_GAS']
+        
+        colunas_existentes = [c for c in colunas_exibir if c in df_exibicao.columns]
+        df_exibicao = df_exibicao[colunas_existentes]
+        
+        if 'DATA' in df_exibicao.columns:
+            df_exibicao['DATA'] = pd.to_datetime(df_exibicao['DATA']).dt.strftime('%d/%m/%Y')
+        
+        rename_map = {
+            'DATA': 'Data', 'HORA': 'Hora', 'TURNO': 'Turno',
+            'NIVEL': 'Nível (cm)',
+            'BOQUETA_1': 'B1 (°C)', 'BOQUETA_2': 'B2 (°C)', 
+            'BOQUETA_3': 'B3 (°C)', 'BOQUETA_4': 'B4 (°C)', 'BOQUETA_5': 'B5 (°C)',
+            'TEMP_MEDIA': 'Temp. Média', 'TEMP_DIFERENCA': 'Diferença',
+            'CICLO': 'Ciclo (s)', 'VOLTAS': 'Voltas', 'TIRAGEM_KG': 'Tiragem (kg/h)',
+            'OXI_1': 'O₂-1', 'GAS_1': 'Gás-1', 'OXI_2': 'O₂-2', 'GAS_2': 'Gás-2',
+            'OXI_TOTAL': 'O₂ Total', 'GAS_TOTAL': 'Gás Total',
+            'ENERGIA_TOTAL': 'Energia Total', 'RELACAO_O2_GAS': 'Relação O₂/Gás'
+        }
+        
+        for old, new in rename_map.items():
+            if old in df_exibicao.columns:
+                df_exibicao = df_exibicao.rename(columns={old: new})
+        
+        for col in df_exibicao.columns:
+            if col not in ['Data', 'Hora', 'Turno']:
+                try:
+                    df_exibicao[col] = df_exibicao[col].apply(lambda x: f"{x:.1f}" if pd.notnull(x) else "-")
+                except:
+                    pass
+        
+        st.dataframe(df_exibicao, use_container_width=True, height=400)
+    
+    st.markdown(f"""
+    <div style="text-align:right;padding:16px 0 8px;
+        font-family:'JetBrains Mono',monospace;font-size:10px;
+        color:{THEME['text_muted']};letter-spacing:.1em;">
+        🔥 CONTROLE DO FORNO · {get_horario_brasilia()}
+    </div>
+    """, unsafe_allow_html=True)    
+# ==================================================================================================
+# ALMOXARIFADO - CONTROLE DE ESTOQUE COM SUPABASE (USANDO REQUESTS)
+# VERSÃO COMPLETA - PRIORIDADE ABSOLUTA SUPABASE
+# ==================================================================================================
+elif aba_selecionada == 'ALMOXARIFADO':
+    render_page_header("ALMOXARIFADO", 
+                       f"Controle de Estoque · Atualizado {get_horario_brasilia()}", 
+                       THEME['accent_cyan'])
+    
+    # ======================
+    # IMPORTAÇÕES
+    # ======================
+    import requests
+    import json
+    from datetime import datetime, date, time as dt_time
+    
+    # ======================
+    # CONFIGURAÇÃO
+    # ======================
+    ID_PLANILHA_ALMOXARIFADO = '1vbWzYuCXJOY1paZpQXSFomvN1Zj_xviK8UgR8Td4Tag'
+    ABA_BASE = 'BASE'
+    ABA_MOVIMENTACAO = 'MOVIMENTAÇÃO'
+    
+    SUPABASE_URL = "https://bfvrfttanbhkewrfvfdf.supabase.co"
+    SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJmdnJmdHRhbmJoa2V3cmZ2ZmRmIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3OTc1OTY4MywiZXhwIjoyMDk1MzM1NjgzfQ.SrCLv4E4Vz1DXk5hme0lrT5aanpEOaO9UajGfqCdHdA"
+    
+    SUPABASE_HEADERS = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json"
+    }
+    
+    # ======================
+    # FUNÇÕES DE CARREGAMENTO DO SUPABASE
+    # ======================
+    
+    @st.cache_data(ttl=300)
+    def carregar_produtos_supabase() -> List[Dict]:
+        """Carrega produtos do Supabase usando requests - FONTE PRINCIPAL"""
+        try:
+            print("🔄 Carregando produtos do Supabase via requests...")
+            
+            response = requests.get(
+                f"{SUPABASE_URL}/rest/v1/almoxarifado_base?select=*&order=produto.asc",
+                headers=SUPABASE_HEADERS,
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                dados = response.json()
+                if dados:
+                    produtos = []
+                    for item in dados:
+                        produtos.append({
+                            'id': item.get('produto_id', ''),
+                            'categoria': item.get('categoria', ''),
+                            'produto': item.get('produto', ''),
+                            'ca': float(item.get('ca', 0)),
+                            'base': float(item.get('base', 0)),
+                            'quantidade': float(item.get('quantidade', 0))
+                        })
+                    print(f"✅ {len(produtos)} produtos carregados do Supabase")
+                    return produtos
+                else:
+                    print("⚠️ Nenhum produto encontrado no Supabase")
+                    return []
+            else:
+                print(f"❌ Erro {response.status_code}: {response.text[:200]}")
+                return []
+                
+        except Exception as e:
+            print(f"❌ Erro ao carregar produtos: {e}")
+            return []
+    
+    @st.cache_data(ttl=300)
+    def carregar_movimentacoes_supabase() -> List[Dict]:
+        """Carrega movimentações do Supabase usando requests - FONTE PRINCIPAL"""
+        try:
+            print("🔄 Carregando movimentações do Supabase via requests...")
+            
+            response = requests.get(
+                f"{SUPABASE_URL}/rest/v1/almoxarifado_movimentacao?select=*&order=data.desc",
+                headers=SUPABASE_HEADERS,
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                dados = response.json()
+                if dados:
+                    movimentacoes = []
+                    for item in dados:
+                        data_val = item.get('data')
+                        if data_val and isinstance(data_val, str):
+                            try:
+                                data_val = datetime.strptime(data_val, '%Y-%m-%d')
+                            except:
+                                data_val = None
+                        
+                        movimentacoes.append({
+                            'id': item.get('mov_id', ''),
+                            'data': data_val,
+                            'produto': item.get('produto', ''),
+                            'categoria': item.get('categoria', ''),
+                            'colaborador': item.get('colaborador', ''),
+                            'quantidade': float(item.get('quantidade', 0)),
+                            'obs': item.get('obs', ''),
+                            'responsavel': item.get('responsavel', ''),
+                            'tipo': item.get('tipo', 'SAÍDA')
+                        })
+                    print(f"✅ {len(movimentacoes)} movimentações carregadas do Supabase")
+                    return movimentacoes
+                else:
+                    print("⚠️ Nenhuma movimentação encontrada no Supabase")
+                    return []
+            else:
+                print(f"❌ Erro {response.status_code}: {response.text[:200]}")
+                return []
+                
+        except Exception as e:
+            print(f"❌ Erro ao carregar movimentações: {e}")
+            return []
+    
+    # ======================
+    # FUNÇÃO PARA TESTAR CONEXÃO COM SUPABASE
+    # ======================
+    
+    def testar_supabase() -> tuple:
+        """Testa a conexão com o Supabase"""
+        try:
+            print("🔄 Testando conexão com Supabase...")
+            response = requests.get(
+                f"{SUPABASE_URL}/rest/v1/almoxarifado_base?select=count&limit=1",
+                headers=SUPABASE_HEADERS,
+                timeout=5
+            )
+            
+            if response.status_code == 200:
+                dados = response.json()
+                if dados:
+                    return True, f"✅ Conectado! {len(dados)} registros"
+                else:
+                    return True, "⚠️ Conectado, mas sem dados"
+            else:
+                return False, f"❌ Erro {response.status_code}"
+                
+        except Exception as e:
+            return False, f"❌ Erro: {str(e)}"
+    
+    # ======================
+    # FUNÇÕES DE SALVAR NO SUPABASE
+    # ======================
+    
+    def salvar_produto_supabase(produto_dict: Dict) -> tuple:
+        """Salva produto no Supabase usando requests"""
+        try:
+            data = {
+                'produto_id': produto_dict['id'],
+                'categoria': produto_dict['categoria'],
+                'produto': produto_dict['produto'],
+                'ca': produto_dict['ca'],
+                'base': produto_dict['base'],
+                'quantidade': produto_dict['quantidade']
+            }
+            
+            # Verificar se já existe
+            check = requests.get(
+                f"{SUPABASE_URL}/rest/v1/almoxarifado_base?produto_id=eq.{produto_dict['id']}",
+                headers=SUPABASE_HEADERS
+            )
+            
+            if check.status_code == 200 and check.json():
+                # Atualizar
+                response = requests.patch(
+                    f"{SUPABASE_URL}/rest/v1/almoxarifado_base?produto_id=eq.{produto_dict['id']}",
+                    json=data,
+                    headers=SUPABASE_HEADERS
+                )
+            else:
+                # Inserir
+                response = requests.post(
+                    f"{SUPABASE_URL}/rest/v1/almoxarifado_base",
+                    json=data,
+                    headers=SUPABASE_HEADERS
+                )
+            
+            if response.status_code in [200, 201, 204]:
+                st.cache_data.clear()
+                return True, f"✅ Produto salvo no Supabase!"
+            else:
+                return False, f"❌ Erro: {response.status_code} - {response.text[:100]}"
+                
+        except Exception as e:
+            return False, f"❌ Erro: {str(e)}"
+    
+    def salvar_movimentacao_supabase(mov_dict: Dict) -> tuple:
+        """Salva movimentação no Supabase usando requests"""
+        try:
+            data = {
+                'mov_id': mov_dict['id'],
+                'data': mov_dict['data'].isoformat() if mov_dict.get('data') else None,
+                'produto': mov_dict['produto'],
+                'categoria': mov_dict.get('categoria', ''),
+                'colaborador': mov_dict.get('colaborador', ''),
+                'quantidade': mov_dict['quantidade'],
+                'obs': mov_dict.get('obs', ''),
+                'responsavel': mov_dict.get('responsavel', ''),
+                'tipo': mov_dict['tipo']
+            }
+            
+            response = requests.post(
+                f"{SUPABASE_URL}/rest/v1/almoxarifado_movimentacao",
+                json=data,
+                headers=SUPABASE_HEADERS
+            )
+            
+            if response.status_code in [200, 201, 204]:
+                # Atualizar estoque
+                if mov_dict['tipo'] == 'ENTRADA':
+                    delta = mov_dict['quantidade']
+                elif mov_dict['tipo'] == 'SAÍDA':
+                    delta = -mov_dict['quantidade']
+                else:
+                    delta = mov_dict['quantidade']
+                
+                # Buscar produto atual
+                check = requests.get(
+                    f"{SUPABASE_URL}/rest/v1/almoxarifado_base?produto=eq.{mov_dict['produto']}",
+                    headers=SUPABASE_HEADERS
+                )
+                
+                if check.status_code == 200 and check.json():
+                    qtd_atual = float(check.json()[0].get('quantidade', 0))
+                    nova_qtd = qtd_atual + delta
+                    requests.patch(
+                        f"{SUPABASE_URL}/rest/v1/almoxarifado_base?produto=eq.{mov_dict['produto']}",
+                        json={'quantidade': nova_qtd},
+                        headers=SUPABASE_HEADERS
+                    )
+                
+                st.cache_data.clear()
+                return True, "✅ Movimentação salva no Supabase!"
+            else:
+                return False, f"❌ Erro: {response.status_code} - {response.text[:100]}"
+                
+        except Exception as e:
+            return False, f"❌ Erro: {str(e)}"
+    
+    def salvar_lote_movimentacoes_supabase(lista_mov: List[Dict]) -> tuple:
+        """Salva lote de movimentações no Supabase"""
+        sucessos = 0
+        erros = []
+        
+        for mov in lista_mov:
+            if not mov.get('id') or mov['id'].startswith('TEMP-'):
+                mov['id'] = gerar_id_movimentacao_supabase()
+            
+            sucesso, msg = salvar_movimentacao_supabase(mov)
+            if sucesso:
+                sucessos += 1
+            else:
+                erros.append(msg)
+        
+        if erros:
+            return False, f"⚠️ {sucessos} salvos, {len(erros)} erros: {', '.join(erros[:3])}..."
+        else:
+            return True, f"✅ {sucessos} movimentações salvas no Supabase!"
+    
+    def gerar_id_movimentacao_supabase() -> str:
+        """Gera ID para movimentação"""
+        try:
+            response = requests.get(
+                f"{SUPABASE_URL}/rest/v1/almoxarifado_movimentacao?select=mov_id&order=mov_id.desc&limit=1",
+                headers=SUPABASE_HEADERS
+            )
+            if response.status_code == 200 and response.json():
+                ultimo_id = response.json()[0].get('mov_id', '')
+                if ultimo_id and ultimo_id.startswith('MOV-'):
+                    try:
+                        num = int(ultimo_id.replace('MOV-', ''))
+                        return f"MOV-{num + 1:03d}"
+                    except:
+                        pass
+        except:
+            pass
+        return f"MOV-{datetime.now().strftime('%H%M%S')}"
+    
+    def excluir_produto_supabase(id_produto: str) -> tuple:
+        """Exclui produto do Supabase"""
+        try:
+            response = requests.delete(
+                f"{SUPABASE_URL}/rest/v1/almoxarifado_base?produto_id=eq.{id_produto}",
+                headers=SUPABASE_HEADERS
+            )
+            
+            if response.status_code in [200, 204]:
+                st.cache_data.clear()
+                return True, f"✅ Produto {id_produto} excluído com sucesso!"
+            else:
+                return False, f"❌ Erro: {response.status_code} - {response.text[:100]}"
+                
+        except Exception as e:
+            return False, f"❌ Erro: {str(e)}"
+    
+    # ======================
+    # FUNÇÕES DE CARREGAMENTO DO GOOGLE SHEETS (FALLBACK)
+    # ======================
+    
+    def carregar_produtos_google_sheets() -> List[Dict]:
+        """Carrega produtos do Google Sheets (APENAS FALLBACK)"""
+        produtos = []
+        try:
+            print("🔄 FALLBACK: Carregando do Google Sheets...")
+            client = get_gspread_client()
+            if client is None:
+                return []
+            
+            spreadsheet = client.open_by_key(ID_PLANILHA_ALMOXARIFADO)
+            sheet = spreadsheet.worksheet(ABA_BASE)
+            todos_dados = sheet.get_all_values()
+            
+            if len(todos_dados) < 2:
+                return []
+            
+            cabecalho = todos_dados[0]
+            
+            idx_id = 0
+            idx_categoria = 1
+            idx_produto = 2
+            idx_ca = 3
+            idx_base = 4
+            idx_quantidade = 5
+            
+            def parse_valor(val):
+                if not val or str(val).strip() == '':
+                    return 0.0
+                try:
+                    return float(str(val).replace(',', '.'))
+                except:
+                    return 0.0
+            
+            for row in todos_dados[1:]:
+                try:
+                    if len(row) <= max(idx_id, idx_produto):
+                        continue
+                    
+                    id_val = str(row[idx_id]).strip() if idx_id < len(row) and row[idx_id] else ""
+                    produto_val = str(row[idx_produto]).strip() if idx_produto < len(row) and row[idx_produto] else ""
+                    
+                    if not id_val or not produto_val:
+                        continue
+                    
+                    produtos.append({
+                        'id': id_val,
+                        'categoria': str(row[idx_categoria]).strip() if idx_categoria < len(row) and row[idx_categoria] else "",
+                        'produto': produto_val,
+                        'ca': parse_valor(row[idx_ca]) if idx_ca < len(row) else 0.0,
+                        'base': parse_valor(row[idx_base]) if idx_base < len(row) else 0.0,
+                        'quantidade': parse_valor(row[idx_quantidade]) if idx_quantidade < len(row) else 0.0
+                    })
+                except:
+                    continue
+            
+            print(f"✅ FALLBACK: {len(produtos)} produtos carregados do Google Sheets")
+            return produtos
+            
+        except Exception as e:
+            print(f"❌ FALLBACK: Erro: {e}")
+            return []
+    
+    def carregar_movimentacoes_google_sheets() -> List[Dict]:
+        """Carrega movimentações do Google Sheets (APENAS FALLBACK)"""
+        movimentacoes = []
+        try:
+            print("🔄 FALLBACK: Carregando movimentações do Google Sheets...")
+            client = get_gspread_client()
+            if client is None:
+                return []
+            
+            spreadsheet = client.open_by_key(ID_PLANILHA_ALMOXARIFADO)
+            sheet = spreadsheet.worksheet(ABA_MOVIMENTACAO)
+            todos_dados = sheet.get_all_values()
+            
+            if len(todos_dados) < 2:
+                return []
+            
+            cabecalho = todos_dados[0]
+            
+            idx_id = 0
+            idx_data = 1
+            idx_produto = 2
+            idx_categoria = 3
+            idx_colaborador = 4
+            idx_quantidade = 5
+            idx_obs = 6
+            idx_responsavel = 7
+            idx_tipo = 8
+            
+            def parse_data(val):
+                if not val:
+                    return None
+                try:
+                    val_str = str(val).strip()
+                    if '/' in val_str:
+                        partes = val_str.split('/')
+                        if len(partes) == 3:
+                            return datetime(int(partes[2]), int(partes[1]), int(partes[0]))
+                    return None
+                except:
+                    return None
+            
+            def parse_valor(val):
+                if not val or str(val).strip() == '':
+                    return 0.0
+                try:
+                    return float(str(val).replace(',', '.'))
+                except:
+                    return 0.0
+            
+            for row in todos_dados[1:]:
+                try:
+                    if len(row) <= max(idx_id, idx_produto):
+                        continue
+                    
+                    id_val = str(row[idx_id]).strip() if idx_id < len(row) and row[idx_id] else ""
+                    produto_val = str(row[idx_produto]).strip() if idx_produto < len(row) and row[idx_produto] else ""
+                    
+                    if not id_val or not produto_val:
+                        continue
+                    
+                    movimentacoes.append({
+                        'id': id_val,
+                        'data': parse_data(row[idx_data]) if idx_data < len(row) else None,
+                        'produto': produto_val,
+                        'categoria': str(row[idx_categoria]).strip() if idx_categoria < len(row) and row[idx_categoria] else "",
+                        'colaborador': str(row[idx_colaborador]).strip() if idx_colaborador < len(row) and row[idx_colaborador] else "",
+                        'quantidade': parse_valor(row[idx_quantidade]) if idx_quantidade < len(row) else 0.0,
+                        'obs': str(row[idx_obs]).strip() if idx_obs < len(row) and row[idx_obs] else "",
+                        'responsavel': str(row[idx_responsavel]).strip() if idx_responsavel < len(row) and row[idx_responsavel] else "",
+                        'tipo': str(row[idx_tipo]).strip().upper() if idx_tipo < len(row) and row[idx_tipo] else "SAÍDA"
+                    })
+                except:
+                    continue
+            
+            print(f"✅ FALLBACK: {len(movimentacoes)} movimentações carregadas")
+            return movimentacoes
+            
+        except Exception as e:
+            print(f"❌ FALLBACK: Erro: {e}")
+            return []
+    
+    # ======================
+    # FUNÇÕES DE RELATÓRIOS
+    # ======================
+    
+    def gerar_relatorio_almoxarifado(produtos_dict: List[Dict], movimentacoes_dict: List[Dict]) -> str:
+        """Gera relatório HTML do almoxarifado"""
+        data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        
+        total_produtos = len(produtos_dict)
+        total_quantidade = sum(p.get('quantidade', 0) for p in produtos_dict)
+        total_mov = len(movimentacoes_dict)
+        total_qtd_mov = sum(m.get('quantidade', 0) for m in movimentacoes_dict)
+        
+        categorias = {}
+        for p in produtos_dict:
+            cat = p.get('categoria', 'Sem categoria')
+            if cat not in categorias:
+                categorias[cat] = 0
+            categorias[cat] += p.get('quantidade', 0)
+        
+        estoque_baixo = [p for p in produtos_dict if 0 < p.get('quantidade', 0) < 5]
+        estoque_zero = [p for p in produtos_dict if p.get('quantidade', 0) <= 0]
+        
+        html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <title>Relatório Almoxarifado</title>
+            <style>
+                @page {{ size: A4 landscape; margin: 10mm; }}
+                body {{ font-family: Arial, sans-serif; margin: 0; padding: 0; background: white; font-size: 10px; }}
+                .container {{ max-width: 100%; margin: 0 auto; padding: 10px; }}
+                .header {{
+                    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+                    padding: 15px 20px;
+                    border-radius: 10px;
+                    margin-bottom: 15px;
+                    color: white;
+                }}
+                .header h1 {{ margin: 0; font-size: 20px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }}
+                .header .subtitle {{ font-size: 12px; color: #a0aec0; margin-top: 4px; }}
+                .header .data {{ font-size: 10px; color: #a0aec0; margin-top: 4px; }}
+                
+                .cards {{
+                    display: grid;
+                    grid-template-columns: repeat(5, 1fr);
+                    gap: 10px;
+                    margin-bottom: 15px;
+                }}
+                .card {{
+                    background: #f8f9fc;
+                    padding: 10px 14px;
+                    border-radius: 8px;
+                    border-left: 4px solid #0078D4;
+                    text-align: center;
+                }}
+                .card .label {{ font-size: 9px; color: #666; text-transform: uppercase; font-weight: 600; }}
+                .card .value {{ font-size: 18px; font-weight: 700; color: #1a1a2e; margin-top: 3px; }}
+                .card .sub {{ font-size: 10px; color: #888; margin-top: 2px; }}
+                .card-green {{ border-left-color: #28a745; }}
+                .card-red {{ border-left-color: #dc3545; }}
+                .card-orange {{ border-left-color: #E86C2C; }}
+                .card-purple {{ border-left-color: #6B46C1; }}
+                
+                .section-title {{ font-size: 14px; font-weight: 700; margin: 15px 0 8px 0; padding-bottom: 6px; border-bottom: 2px solid #e0e0e0; }}
+                
+                table {{ width: 100%; border-collapse: collapse; margin-bottom: 12px; font-size: 9px; }}
+                table th {{ background: #2c3e50; color: white; padding: 5px 6px; border: 1px solid #2c3e50; text-align: center; font-weight: 700; }}
+                table td {{ padding: 4px 6px; border: 1px solid #ddd; text-align: center; }}
+                table tr:nth-child(even) {{ background: #f8f9fc; }}
+                
+                .table-responsive {{ overflow-x: auto; }}
+                .footer {{ margin-top: 15px; padding-top: 8px; border-top: 1px solid #e0e0e0; text-align: center; font-size: 8px; color: #999; }}
+                
+                .alert-box {{ padding: 8px 12px; border-radius: 6px; margin: 8px 0; font-size: 10px; }}
+                .alert-danger {{ background: #f8d7da; border-left: 4px solid #dc3545; color: #721c24; }}
+                .alert-warning {{ background: #fff3cd; border-left: 4px solid #ffc107; color: #856404; }}
+                
+                .status-zero {{ color: #dc3545; font-weight: bold; }}
+                .status-baixo {{ color: #dc3545; font-weight: bold; }}
+                .status-normal {{ color: #28a745; }}
+                .status-alto {{ color: #0078D4; }}
+                
+                .badge {{ display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 8px; font-weight: bold; }}
+                .badge-entrada {{ background: #d4edda; color: #155724; }}
+                .badge-saida {{ background: #f8d7da; color: #721c24; }}
+                .badge-inventario {{ background: #e8d4f8; color: #4a1a6b; }}
+                
+                @media print {{
+                    body {{ margin: 3mm; padding: 0; }}
+                    .header {{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+                    .card {{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+                    table th {{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>📦 RELATÓRIO ALMOXARIFADO</h1>
+                    <div class="subtitle">Controle de Estoque - Luvidarte</div>
+                    <div class="data">Gerado em: {data_atual}</div>
+                </div>
+                
+                <div class="cards">
+                    <div class="card"><div class="label">📦 Total Produtos</div><div class="value">{total_produtos}</div></div>
+                    <div class="card card-green"><div class="label">📊 Estoque Total</div><div class="value">{total_quantidade:.2f}</div></div>
+                    <div class="card card-orange"><div class="label">📤 Total Movimentações</div><div class="value">{total_mov}</div></div>
+                    <div class="card card-purple"><div class="label">📦 Qtd Movimentada</div><div class="value">{total_qtd_mov:.2f}</div></div>
+                    <div class="card card-red"><div class="label">🔴 Produtos Zerados</div><div class="value">{len(estoque_zero)}</div></div>
+                </div>
+        """
+        
+        if estoque_zero:
+            html += f'<div class="alert-box alert-danger"><strong>🔴 ATENÇÃO - ESTOQUE ZERADO:</strong> {len(estoque_zero)} produto(s) com estoque zerado.</div>'
+        if estoque_baixo:
+            html += f'<div class="alert-box alert-warning"><strong>🟡 ALERTA - ESTOQUE BAIXO:</strong> {len(estoque_baixo)} produto(s) com estoque abaixo de 5 unidades.</div>'
+        
+        # Tabela de Produtos
+        html += f"""
+                <div class="section-title">📋 ESTOQUE ATUAL</div>
+                <div class="table-responsive">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Categoria</th>
+                                <th>Produto</th>
+                                <th>CA</th>
+                                <th>BASE</th>
+                                <th>Quantidade</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+        """
+        
+        if produtos_dict:
+            for p in sorted(produtos_dict, key=lambda x: x.get('produto', '')):
+                qtd = p.get('quantidade', 0)
+                
+                if qtd <= 0:
+                    status = '<span class="status-zero">🔴 ZERADO</span>'
+                elif qtd < 5:
+                    status = '<span class="status-baixo">🟡 BAIXO</span>'
+                elif qtd < 20:
+                    status = '<span class="status-normal">🟢 NORMAL</span>'
+                else:
+                    status = '<span class="status-alto">🔵 ALTO</span>'
+                
+                html += f"""
+                            <tr>
+                                <td>{p.get('id', '')}</td>
+                                <td>{p.get('categoria', '')}</td>
+                                <td><strong>{p.get('produto', '')}</strong></td>
+                                <td>{p.get('ca', 0):.2f}</td>
+                                <td>{p.get('base', 0):.2f}</td>
+                                <td><strong>{qtd:.2f}</strong></td>
+                                <td>{status}</td>
+                            </tr>
+                """
+        else:
+            html += '<tr><td colspan="7" style="text-align:center;color:#999;padding:20px;">Nenhum produto cadastrado.</td></tr>'
+        
+        html += """
+                        </tbody>
+                    </table>
+                </div>
+        """
+        
+        # Movimentações recentes
+        if movimentacoes_dict:
+            html += f"""
+                <div class="section-title">📤 ÚLTIMAS MOVIMENTAÇÕES</div>
+                <div class="table-responsive">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ID</th><th>Data</th><th>Produto</th><th>Categoria</th>
+                                <th>Colaborador</th><th>Quantidade</th><th>Tipo</th><th>Responsável</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+            """
+            
+            for m in sorted(movimentacoes_dict, key=lambda x: x.get('data') if x.get('data') else datetime.min, reverse=True)[:30]:
+                data_obj = m.get('data')
+                data_str = data_obj.strftime("%d/%m/%Y") if data_obj else "-"
+                tipo = m.get('tipo', 'SAÍDA')
+                badge_class = f'badge-{tipo.lower()}'
+                
+                html += f"""
+                            <tr>
+                                <td>{m.get('id', '')}</td>
+                                <td>{data_str}</td>
+                                <td>{m.get('produto', '')}</td>
+                                <td>{m.get('categoria', '')}</td>
+                                <td>{m.get('colaborador', '')}</td>
+                                <td><strong>{m.get('quantidade', 0):.2f}</strong></td>
+                                <td><span class="badge {badge_class}">{tipo}</span></td>
+                                <td>{m.get('responsavel', '')}</td>
+                            </tr>
+                """
+            
+            html += """
+                        </tbody>
+                    </table>
+                </div>
+            """
+        
+        # Resumo por Categoria
+        if categorias:
+            html += f"""
+                <div class="section-title">📊 RESUMO POR CATEGORIA</div>
+                <div class="table-responsive">
+                    <table>
+                        <thead><tr><th>Categoria</th><th>Quantidade</th><th>% do Total</th></tr></thead>
+                        <tbody>
+            """
+            total = sum(categorias.values())
+            for cat, qtd in sorted(categorias.items(), key=lambda x: x[1], reverse=True):
+                perc = (qtd / total * 100) if total > 0 else 0
+                html += f'<tr><td><strong>{cat}</strong></td><td>{qtd:.2f}</td><td>{perc:.1f}%</td></tr>'
+            html += """
+                        </tbody>
+                    </table>
+                </div>
+            """
+        
+        html += f"""
+                <div class="footer">
+                    Relatório gerado automaticamente pelo Sistema TRS Dashboard - Luvidarte<br>
+                    {data_atual}
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        
+        return html
+    
+    def gerar_relatorio_movimentacoes_html(movimentacoes_dict: List[Dict], 
+                                            data_ini=None, 
+                                            data_fim=None,
+                                            tipo_filtro: str = "(Todos)",
+                                            produto_filtro: str = "(Todos)",
+                                            categoria_filtro: str = "(Todos)") -> str:
+        """Gera relatório de movimentações em HTML"""
+        
+        data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        
+        mov_filtradas = movimentacoes_dict.copy()
+        
+        if data_ini:
+            mov_filtradas = [m for m in mov_filtradas if m.get('data') and m['data'] >= data_ini]
+        if data_fim:
+            mov_filtradas = [m for m in mov_filtradas if m.get('data') and m['data'] <= data_fim]
+        
+        if tipo_filtro != "(Todos)":
+            mov_filtradas = [m for m in mov_filtradas if m.get('tipo', '').upper() == tipo_filtro.upper()]
+        
+        if produto_filtro != "(Todos)" and produto_filtro:
+            mov_filtradas = [m for m in mov_filtradas if m.get('produto', '').lower() == produto_filtro.lower()]
+        
+        if categoria_filtro != "(Todos)" and categoria_filtro:
+            mov_filtradas = [m for m in mov_filtradas if m.get('categoria', '').lower() == categoria_filtro.lower()]
+        
+        total_mov = len(mov_filtradas)
+        total_qtd = sum(m.get('quantidade', 0) for m in mov_filtradas)
+        
+        entradas = [m for m in mov_filtradas if m.get('tipo', '').upper() == 'ENTRADA']
+        saidas = [m for m in mov_filtradas if m.get('tipo', '').upper() == 'SAÍDA']
+        inventarios = [m for m in mov_filtradas if m.get('tipo', '').upper() == 'INVENTÁRIO']
+        
+        filtros_texto = []
+        if data_ini:
+            filtros_texto.append(f"Data Inicial: {data_ini.strftime('%d/%m/%Y')}")
+        if data_fim:
+            filtros_texto.append(f"Data Final: {data_fim.strftime('%d/%m/%Y')}")
+        if tipo_filtro != "(Todos)":
+            filtros_texto.append(f"Tipo: {tipo_filtro}")
+        if produto_filtro != "(Todos)":
+            filtros_texto.append(f"Produto: {produto_filtro}")
+        if categoria_filtro != "(Todos)":
+            filtros_texto.append(f"Categoria: {categoria_filtro}")
+        
+        filtros_str = " | ".join(filtros_texto) if filtros_texto else "Nenhum filtro aplicado"
+        
+        html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <title>Relatório de Movimentações - Almoxarifado</title>
+            <style>
+                @page {{ size: A4 landscape; margin: 12mm; }}
+                body {{ font-family: Arial, sans-serif; margin: 0; padding: 0; background: white; font-size: 10px; }}
+                .container {{ max-width: 100%; margin: 0 auto; padding: 10px; }}
+                .header {{
+                    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+                    padding: 15px 20px;
+                    border-radius: 10px;
+                    margin-bottom: 15px;
+                    color: white;
+                }}
+                .header h1 {{ margin: 0; font-size: 20px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }}
+                .header .subtitle {{ font-size: 12px; color: #a0aec0; margin-top: 4px; }}
+                .header .data {{ font-size: 10px; color: #a0aec0; margin-top: 4px; }}
+                
+                .cards {{
+                    display: grid;
+                    grid-template-columns: repeat(5, 1fr);
+                    gap: 10px;
+                    margin-bottom: 15px;
+                }}
+                .card {{
+                    background: #f8f9fc;
+                    padding: 10px 14px;
+                    border-radius: 8px;
+                    border-left: 4px solid #0078D4;
+                    text-align: center;
+                }}
+                .card .label {{ font-size: 9px; color: #666; text-transform: uppercase; font-weight: 600; }}
+                .card .value {{ font-size: 18px; font-weight: 700; color: #1a1a2e; margin-top: 3px; }}
+                .card .sub {{ font-size: 10px; color: #888; margin-top: 2px; }}
+                .card-green {{ border-left-color: #28a745; }}
+                .card-red {{ border-left-color: #dc3545; }}
+                .card-purple {{ border-left-color: #6B46C1; }}
+                .card-orange {{ border-left-color: #E86C2C; }}
+                
+                .section-title {{ font-size: 14px; font-weight: 700; margin: 15px 0 8px 0; padding-bottom: 6px; border-bottom: 2px solid #e0e0e0; }}
+                
+                table {{ width: 100%; border-collapse: collapse; margin-bottom: 12px; font-size: 9px; }}
+                table th {{ background: #2c3e50; color: white; padding: 5px 6px; border: 1px solid #2c3e50; text-align: center; font-weight: 700; }}
+                table td {{ padding: 4px 6px; border: 1px solid #ddd; text-align: center; }}
+                table tr:nth-child(even) {{ background: #f8f9fc; }}
+                
+                .footer {{ margin-top: 15px; padding-top: 8px; border-top: 1px solid #e0e0e0; text-align: center; font-size: 8px; color: #999; }}
+                .filtros {{ background: #f0f2f5; padding: 8px 12px; border-radius: 6px; margin-bottom: 12px; font-size: 10px; }}
+                
+                .badge {{ display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 8px; font-weight: bold; }}
+                .badge-entrada {{ background: #d4edda; color: #155724; }}
+                .badge-saida {{ background: #f8d7da; color: #721c24; }}
+                .badge-inventario {{ background: #e8d4f8; color: #4a1a6b; }}
+                
+                @media print {{
+                    body {{ margin: 3mm; padding: 0; }}
+                    .header {{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+                    .card {{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+                    table th {{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>📤 RELATÓRIO DE MOVIMENTAÇÕES</h1>
+                    <div class="subtitle">Almoxarifado - Luvidarte</div>
+                    <div class="data">Gerado em: {data_atual}</div>
+                </div>
+                
+                <div class="filtros">
+                    <strong>📅 Filtros aplicados:</strong> {filtros_str}
+                    <br>
+                    <strong>📊 Total de registros:</strong> {total_mov}
+                </div>
+                
+                <div class="cards">
+                    <div class="card card-orange">
+                        <div class="label">📤 Total</div>
+                        <div class="value">{total_mov}</div>
+                        <div class="sub">{total_qtd:.2f} un</div>
+                    </div>
+                    <div class="card card-green">
+                        <div class="label">📥 Entradas</div>
+                        <div class="value">{len(entradas)}</div>
+                        <div class="sub">{sum(m.get('quantidade', 0) for m in entradas):.2f} un</div>
+                    </div>
+                    <div class="card card-red">
+                        <div class="label">📤 Saídas</div>
+                        <div class="value">{len(saidas)}</div>
+                        <div class="sub">{sum(m.get('quantidade', 0) for m in saidas):.2f} un</div>
+                    </div>
+                    <div class="card card-purple">
+                        <div class="label">📋 Inventários</div>
+                        <div class="value">{len(inventarios)}</div>
+                        <div class="sub">{sum(m.get('quantidade', 0) for m in inventarios):.2f} un</div>
+                    </div>
+                    <div class="card">
+                        <div class="label">📊 Média</div>
+                        <div class="value">{f"{(total_qtd / total_mov):.2f}" if total_mov > 0 else "0.00"}</div>
+                        <div class="sub">un/mov</div>
+                    </div>
+                </div>
+        """
+        
+        if mov_filtradas:
+            html += f"""
+                <div class="section-title">📋 DETALHAMENTO DAS MOVIMENTAÇÕES</div>
+                <div class="table-responsive">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Data</th>
+                                <th>Produto</th>
+                                <th>Categoria</th>
+                                <th>Colaborador</th>
+                                <th>Quantidade</th>
+                                <th>Tipo</th>
+                                <th>Responsável</th>
+                                <th>Observação</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+            """
+            
+            for m in sorted(mov_filtradas, key=lambda x: x.get('data') if x.get('data') else datetime.min, reverse=True):
+                data_obj = m.get('data')
+                data_str = data_obj.strftime("%d/%m/%Y") if data_obj else "-"
+                tipo = m.get('tipo', 'SAÍDA')
+                badge_class = f'badge-{tipo.lower()}'
+                obs = m.get('obs', '')[:40] + "..." if len(m.get('obs', '')) > 40 else m.get('obs', '')
+                
+                html += f"""
+                            <tr>
+                                <td><strong>{m.get('id', '')}</strong></td>
+                                <td>{data_str}</td>
+                                <td>{m.get('produto', '')}</td>
+                                <td>{m.get('categoria', '')}</td>
+                                <td>{m.get('colaborador', '')}</td>
+                                <td><strong>{m.get('quantidade', 0):.2f}</strong></td>
+                                <td><span class="badge {badge_class}">{tipo}</span></td>
+                                <td>{m.get('responsavel', '')}</td>
+                                <td style="font-size:8px; text-align:left;">{obs or '-'}</td>
+                            </tr>
+                """
+            
+            html += """
+                        </tbody>
+                    </table>
+                </div>
+            """
+        else:
+            html += """
+                <div style="text-align:center; padding:30px; color:#999; background:#f8f9fa; border-radius:8px;">
+                    📭 Nenhuma movimentação encontrada com os filtros selecionados.
+                </div>
+            """
+        
+        html += f"""
+                <div class="footer">
+                    Relatório gerado automaticamente pelo Sistema TRS Dashboard - Luvidarte<br>
+                    {data_atual}
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        
+        return html
+    
+    def baixar_relatorio(html_content: str, nome_arquivo: str):
+        """Botão para baixar relatório"""
+        st.download_button(
+            label="📥 Baixar Relatório",
+            data=html_content,
+            file_name=nome_arquivo,
+            mime="text/html",
+            use_container_width=True,
+            type="primary"
+        )
+    
+    # ======================
+    # CARREGAR DADOS (PRIORIDADE ABSOLUTA SUPABASE)
+    # ======================
+    
+    with st.spinner("🔄 Carregando dados do Supabase..."):
+        # Testar Supabase primeiro
+        supabase_ok, msg = testar_supabase()
+        
+        if supabase_ok:
+            # Tenta carregar do Supabase
+            produtos = carregar_produtos_supabase()
+            
+            if not produtos:
+                st.warning("⚠️ Supabase conectado, mas sem dados. Usando Google Sheets...")
+                produtos = carregar_produtos_google_sheets()
+                
+                if produtos:
+                    st.info("🔄 Sincronizando dados com o Supabase...")
+                    for p in produtos:
+                        salvar_produto_supabase(p)
+                    st.success("✅ Dados sincronizados! Recarregando do Supabase...")
+                    produtos = carregar_produtos_supabase()
+        else:
+            st.warning(f"⚠️ Supabase: {msg}. Usando Google Sheets...")
+            produtos = carregar_produtos_google_sheets()
+            
+            if produtos:
+                st.info("🔄 Tentando sincronizar com o Supabase...")
+                for p in produtos:
+                    try:
+                        salvar_produto_supabase(p)
+                    except:
+                        pass
+                st.warning("⚠️ Dados carregados do Google Sheets (fallback)")
+        
+        # Carrega movimentações
+        if supabase_ok:
+            movimentacoes = carregar_movimentacoes_supabase()
+            if not movimentacoes:
+                movimentacoes = carregar_movimentacoes_google_sheets()
+                if movimentacoes:
+                    for m in movimentacoes:
+                        salvar_movimentacao_supabase(m)
+                    movimentacoes = carregar_movimentacoes_supabase()
+        else:
+            movimentacoes = carregar_movimentacoes_google_sheets()
+        
+        # Mostra resultado
+        if produtos:
+            fonte = "Supabase" if supabase_ok and carregar_produtos_supabase() else "Google Sheets (fallback)"
+            if fonte == "Supabase":
+                st.success(f"✅ **{len(produtos)} produtos** carregados do Supabase")
+            else:
+                st.warning(f"⚠️ **{len(produtos)} produtos** carregados do {fonte}")
+        else:
+            st.error("❌ Nenhum dado disponível. Verifique a conexão.")
+            with st.expander("🔍 Diagnóstico de conexão", expanded=True):
+                # Testar Supabase
+                try:
+                    response = requests.get(
+                        f"{SUPABASE_URL}/rest/v1/almoxarifado_base?select=count&limit=1",
+                        headers=SUPABASE_HEADERS,
+                        timeout=5
+                    )
+                    if response.status_code == 200:
+                        st.success("✅ Supabase: Conectado")
+                    else:
+                        st.error(f"❌ Supabase: Erro {response.status_code}")
+                except Exception as e:
+                    st.error(f"❌ Supabase: {e}")
+                
+                # Testar Google Sheets
+                try:
+                    client = get_gspread_client()
+                    if client:
+                        st.success("✅ Google Sheets: Conectado")
+                    else:
+                        st.error("❌ Google Sheets: Falha na conexão")
+                except Exception as e:
+                    st.error(f"❌ Google Sheets: {e}")
+    
+    # ======================
+    # INICIALIZAR SESSION STATE
+    # ======================
+    if 'almoxarifado_aba' not in st.session_state:
+        st.session_state.almoxarifado_aba = 'ESTOQUE'
+    
+    if 'almoxarifado_editando' not in st.session_state:
+        st.session_state.almoxarifado_editando = None
+    
+    if 'almoxarifado_termo_busca' not in st.session_state:
+        st.session_state.almoxarifado_termo_busca = ""
+    
+    if 'almoxarifado_lista_temporaria' not in st.session_state:
+        st.session_state.almoxarifado_lista_temporaria = []
+    
+    if 'almoxarifado_editando_item' not in st.session_state:
+        st.session_state.almoxarifado_editando_item = None
+    
+    if 'almoxarifado_mostrar_confirmacao' not in st.session_state:
+        st.session_state.almoxarifado_mostrar_confirmacao = False
+    
+    # ======================
+    # FUNÇÃO PARA GERAR ID AUTOMÁTICO
+    # ======================
+    def gerar_id_produto(produtos_dict: List[Dict]) -> str:
+        if not produtos_dict:
+            return "PROD-001"
+        
+        ids = []
+        for p in produtos_dict:
+            id_val = p.get('id', '')
+            if id_val and id_val.startswith("PROD-"):
+                try:
+                    num = int(id_val.replace("PROD-", ""))
+                    ids.append(num)
+                except:
+                    pass
+        
+        if not ids:
+            return "PROD-001"
+        
+        proximo = max(ids) + 1
+        return f"PROD-{proximo:03d}"
+    
+    # ======================
+    # FUNÇÃO PARA CALCULAR PREVISÃO DE DIAS
+    # ======================
+    def calcular_previsao_dias(produto: str, quantidade_atual: float, movimentacoes_dict: List[Dict]) -> str:
+        if quantidade_atual <= 0:
+            return "🔴 ZERADO"
+        
+        saidas_produto = [m for m in movimentacoes_dict 
+                         if m.get('produto', '') == produto 
+                         and m.get('tipo', '').upper() == 'SAÍDA'
+                         and m.get('data') is not None]
+        
+        if not saidas_produto:
+            return "-----"
+        
+        saidas_produto = sorted(saidas_produto, key=lambda x: x.get('data'))
+        data_inicio = saidas_produto[0].get('data')
+        data_fim = saidas_produto[-1].get('data')
+        
+        if data_inicio is None or data_fim is None or data_fim == data_inicio:
+            total_saidas = sum(m.get('quantidade', 0) for m in saidas_produto)
+            if total_saidas <= 0:
+                return "-----"
+            dias_estimados = quantidade_atual / total_saidas
+        else:
+            dias_periodo = (data_fim - data_inicio).days
+            if dias_periodo <= 0:
+                dias_periodo = 1
+            total_saidas = sum(m.get('quantidade', 0) for m in saidas_produto)
+            if total_saidas <= 0:
+                return "-----"
+            media_diaria = total_saidas / dias_periodo
+            if media_diaria <= 0:
+                return "-----"
+            dias_estimados = quantidade_atual / media_diaria
+        
+        if dias_estimados < 1:
+            return f"⚠️ {dias_estimados * 24:.0f}h"
+        elif dias_estimados < 7:
+            return f"🟡 {dias_estimados:.0f} dias"
+        elif dias_estimados < 30:
+            return f"🟢 {dias_estimados:.0f} dias"
+        else:
+            meses = dias_estimados / 30
+            return f"🔵 {meses:.1f} meses"
+    
+    # ======================
+    # NAVEGAÇÃO
+    # ======================
+    st.markdown("### 📊 Selecione a Visualização")
+    
+    col_nav1, col_nav2, col_nav3, col_nav4, col_nav5 = st.columns(5)
+    
+    with col_nav1:
+        if st.button("📦 Estoque", use_container_width=True,
+                     type="primary" if st.session_state.almoxarifado_aba == 'ESTOQUE' else "secondary"):
+            st.session_state.almoxarifado_aba = 'ESTOQUE'
+            st.rerun()
+    
+    with col_nav2:
+        if st.button("📤 Movimentações", use_container_width=True,
+                     type="primary" if st.session_state.almoxarifado_aba == 'MOVIMENTACOES' else "secondary"):
+            st.session_state.almoxarifado_aba = 'MOVIMENTACOES'
+            st.rerun()
+    
+    with col_nav3:
+        if st.button("➕ Cadastrar", use_container_width=True,
+                     type="primary" if st.session_state.almoxarifado_aba == 'CADASTRAR' else "secondary"):
+            st.session_state.almoxarifado_aba = 'CADASTRAR'
+            st.rerun()
+    
+    with col_nav4:
+        if st.button("📊 Relatórios", use_container_width=True,
+                     type="primary" if st.session_state.almoxarifado_aba == 'RELATORIOS' else "secondary"):
+            st.session_state.almoxarifado_aba = 'RELATORIOS'
+            st.rerun()
+    
+    with col_nav5:
+        if st.button("🔄 Atualizar", use_container_width=True):
+            st.cache_data.clear()
+            st.rerun()
+    
+    st.markdown("---")
+    
+    # ======================
+    # ABA: ESTOQUE
+    # ======================
+    if st.session_state.almoxarifado_aba == 'ESTOQUE':
+        st.markdown("### 📦 Estoque Atual")
+        
+        st.caption(f"📊 {len(produtos)} produtos carregados")
+        
+        col_f1, col_f2, col_f3 = st.columns(3)
+        with col_f1:
+            termo_busca = st.text_input(
+                "🔎 Buscar produto",
+                placeholder="Digite o nome do produto...",
+                key="busca_estoque",
+                value=st.session_state.almoxarifado_termo_busca
+            )
+            st.session_state.almoxarifado_termo_busca = termo_busca
+        
+        with col_f2:
+            categorias_lista = sorted(set([p.get('categoria', '') for p in produtos if p.get('categoria')]))
+            opcoes_cat = ["(Todas)"] + categorias_lista
+            filtro_categoria = st.selectbox("📂 Categoria", opcoes_cat, key="filtro_cat_estoque")
+        
+        with col_f3:
+            status_opcoes = ["(Todos)", "Estoque Baixo (<5)", "Zerado", "Normal", "Alto (>20)"]
+            filtro_status = st.selectbox("📊 Status", status_opcoes, key="filtro_status_estoque")
+        
+        produtos_filtrados = produtos.copy()
+        
+        if termo_busca:
+            termo_lower = termo_busca.lower()
+            produtos_filtrados = [p for p in produtos_filtrados if termo_lower in p.get('produto', '').lower()]
+        
+        if filtro_categoria != "(Todas)":
+            produtos_filtrados = [p for p in produtos_filtrados if p.get('categoria', '') == filtro_categoria]
+        
+        if filtro_status == "Estoque Baixo (<5)":
+            produtos_filtrados = [p for p in produtos_filtrados if 0 < p.get('quantidade', 0) < 5]
+        elif filtro_status == "Zerado":
+            produtos_filtrados = [p for p in produtos_filtrados if p.get('quantidade', 0) <= 0]
+        elif filtro_status == "Normal":
+            produtos_filtrados = [p for p in produtos_filtrados if 5 <= p.get('quantidade', 0) <= 20]
+        elif filtro_status == "Alto (>20)":
+            produtos_filtrados = [p for p in produtos_filtrados if p.get('quantidade', 0) > 20]
+        
+        total_produtos = len(produtos_filtrados)
+        total_qtd = sum(p.get('quantidade', 0) for p in produtos_filtrados)
+        qtd_zerado = len([p for p in produtos_filtrados if p.get('quantidade', 0) <= 0])
+        qtd_baixo = len([p for p in produtos_filtrados if 0 < p.get('quantidade', 0) < 5])
+        
+        col_k1, col_k2, col_k3, col_k4 = st.columns(4)
+        with col_k1:
+            st.metric("📦 Produtos", f"{total_produtos:,}")
+        with col_k2:
+            st.metric("📊 Estoque Total", f"{total_qtd:.2f}")
+        with col_k3:
+            st.metric("🔴 Zerados", f"{qtd_zerado:,}", delta_color="inverse")
+        with col_k4:
+            st.metric("🟡 Estoque Baixo", f"{qtd_baixo:,}", delta_color="inverse")
+        
+        st.markdown("---")
+        
+        if produtos_filtrados:
+            dados_tabela = []
+            for p in produtos_filtrados:
+                qtd = p.get('quantidade', 0)
+                if qtd <= 0:
+                    status = "🔴 ZERADO"
+                elif qtd < 5:
+                    status = "🟡 BAIXO"
+                elif qtd < 20:
+                    status = "🟢 NORMAL"
+                else:
+                    status = "🔵 ALTO"
+                
+                previsao = calcular_previsao_dias(
+                    p.get('produto', ''), 
+                    qtd, 
+                    movimentacoes
+                )
+                
+                dados_tabela.append({
+                    "ID": p.get('id', ''),
+                    "Categoria": p.get('categoria', ''),
+                    "Produto": p.get('produto', ''),
+                    "CA": f"{p.get('ca', 0):.2f}",
+                    "BASE": f"{p.get('base', 0):.2f}",
+                    "Quantidade": f"{qtd:.2f}",
+                    "Status": status,
+                    "Previsão": previsao
+                })
+            
+            df_estoque = pd.DataFrame(dados_tabela)
+            
+            def style_status(row):
+                status = row['Status']
+                if "ZERADO" in status:
+                    return ['background-color: #f8d7da; color: #721c24; font-weight: bold;'] * len(row)
+                elif "BAIXO" in status:
+                    return ['background-color: #fff3cd; color: #856404; font-weight: bold;'] * len(row)
+                elif "NORMAL" in status:
+                    return ['background-color: #d4edda; color: #155724;'] * len(row)
+                else:
+                    return ['background-color: #cce5ff; color: #004085;'] * len(row)
+            
+            styled_df = df_estoque.style.apply(style_status, axis=1)
+            st.dataframe(styled_df, use_container_width=True, height=500, hide_index=True)
+            
+            st.caption("📊 **Previsão:** Baseada nas saídas registradas no histórico. '-----' = sem dados suficientes.")
+        else:
+            st.info("📭 Nenhum produto encontrado com os filtros selecionados.")
+    
+    # ======================
+    # ABA: MOVIMENTAÇÕES
+    # ======================
+    elif st.session_state.almoxarifado_aba == 'MOVIMENTACOES':
+        st.markdown("### 📤 Registro de Movimentações")
+        
+        # ============================================================
+        # ÁREA DE ADIÇÃO DE ITENS À LISTA TEMPORÁRIA
+        # ============================================================
+        st.markdown("#### ➕ Adicionar à Lista de Movimentações")
+        
+        col_form1, col_form2 = st.columns(2)
+        
+        with col_form1:
+            opcoes_produtos = sorted([p.get('produto', '') for p in produtos if p.get('produto')])
+            produto_selecionado = st.selectbox(
+                "📦 Produto*",
+                options=opcoes_produtos,
+                key="mov_produto_temp"
+            )
+            
+            categoria_automatica = ""
+            estoque_atual = 0
+            if produto_selecionado:
+                for p in produtos:
+                    if p.get('produto', '') == produto_selecionado:
+                        categoria_automatica = p.get('categoria', '')
+                        estoque_atual = p.get('quantidade', 0)
+                        break
+            
+            st.text_input(
+                "📂 Categoria",
+                value=categoria_automatica,
+                disabled=True,
+                key="mov_categoria_temp"
+            )
+            
+            st.caption(f"📊 Estoque atual: {estoque_atual:.2f}")
+        
+        with col_form2:
+            tipo_mov = st.selectbox(
+                "📋 Tipo de Movimentação*",
+                options=["", "ENTRADA", "SAÍDA", "INVENTÁRIO"],
+                key="mov_tipo_temp"
+            )
+            
+            quantidade = st.number_input(
+                "📦 Quantidade*",
+                min_value=0.01,
+                step=0.5,
+                value=1.0,
+                key="mov_quantidade_temp"
+            )
+            
+            colaborador = st.text_input(
+                "👤 Colaborador*",
+                placeholder="Nome do colaborador",
+                key="mov_colaborador_temp"
+            )
+            
+            obs_mov = st.text_area(
+                "📝 Observação",
+                placeholder="Informações adicionais...",
+                key="mov_obs_temp",
+                height=60
+            )
+            
+            st.text_input(
+                "👤 Responsável",
+                value=st.session_state.get('usuario', ''),
+                disabled=True,
+                key="mov_responsavel_temp"
+            )
+        
+        col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 1])
+        
+        with col_btn1:
+            if st.button("➕ ADICIONAR À LISTA", use_container_width=True, type="primary"):
+                if not produto_selecionado:
+                    st.error("❌ Selecione um produto!")
+                elif not tipo_mov:
+                    st.error("❌ Selecione o tipo de movimentação!")
+                elif not colaborador:
+                    st.error("❌ Informe o nome do colaborador!")
+                elif quantidade <= 0:
+                    st.error("❌ A quantidade deve ser maior que zero!")
+                else:
+                    if tipo_mov == "SAÍDA" and quantidade > estoque_atual:
+                        st.error(f"❌ Estoque insuficiente! Disponível: {estoque_atual:.2f}")
+                    else:
+                        novo_item = {
+                            'id': f"TEMP-{len(st.session_state.almoxarifado_lista_temporaria) + 1:03d}",
+                            'produto': produto_selecionado,
+                            'categoria': categoria_automatica,
+                            'tipo': tipo_mov,
+                            'quantidade': quantidade,
+                            'colaborador': colaborador,
+                            'obs': obs_mov,
+                            'responsavel': st.session_state.get('usuario', ''),
+                            'data': datetime.now(),
+                            'estoque_atual': estoque_atual
+                        }
+                        
+                        st.session_state.almoxarifado_lista_temporaria.append(novo_item)
+                        st.success(f"✅ {tipo_mov} de {produto_selecionado} adicionada à lista!")
+                        st.rerun()
+        
+        with col_btn2:
+            if st.button("🗑️ LIMPAR LISTA", use_container_width=True):
+                if st.session_state.almoxarifado_lista_temporaria:
+                    st.session_state.almoxarifado_lista_temporaria = []
+                    st.success("🗑️ Lista limpa!")
+                    st.rerun()
+        
+        with col_btn3:
+            if st.button("❌ CANCELAR TUDO", use_container_width=True):
+                if st.session_state.almoxarifado_lista_temporaria:
+                    st.session_state.almoxarifado_lista_temporaria = []
+                    st.success("❌ Todos os lançamentos cancelados!")
+                    st.rerun()
+        
+        st.markdown("---")
+        
+        # ============================================================
+        # LISTA TEMPORÁRIA DE MOVIMENTAÇÕES
+        # ============================================================
+        st.markdown("#### 📋 Lista de Movimentações Pendentes")
+        
+        lista_temp = st.session_state.almoxarifado_lista_temporaria
+        
+        if lista_temp:
+            total_itens = len(lista_temp)
+            total_entradas = sum(1 for item in lista_temp if item['tipo'] == 'ENTRADA')
+            total_saidas = sum(1 for item in lista_temp if item['tipo'] == 'SAÍDA')
+            total_inventarios = sum(1 for item in lista_temp if item['tipo'] == 'INVENTÁRIO')
+            
+            col_r1, col_r2, col_r3, col_r4 = st.columns(4)
+            with col_r1:
+                st.metric("📋 Total Itens", f"{total_itens}")
+            with col_r2:
+                st.metric("📥 Entradas", f"{total_entradas}")
+            with col_r3:
+                st.metric("📤 Saídas", f"{total_saidas}")
+            with col_r4:
+                st.metric("📋 Inventários", f"{total_inventarios}")
+            
+            st.markdown("---")
+            
+            # Exibir itens com botões de ação
+            for idx, item in enumerate(lista_temp):
+                col_acoes1, col_acoes2, col_acoes3 = st.columns([6, 1, 1])
+                
+                tipo_emoji = "📥" if item['tipo'] == 'ENTRADA' else "📤" if item['tipo'] == 'SAÍDA' else "📋"
+                
+                with col_acoes1:
+                    st.write(f"**{idx+1}.** {tipo_emoji} {item['produto']} - {item['quantidade']:.2f} - {item['colaborador']}")
+                
+                with col_acoes2:
+                    if st.button("✏️", key=f"edit_{idx}"):
+                        st.session_state.almoxarifado_editando_item = idx
+                        st.rerun()
+                
+                with col_acoes3:
+                    if st.button("🗑️", key=f"del_{idx}"):
+                        del st.session_state.almoxarifado_lista_temporaria[idx]
+                        st.success(f"🗑️ Item removido!")
+                        st.rerun()
+            
+            # ============================================================
+            # ÁREA DE EDIÇÃO DE ITEM
+            # ============================================================
+            if st.session_state.almoxarifado_editando_item is not None:
+                idx_edit = st.session_state.almoxarifado_editando_item
+                item_edit = lista_temp[idx_edit]
+                
+                st.markdown("---")
+                st.markdown(f"#### ✏️ Editando Item {idx_edit + 1}")
+                
+                col_edit1, col_edit2 = st.columns(2)
+                
+                with col_edit1:
+                    novo_produto = st.selectbox(
+                        "Produto",
+                        options=opcoes_produtos,
+                        index=opcoes_produtos.index(item_edit['produto']) if item_edit['produto'] in opcoes_produtos else 0,
+                        key="edit_produto"
+                    )
+                    
+                    novo_tipo = st.selectbox(
+                        "Tipo",
+                        options=["ENTRADA", "SAÍDA", "INVENTÁRIO"],
+                        index=["ENTRADA", "SAÍDA", "INVENTÁRIO"].index(item_edit['tipo']) if item_edit['tipo'] in ["ENTRADA", "SAÍDA", "INVENTÁRIO"] else 0,
+                        key="edit_tipo"
+                    )
+                    
+                    nova_categoria = ""
+                    if novo_produto:
+                        for p in produtos:
+                            if p.get('produto', '') == novo_produto:
+                                nova_categoria = p.get('categoria', '')
+                                break
+                
+                with col_edit2:
+                    nova_quantidade = st.number_input(
+                        "Quantidade",
+                        min_value=0.01,
+                        step=0.5,
+                        value=item_edit['quantidade'],
+                        key="edit_quantidade"
+                    )
+                    
+                    novo_colaborador = st.text_input(
+                        "Colaborador",
+                        value=item_edit['colaborador'],
+                        key="edit_colaborador"
+                    )
+                    
+                    nova_obs = st.text_area(
+                        "Observação",
+                        value=item_edit['obs'],
+                        key="edit_obs",
+                        height=60
+                    )
+                
+                col_edit_btn1, col_edit_btn2 = st.columns(2)
+                
+                with col_edit_btn1:
+                    if st.button("💾 SALVAR ALTERAÇÕES", use_container_width=True, type="primary"):
+                        lista_temp[idx_edit] = {
+                            'id': item_edit['id'],
+                            'produto': novo_produto,
+                            'categoria': nova_categoria,
+                            'tipo': novo_tipo,
+                            'quantidade': nova_quantidade,
+                            'colaborador': novo_colaborador,
+                            'obs': nova_obs,
+                            'responsavel': item_edit['responsavel'],
+                            'data': item_edit['data'],
+                            'estoque_atual': item_edit['estoque_atual']
+                        }
+                        st.session_state.almoxarifado_editando_item = None
+                        st.success("✅ Item atualizado!")
+                        st.rerun()
+                
+                with col_edit_btn2:
+                    if st.button("❌ CANCELAR EDIÇÃO", use_container_width=True):
+                        st.session_state.almoxarifado_editando_item = None
+                        st.rerun()
+            
+            # ============================================================
+            # BOTÕES DE CONFIRMAÇÃO PARA SALVAR LOTE
+            # ============================================================
+            st.markdown("---")
+            
+            col_salvar1, col_salvar2, col_salvar3 = st.columns([1, 2, 1])
+            
+            with col_salvar2:
+                if st.button("💾 SALVAR TODOS OS LANÇAMENTOS", use_container_width=True, type="primary"):
+                    st.session_state.almoxarifado_mostrar_confirmacao = True
+                    st.rerun()
+        
+        else:
+            st.info("📭 Nenhuma movimentação na lista. Adicione itens acima.")
+        
+        # ============================================================
+        # CONFIRMAÇÃO PARA SALVAR LOTE
+        # ============================================================
+        if st.session_state.almoxarifado_mostrar_confirmacao and lista_temp:
+            st.markdown("---")
+            st.markdown("### ⚠️ CONFIRMAÇÃO DE SALVAMENTO")
+            
+            st.warning("⚠️ Você está prestes a salvar TODOS os lançamentos.")
+            
+            st.markdown("**📋 Resumo do lote:**")
+            st.write(f"- Total de itens: {len(lista_temp)}")
+            st.write(f"- Entradas: {sum(1 for item in lista_temp if item['tipo'] == 'ENTRADA')}")
+            st.write(f"- Saídas: {sum(1 for item in lista_temp if item['tipo'] == 'SAÍDA')}")
+            st.write(f"- Inventários: {sum(1 for item in lista_temp if item['tipo'] == 'INVENTÁRIO')}")
+            
+            df_confirmacao = pd.DataFrame([{
+                "Produto": item['produto'],
+                "Tipo": item['tipo'],
+                "Quantidade": f"{item['quantidade']:.2f}",
+                "Colaborador": item['colaborador']
+            } for item in lista_temp])
+            st.dataframe(df_confirmacao, use_container_width=True, hide_index=True)
+            
+            col_confirm1, col_confirm2, col_confirm3 = st.columns(3)
+            
+            with col_confirm1:
+                if st.button("✅ SIM, SALVAR TUDO", use_container_width=True, type="primary"):
+                    with st.spinner("Salvando movimentações no Supabase..."):
+                        sucesso, msg = salvar_lote_movimentacoes_supabase(lista_temp)
+                        
+                        if sucesso:
+                            st.success(msg)
+                            st.balloons()
+                            st.session_state.almoxarifado_lista_temporaria = []
+                            st.session_state.almoxarifado_mostrar_confirmacao = False
+                            st.cache_data.clear()
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.error(msg)
+            
+            with col_confirm2:
+                if st.button("✏️ VOLTAR E EDITAR", use_container_width=True):
+                    st.session_state.almoxarifado_mostrar_confirmacao = False
+                    st.rerun()
+            
+            with col_confirm3:
+                if st.button("❌ CANCELAR", use_container_width=True):
+                    st.session_state.almoxarifado_mostrar_confirmacao = False
+                    st.rerun()
+        
+        # ============================================================
+        # HISTÓRICO DE MOVIMENTAÇÕES
+        # ============================================================
+        st.markdown("---")
+        st.markdown("### 📋 Histórico de Movimentações (Salvas)")
+        
+        col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+        with col_f1:
+            opcoes_prod_mov = ["(Todos)"] + sorted(set([m.get('produto', '') for m in movimentacoes if m.get('produto')]))
+            filtro_produto_mov = st.selectbox(
+                "🔎 Produto",
+                options=opcoes_prod_mov,
+                key="filtro_prod_mov"
+            )
+        with col_f2:
+            opcoes_tipo_mov = ["(Todos)", "ENTRADA", "SAÍDA", "INVENTÁRIO"]
+            filtro_tipo_mov = st.selectbox(
+                "📋 Tipo",
+                options=opcoes_tipo_mov,
+                key="filtro_tipo_mov"
+            )
+        with col_f3:
+            data_ini_mov = st.date_input("Data Inicial", value=None, key="data_ini_mov")
+        with col_f4:
+            data_fim_mov = st.date_input("Data Final", value=None, key="data_fim_mov")
+        
+        mov_filtradas = movimentacoes.copy()
+        if filtro_produto_mov != "(Todos)":
+            mov_filtradas = [m for m in mov_filtradas if m.get('produto', '') == filtro_produto_mov]
+        if filtro_tipo_mov != "(Todos)":
+            mov_filtradas = [m for m in mov_filtradas if m.get('tipo', '') == filtro_tipo_mov]
+        if data_ini_mov:
+            mov_filtradas = [m for m in mov_filtradas if m.get('data') and m['data'] >= data_ini_mov]
+        if data_fim_mov:
+            mov_filtradas = [m for m in mov_filtradas if m.get('data') and m['data'] <= data_fim_mov]
+        
+        total_mov = len(mov_filtradas)
+        total_qtd_mov = sum(m.get('quantidade', 0) for m in mov_filtradas)
+        total_entradas = len([m for m in mov_filtradas if m.get('tipo', '').upper() == 'ENTRADA'])
+        total_saidas = len([m for m in mov_filtradas if m.get('tipo', '').upper() == 'SAÍDA'])
+        total_inventarios = len([m for m in mov_filtradas if m.get('tipo', '').upper() == 'INVENTÁRIO'])
+        
+        col_k1, col_k2, col_k3, col_k4, col_k5 = st.columns(5)
+        with col_k1:
+            st.metric("📤 Total", f"{total_mov:,}")
+        with col_k2:
+            st.metric("📥 Entradas", f"{total_entradas:,}")
+        with col_k3:
+            st.metric("📤 Saídas", f"{total_saidas:,}")
+        with col_k4:
+            st.metric("📋 Inventários", f"{total_inventarios:,}")
+        with col_k5:
+            st.metric("📦 Qtd Total", f"{total_qtd_mov:.2f}")
+        
+        st.markdown("---")
+        
+        if mov_filtradas:
+            dados_mov = []
+            for m in sorted(mov_filtradas, key=lambda x: x.get('data') if x.get('data') else datetime.min, reverse=True):
+                data_obj = m.get('data')
+                tipo = m.get('tipo', 'SAÍDA')
+                tipo_emoji = "📥" if tipo == "ENTRADA" else "📤" if tipo == "SAÍDA" else "📋"
+                
+                dados_mov.append({
+                    "ID": m.get('id', ''),
+                    "Data": data_obj.strftime("%d/%m/%Y") if data_obj else "-",
+                    "Produto": m.get('produto', ''),
+                    "Categoria": m.get('categoria', ''),
+                    "Colaborador": m.get('colaborador', ''),
+                    "Quantidade": f"{m.get('quantidade', 0):.2f}",
+                    "Tipo": f"{tipo_emoji} {tipo}",
+                    "Obs": m.get('obs', '')[:30] + "..." if len(m.get('obs', '')) > 30 else m.get('obs', ''),
+                    "Responsável": m.get('responsavel', '')
+                })
+            
+            df_mov = pd.DataFrame(dados_mov)
+            
+            def style_mov(row):
+                tipo = row['Tipo']
+                if "ENTRADA" in tipo:
+                    return ['background-color: #d4edda; color: #155724;'] * len(row)
+                elif "SAÍDA" in tipo:
+                    return ['background-color: #f8d7da; color: #721c24;'] * len(row)
+                elif "INVENTÁRIO" in tipo:
+                    return ['background-color: #e8d4f8; color: #4a1a6b;'] * len(row)
+                else:
+                    return [''] * len(row)
+            
+            styled_df = df_mov.style.apply(style_mov, axis=1)
+            st.dataframe(styled_df, use_container_width=True, height=400, hide_index=True)
+        else:
+            st.info("📭 Nenhuma movimentação registrada.")
+    
+    # ======================
+    # ABA: CADASTRAR
+    # ======================
+    elif st.session_state.almoxarifado_aba == 'CADASTRAR':
+        st.markdown("### ➕ Cadastro de Produtos")
+        
+        tab_novo, tab_editar, tab_excluir = st.tabs(["➕ Novo Produto", "✏️ Editar Produto", "🗑️ Excluir Produto"])
+        
+        with tab_novo:
+            with st.form("form_novo_produto"):
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    novo_id = gerar_id_produto(produtos)
+                    st.text_input("ID (automático)", value=novo_id, disabled=True, key="novo_id_display")
+                    
+                    categoria_nova = st.selectbox(
+                        "Categoria*",
+                        options=sorted(set([p.get('categoria', '') for p in produtos if p.get('categoria')])),
+                        key="nova_categoria"
+                    )
+                    
+                    produto_nome = st.text_input(
+                        "Produto*",
+                        placeholder="Nome do produto",
+                        key="novo_produto_nome"
+                    )
+                
+                with col2:
+                    ca_novo = st.number_input(
+                        "CA*",
+                        min_value=0.0,
+                        step=0.5,
+                        value=0.0,
+                        key="novo_ca"
+                    )
+                    
+                    base_novo = st.number_input(
+                        "BASE*",
+                        min_value=0.0,
+                        step=0.5,
+                        value=0.0,
+                        key="novo_base"
+                    )
+                    
+                    quantidade_novo = st.number_input(
+                        "Quantidade Inicial*",
+                        min_value=0.0,
+                        step=0.5,
+                        value=0.0,
+                        key="novo_quantidade"
+                    )
+                
+                st.markdown("---")
+                col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
+                with col_btn2:
+                    submitted_novo = st.form_submit_button("💾 SALVAR PRODUTO (Supabase)", type="primary", use_container_width=True)
+                
+                if submitted_novo:
+                    if not produto_nome:
+                        st.error("❌ Informe o nome do produto!")
+                    elif not categoria_nova:
+                        st.error("❌ Informe a categoria!")
+                    else:
+                        existe = any(p.get('produto', '').upper() == produto_nome.upper() for p in produtos)
+                        if existe:
+                            st.warning(f"⚠️ O produto '{produto_nome}' já está cadastrado!")
+                        else:
+                            novo_produto = {
+                                'id': novo_id,
+                                'categoria': categoria_nova,
+                                'produto': produto_nome,
+                                'ca': ca_novo,
+                                'base': base_novo,
+                                'quantidade': quantidade_novo
+                            }
+                            
+                            sucesso, msg = salvar_produto_supabase(novo_produto)
+                            if sucesso:
+                                st.success(msg)
+                                st.balloons()
+                                st.cache_data.clear()
+                                st.rerun()
+                            else:
+                                st.error(msg)
+        
+        with tab_editar:
+            if produtos:
+                opcoes_produtos_edit = sorted([p.get('produto', '') for p in produtos])
+                
+                if st.session_state.almoxarifado_editando:
+                    current_prod = st.session_state.almoxarifado_editando.get('produto', '')
+                    idx_atual = opcoes_produtos_edit.index(current_prod) if current_prod in opcoes_produtos_edit else 0
+                    produto_selecionado_edit = st.selectbox(
+                        "Selecione o produto para editar",
+                        options=opcoes_produtos_edit,
+                        key="edit_produto_select",
+                        index=idx_atual
+                    )
+                else:
+                    produto_selecionado_edit = st.selectbox(
+                        "Selecione o produto para editar",
+                        options=opcoes_produtos_edit,
+                        key="edit_produto_select"
+                    )
+                
+                if produto_selecionado_edit:
+                    produto_edit = next((p for p in produtos if p.get('produto', '') == produto_selecionado_edit), None)
+                    
+                    if produto_edit:
+                        if st.session_state.almoxarifado_editando is None or st.session_state.almoxarifado_editando.get('produto', '') != produto_edit.get('produto', ''):
+                            st.session_state.almoxarifado_editando = produto_edit
+                            st.rerun()
+                        
+                        with st.form("form_editar_produto"):
+                            st.info(f"📌 Editando: {produto_edit.get('id', '')} - {produto_edit.get('produto', '')}")
+                            
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                st.text_input("ID", value=produto_edit.get('id', ''), disabled=True, key="edit_id_display")
+                                
+                                cat_options = sorted(set([p.get('categoria', '') for p in produtos if p.get('categoria')]))
+                                cat_index = cat_options.index(produto_edit.get('categoria', '')) if produto_edit.get('categoria', '') in cat_options else 0
+                                categoria_edit = st.selectbox(
+                                    "Categoria*",
+                                    options=cat_options,
+                                    index=cat_index,
+                                    key="edit_categoria"
+                                )
+                                
+                                produto_nome_edit = st.text_input(
+                                    "Produto*",
+                                    value=produto_edit.get('produto', ''),
+                                    key="edit_produto_nome"
+                                )
+                            
+                            with col2:
+                                ca_edit = st.number_input(
+                                    "CA*",
+                                    min_value=0.0,
+                                    step=0.5,
+                                    value=produto_edit.get('ca', 0),
+                                    key="edit_ca"
+                                )
+                                
+                                base_edit = st.number_input(
+                                    "BASE*",
+                                    min_value=0.0,
+                                    step=0.5,
+                                    value=produto_edit.get('base', 0),
+                                    key="edit_base"
+                                )
+                                
+                                quantidade_edit = st.number_input(
+                                    "Quantidade*",
+                                    min_value=0.0,
+                                    step=0.5,
+                                    value=produto_edit.get('quantidade', 0),
+                                    key="edit_quantidade"
+                                )
+                            
+                            st.markdown("---")
+                            col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
+                            with col_btn2:
+                                submitted_edit = st.form_submit_button("💾 SALVAR ALTERAÇÕES (Supabase)", type="primary", use_container_width=True)
+                            
+                            if submitted_edit:
+                                if not produto_nome_edit:
+                                    st.error("❌ Informe o nome do produto!")
+                                else:
+                                    produto_atualizado = {
+                                        'id': produto_edit.get('id', ''),
+                                        'categoria': categoria_edit,
+                                        'produto': produto_nome_edit,
+                                        'ca': ca_edit,
+                                        'base': base_edit,
+                                        'quantidade': quantidade_edit
+                                    }
+                                    
+                                    sucesso, msg = salvar_produto_supabase(produto_atualizado)
+                                    if sucesso:
+                                        st.success(msg)
+                                        st.session_state.almoxarifado_editando = None
+                                        st.cache_data.clear()
+                                        st.rerun()
+                                    else:
+                                        st.error(msg)
+                        
+                        if st.button("❌ Cancelar Edição", use_container_width=True):
+                            st.session_state.almoxarifado_editando = None
+                            st.rerun()
+            else:
+                st.info("📭 Nenhum produto cadastrado para editar.")
+        
+        with tab_excluir:
+            if produtos:
+                opcoes_produtos_excluir = sorted([p.get('produto', '') for p in produtos])
+                
+                produto_selecionado_excluir = st.selectbox(
+                    "Selecione o produto para excluir",
+                    options=opcoes_produtos_excluir,
+                    key="excluir_produto_select"
+                )
+                
+                if produto_selecionado_excluir:
+                    produto_excluir = next((p for p in produtos if p.get('produto', '') == produto_selecionado_excluir), None)
+                    
+                    if produto_excluir:
+                        st.warning(f"⚠️ Excluir: **{produto_excluir.get('produto', '')}** (ID: {produto_excluir.get('id', '')})")
+                        st.caption(f"Quantidade: {produto_excluir.get('quantidade', 0):.2f}")
+                        
+                        if produto_excluir.get('quantidade', 0) > 0:
+                            st.warning(f"⚠️ Este produto tem {produto_excluir.get('quantidade', 0):.2f} unidades em estoque.")
+                        
+                        confirmar_excluir = st.checkbox(f"✅ Confirmo exclusão de {produto_excluir.get('produto', '')}")
+                        
+                        if confirmar_excluir:
+                            if st.button("🗑️ CONFIRMAR EXCLUSÃO (Supabase)", type="primary", use_container_width=True):
+                                sucesso, msg = excluir_produto_supabase(produto_excluir.get('id', ''))
+                                if sucesso:
+                                    st.success(msg)
+                                    st.balloons()
+                                    st.cache_data.clear()
+                                    st.rerun()
+                                else:
+                                    st.error(msg)
+            else:
+                st.info("📭 Nenhum produto cadastrado.")
+    
+    # ======================
+    # ABA: RELATÓRIOS
+    # ======================
+    elif st.session_state.almoxarifado_aba == 'RELATORIOS':
+        st.markdown("### 📊 Relatórios do Almoxarifado")
+        
+        tipo_relatorio = st.radio(
+            "Selecione o tipo de relatório:",
+            ["📦 Estoque Completo", "📤 Relatório de Movimentações"],
+            horizontal=True,
+            key="tipo_relatorio_almox"
+        )
+        
+        st.markdown("---")
+        
+        if tipo_relatorio == "📦 Estoque Completo":
+            st.markdown("#### 📦 Relatório Completo do Almoxarifado")
+            
+            col_f1, col_f2, col_f3 = st.columns(3)
+            
+            with col_f1:
+                opcoes_cat_rel_estoque = ["(Todas)"] + sorted(set([p.get('categoria', '') for p in produtos if p.get('categoria')]))
+                filtro_cat_rel_estoque = st.selectbox(
+                    "📂 Categoria",
+                    options=opcoes_cat_rel_estoque,
+                    key="rel_filtro_cat_estoque"
+                )
+            
+            with col_f2:
+                opcoes_status_rel = ["(Todos)", "ZERADO", "BAIXO", "NORMAL", "ALTO"]
+                filtro_status_rel = st.selectbox(
+                    "📊 Status",
+                    options=opcoes_status_rel,
+                    key="rel_filtro_status_estoque"
+                )
+            
+            with col_f3:
+                opcoes_prod_rel_estoque = ["(Todos)"] + sorted(set([p.get('produto', '') for p in produtos if p.get('produto')]))
+                filtro_prod_rel_estoque = st.selectbox(
+                    "📦 Produto",
+                    options=opcoes_prod_rel_estoque,
+                    key="rel_filtro_prod_estoque"
+                )
+            
+            st.markdown("---")
+            
+            produtos_preview = produtos.copy()
+            
+            if filtro_cat_rel_estoque != "(Todas)":
+                produtos_preview = [p for p in produtos_preview if p.get('categoria', '') == filtro_cat_rel_estoque]
+            
+            if filtro_prod_rel_estoque != "(Todos)":
+                produtos_preview = [p for p in produtos_preview if p.get('produto', '') == filtro_prod_rel_estoque]
+            
+            if filtro_status_rel != "(Todos)":
+                if filtro_status_rel == "ZERADO":
+                    produtos_preview = [p for p in produtos_preview if p.get('quantidade', 0) <= 0]
+                elif filtro_status_rel == "BAIXO":
+                    produtos_preview = [p for p in produtos_preview if 0 < p.get('quantidade', 0) < 5]
+                elif filtro_status_rel == "NORMAL":
+                    produtos_preview = [p for p in produtos_preview if 5 <= p.get('quantidade', 0) <= 20]
+                elif filtro_status_rel == "ALTO":
+                    produtos_preview = [p for p in produtos_preview if p.get('quantidade', 0) > 20]
+            
+            total_prod_preview = len(produtos_preview)
+            total_qtd_preview = sum(p.get('quantidade', 0) for p in produtos_preview)
+            
+            col_k1, col_k2, col_k3, col_k4 = st.columns(4)
+            with col_k1:
+                st.metric("📦 Produtos", f"{total_prod_preview:,}")
+            with col_k2:
+                st.metric("📊 Estoque Total", f"{total_qtd_preview:.2f}")
+            with col_k3:
+                st.metric("🔴 Zerados", f"{len([p for p in produtos_preview if p.get('quantidade', 0) <= 0]):,}", delta_color="inverse")
+            with col_k4:
+                st.metric("🟡 Estoque Baixo", f"{len([p for p in produtos_preview if 0 < p.get('quantidade', 0) < 5]):,}", delta_color="inverse")
+            
+            st.markdown("---")
+            
+            if produtos_preview:
+                if st.button("📊 Gerar Relatório Completo", type="primary", use_container_width=True):
+                    with st.spinner("Gerando relatório..."):
+                        html_content = gerar_relatorio_almoxarifado(produtos_preview, movimentacoes)
+                        baixar_relatorio(html_content, f"relatorio_almoxarifado_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html")
+            else:
+                st.info("📭 Nenhum produto encontrado com os filtros selecionados.")
+        
+        elif tipo_relatorio == "📤 Relatório de Movimentações":
+            st.markdown("#### 📤 Relatório de Movimentações")
+            
+            col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+            
+            with col_f1:
+                opcoes_tipo_rel = ["(Todos)", "ENTRADA", "SAÍDA", "INVENTÁRIO"]
+                filtro_tipo_rel = st.selectbox(
+                    "📋 Tipo",
+                    options=opcoes_tipo_rel,
+                    key="rel_filtro_tipo"
+                )
+            
+            with col_f2:
+                opcoes_prod_rel = ["(Todos)"] + sorted(set([p.get('produto', '') for p in produtos if p.get('produto')]))
+                filtro_prod_rel = st.selectbox(
+                    "📦 Produto",
+                    options=opcoes_prod_rel,
+                    key="rel_filtro_produto"
+                )
+            
+            with col_f3:
+                opcoes_cat_rel = ["(Todos)"] + sorted(set([p.get('categoria', '') for p in produtos if p.get('categoria')]))
+                filtro_cat_rel = st.selectbox(
+                    "📂 Categoria",
+                    options=opcoes_cat_rel,
+                    key="rel_filtro_categoria"
+                )
+            
+            with col_f4:
+                mostrar_todos = st.checkbox(
+                    "📅 Mostrar todos os períodos",
+                    value=True,
+                    key="rel_mostrar_todos"
+                )
+            
+            if not mostrar_todos:
+                col_d1, col_d2 = st.columns(2)
+                with col_d1:
+                    data_ini_rel = st.date_input("📅 Data Inicial", value=None, key="rel_data_ini")
+                with col_d2:
+                    data_fim_rel = st.date_input("📅 Data Final", value=None, key="rel_data_fim")
+            else:
+                data_ini_rel = None
+                data_fim_rel = None
+            
+            st.markdown("---")
+            
+            if st.button("📊 Gerar Relatório de Movimentações", type="primary", use_container_width=True):
+                with st.spinner("Gerando relatório..."):
+                    html_content = gerar_relatorio_movimentacoes_html(
+                        movimentacoes, 
+                        data_ini_rel, 
+                        data_fim_rel,
+                        filtro_tipo_rel,
+                        filtro_prod_rel,
+                        filtro_cat_rel
+                    )
+                    baixar_relatorio(html_content, f"relatorio_movimentacoes_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html")
+    
+    # ======================
+    # FOOTER
+    # ======================
+    st.markdown(f"""
+    <div style="text-align:right;padding:16px 0 8px;
+        font-family:'JetBrains Mono',monospace;font-size:10px;
+        color:{THEME['text_muted']};letter-spacing:.1em;">
+        📦 ALMOXARIFADO · {get_horario_brasilia()}
+    </div>
+    """, unsafe_allow_html=True) 
+    
 # ==================================================================================================
 # RENDERIZAR FAIXA DE ROLAGEM
 # ==================================================================================================
