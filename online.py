@@ -15658,6 +15658,67 @@ elif aba_selecionada == 'CONTROLE DO FORNO':
     else:
         st.info("📭 Dados insuficientes para gráfico de consumo por turno")
     
+    # ======================================================================
+    # ANÁLISE PREDITIVA E RECOMENDAÇÕES (NOVO)
+    # ======================================================================
+    renderizar_analise_preditiva(df_filtrado)
+    
+    # ======================================================================
+    # FORMULÁRIO DE LANÇAMENTO
+    # ======================================================================
+    renderizar_formulario_lancamento()
+    
+    # ======================================================================
+    # TABELA DE DADOS
+    # ======================================================================
+    with st.expander("📋 Ver dados detalhados", expanded=False):
+        df_exibicao = df_filtrado.copy()
+        
+        colunas_exibir = ['DATA', 'HORA', 'TURNO', 'NIVEL', 
+                         'BOQUETA_1', 'BOQUETA_2', 'BOQUETA_3', 'BOQUETA_4', 'BOQUETA_5',
+                         'TEMP_MEDIA', 'TEMP_DIFERENCA', 'CICLO', 'VOLTAS', 'TIRAGEM_KG', 
+                         'OXI_1', 'GAS_1', 'OXI_2', 'GAS_2', 'OXI_TOTAL', 'GAS_TOTAL', 
+                         'ENERGIA_TOTAL', 'RELACAO_O2_GAS']
+        
+        colunas_existentes = [c for c in colunas_exibir if c in df_exibicao.columns]
+        df_exibicao = df_exibicao[colunas_existentes]
+        
+        if 'DATA' in df_exibicao.columns:
+            df_exibicao['DATA'] = pd.to_datetime(df_exibicao['DATA']).dt.strftime('%d/%m/%Y')
+        
+        rename_map = {
+            'DATA': 'Data', 'HORA': 'Hora', 'TURNO': 'Turno',
+            'NIVEL': 'Nível (cm)',
+            'BOQUETA_1': 'B1 (°C)', 'BOQUETA_2': 'B2 (°C)', 
+            'BOQUETA_3': 'B3 (°C)', 'BOQUETA_4': 'B4 (°C)', 'BOQUETA_5': 'B5 (°C)',
+            'TEMP_MEDIA': 'Temp. Média', 'TEMP_DIFERENCA': 'Diferença',
+            'CICLO': 'Ciclo (s)', 'VOLTAS': 'Voltas', 'TIRAGEM_KG': 'Tiragem (kg/h)',
+            'OXI_1': 'O₂-1', 'GAS_1': 'Gás-1', 'OXI_2': 'O₂-2', 'GAS_2': 'Gás-2',
+            'OXI_TOTAL': 'O₂ Total', 'GAS_TOTAL': 'Gás Total',
+            'ENERGIA_TOTAL': 'Energia Total', 'RELACAO_O2_GAS': 'Relação O₂/Gás'
+        }
+        
+        for old, new in rename_map.items():
+            if old in df_exibicao.columns:
+                df_exibicao = df_exibicao.rename(columns={old: new})
+        
+        for col in df_exibicao.columns:
+            if col not in ['Data', 'Hora', 'Turno']:
+                try:
+                    df_exibicao[col] = df_exibicao[col].apply(lambda x: f"{x:.1f}" if pd.notnull(x) else "-")
+                except:
+                    pass
+        
+        st.dataframe(df_exibicao, use_container_width=True, height=400)
+    
+    st.markdown(f"""
+    <div style="text-align:right;padding:16px 0 8px;
+        font-family:'JetBrains Mono',monospace;font-size:10px;
+        color:{THEME['text_muted']};letter-spacing:.1em;">
+        🔥 CONTROLE DO FORNO · {get_horario_brasilia()}
+    </div>
+    """, unsafe_allow_html=True)
+    
     # ==================================================================================================
 # ALMOXARIFADO - CONTROLE DE ESTOQUE COM SUPABASE (USANDO REQUESTS)
 # VERSÃO COMPLETA CORRIGIDA - INVENTÁRIO SUBSTITUI O ESTOQUE
